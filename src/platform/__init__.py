@@ -7,6 +7,7 @@
 from src.platform.base import PlatformAdapter, PlatformType, SpecialEvent, EventType
 from src.platform.twitch import TwitchAdapter, TwitchBot, EventSubHandler
 from src.platform.youtube import YouTubeAdapter, create_youtube_comment
+from src.platform.manager import MultiPlatformManager
 
 __all__ = [
     "PlatformAdapter",
@@ -18,4 +19,5 @@ __all__ = [
     "EventSubHandler",
     "YouTubeAdapter",
     "create_youtube_comment",
+    "MultiPlatformManager",
 ]

@@ -7,17 +7,17 @@ from src.logger import logger
 CONFIG_FILE = "config.json"
 
 DEFAULT_CONFIG = {
-    # プラットフォーム設定
-    "platform": "twitch",  # twitch / youtube
     # Twitch設定
+    "twitch_enabled": False,  # Twitch接続を有効にするか
     "twitch_client_id": "",
     "twitch_access_token": "",  # 保存されたアクセストークン（自動ログイン用）
     # YouTube設定
+    "youtube_enabled": False,  # YouTube接続を有効にするか
     "youtube_client_id": "",
     "youtube_client_secret": "",
     "youtube_access_token": "",
     "youtube_refresh_token": "",
-    "youtube_channel_id": "",  # 配信チャンネルID または ライブ配信ID
+    "youtube_live_id": "",  # ライブ配信ID（ビデオID）
     # 共通設定
     "deepl_api_key": "",
     "channel_name": "",
@@ -62,7 +62,6 @@ VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
 VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
-VALID_PLATFORMS = {"twitch", "youtube"}
 
 def validate_config(config_data):
     """
@@ -72,12 +71,6 @@ def validate_config(config_data):
     changed = False
     validated = DEFAULT_CONFIG.copy()
     validated.update(config_data or {})
-
-    # platform
-    if validated.get("platform") not in VALID_PLATFORMS:
-        logger.warning(f"platform is invalid: {validated.get('platform')}, fallback to twitch")
-        validated["platform"] = "twitch"
-        changed = True
 
     # translate_mode
     if validated.get("translate_mode") not in VALID_TRANSLATE_MODES:
@@ -112,16 +105,21 @@ def validate_config(config_data):
             validated[key] = bool(validated.get(key))
             changed = True
 
+    # プラットフォーム有効フラグ
+    for key in ["twitch_enabled", "youtube_enabled"]:
+        if not isinstance(validated.get(key), bool):
+            validated[key] = bool(validated.get(key))
+            changed = True
+
     # 文字列系はNone回避
     for key in [
-        "platform",
         "twitch_client_id",
         "twitch_access_token",
         "youtube_client_id",
         "youtube_client_secret",
         "youtube_access_token",
         "youtube_refresh_token",
-        "youtube_channel_id",
+        "youtube_live_id",
         "deepl_api_key",
         "channel_name",
         "channel_mode",
