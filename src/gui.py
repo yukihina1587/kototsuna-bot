@@ -26,8 +26,8 @@ except Exception as e:
 from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info
 from src.auth.youtube import YouTubeAuthProvider
 from src.bot import TranslateBot
-from src.platform.manager import MultiPlatformManager
-from src.platform.base import PlatformType, SpecialEvent, EventType
+from src.platforms.manager import MultiPlatformManager
+from src.platforms.base import PlatformType, SpecialEvent, EventType
 from src.config import load_config, save_config, validate_deepl_api_key, validate_twitch_client_id
 from src.voice_listener import VoiceTranslator
 from src.overlay_server import update_translation, run_server_thread

@@ -11,7 +11,7 @@ from typing import Optional, Callable, Any
 
 from twitchio.ext import commands
 
-from src.platform.base import PlatformAdapter, PlatformType, SpecialEvent, EventType
+from src.platforms.base import PlatformAdapter, PlatformType, SpecialEvent, EventType
 from src.translator import translate_text
 from src.logger import logger
 from src.tts import get_tts_instance, is_japanese

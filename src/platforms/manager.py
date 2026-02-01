@@ -7,9 +7,9 @@
 import asyncio
 from typing import Optional, Callable, List, Dict, Any
 
-from src.platform.base import PlatformAdapter, PlatformType, SpecialEvent
-from src.platform.twitch import TwitchAdapter
-from src.platform.youtube import YouTubeAdapter
+from src.platforms.base import PlatformAdapter, PlatformType, SpecialEvent
+from src.platforms.twitch import TwitchAdapter
+from src.platforms.youtube import YouTubeAdapter
 from src.comment_data import CommentData
 from src.logger import logger
 from src.config import load_config
