@@ -41,6 +41,8 @@ DEFAULT_CONFIG = {
     "gift_sub_sound_volume": 80,
     "follow_sound_path": "",  # フォロー
     "follow_sound_volume": 80,
+    # 翻訳設定
+    "chat_translation_enabled": False,  # チャット翻訳を有効にするか
     # 翻訳フィルタとカスタム辞書
     "translation_filters": [],
     "translation_dictionary": [],  # [{ "source": "原文", "target": "置換後" }]
@@ -153,7 +155,7 @@ def validate_config(config_data):
         changed = True
 
     # ブール系
-    for key in ["chat_html_output", "chat_html_newest_first"]:
+    for key in ["chat_html_output", "chat_html_newest_first", "chat_translation_enabled"]:
         if not isinstance(validated.get(key), bool):
             validated[key] = bool(validated.get(key))
             changed = True
