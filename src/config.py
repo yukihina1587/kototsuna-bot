@@ -43,6 +43,10 @@ DEFAULT_CONFIG = {
     "follow_sound_volume": 80,
     # 翻訳設定
     "chat_translation_enabled": False,  # チャット翻訳を有効にするか
+    "translation_engine": "deepl",  # 翻訳エンジン: deepl / google / libre
+    "google_translate_api_key": "",  # Google Cloud Translation APIキー
+    "libre_translate_url": "https://libretranslate.com",  # LibreTranslate URL
+    "libre_translate_api_key": "",  # LibreTranslate APIキー（任意）
     # 翻訳フィルタとカスタム辞書
     "translation_filters": [],
     "translation_dictionary": [],  # [{ "source": "原文", "target": "置換後" }]
@@ -61,6 +65,7 @@ DEFAULT_CONFIG = {
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
+VALID_TRANSLATION_ENGINES = {"deepl", "google", "libre"}
 VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
@@ -78,6 +83,12 @@ def validate_config(config_data):
     if validated.get("translate_mode") not in VALID_TRANSLATE_MODES:
         logger.warning(f"translate_mode is invalid: {validated.get('translate_mode')}, fallback to 自動")
         validated["translate_mode"] = "自動"
+        changed = True
+
+    # translation_engine
+    if validated.get("translation_engine") not in VALID_TRANSLATION_ENGINES:
+        logger.warning(f"translation_engine is invalid: {validated.get('translation_engine')}, fallback to deepl")
+        validated["translation_engine"] = "deepl"
         changed = True
 
     # ui_theme
@@ -123,6 +134,10 @@ def validate_config(config_data):
         "youtube_refresh_token",
         "youtube_live_id",
         "deepl_api_key",
+        "google_translate_api_key",
+        "libre_translate_url",
+        "libre_translate_api_key",
+        "translation_engine",
         "channel_name",
         "channel_mode",
         "voicevox_url",

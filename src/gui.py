@@ -196,6 +196,11 @@ class KototsunaApp:
         # マルチプラットフォームマネージャー
         self.platform_manager = None
         self.deepl_key = tk.StringVar(value=self.config.get("deepl_api_key", ""))
+        # 翻訳エンジン設定
+        self.translation_engine = tk.StringVar(value=self.config.get("translation_engine", "deepl"))
+        self.google_translate_key = tk.StringVar(value=self.config.get("google_translate_api_key", ""))
+        self.libre_translate_url = tk.StringVar(value=self.config.get("libre_translate_url", "https://libretranslate.com"))
+        self.libre_translate_key = tk.StringVar(value=self.config.get("libre_translate_api_key", ""))
         self.gladia_key = tk.StringVar(value=self.config.get("gladia_api_key", ""))
         self.voicevox_path = tk.StringVar(value=self.config.get("voicevox_engine_path", ""))
         self.voicevox_auto_start = tk.BooleanVar(value=self.config.get("voicevox_auto_start", True))
@@ -285,6 +290,8 @@ class KototsunaApp:
         self.master.after(1000, self._check_saved_token)
         # 起動時にYouTube認証状態をチェック
         self.master.after(1500, self._check_youtube_auth_status)
+        # 翻訳エンジン設定を適用
+        self.master.after(200, self._apply_translation_engine)
 
     def _apply_theme_colors(self, theme_name):
         """
@@ -881,15 +888,31 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
-        # API設定
-        self._add_panel_section(parent, "API設定")
+        # 翻訳エンジン設定
+        self._add_panel_section(parent, "翻訳エンジン設定")
 
-        ctk.CTkLabel(parent, text="DeepL API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
-        ctk.CTkEntry(parent, textvariable=self.deepl_key, show="*", height=32).pack(fill="x", pady=(0, 4))
-        ctk.CTkButton(parent, text="↗ DeepL API登録", command=lambda: webbrowser.open("https://www.deepl.com/pro-api"),
-                      fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+        ctk.CTkLabel(parent, text="翻訳エンジン", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+        engine_options = ["deepl", "google", "libre"]
+        engine_display = {"deepl": "DeepL", "google": "Google翻訳", "libre": "LibreTranslate"}
+        self.engine_selector = ctk.CTkOptionMenu(
+            parent,
+            variable=self.translation_engine,
+            values=engine_options,
+            command=self._on_translation_engine_changed,
+            height=32
+        )
+        self.engine_selector.pack(fill="x", pady=(0, 8))
 
-        ctk.CTkLabel(parent, text="Gladia API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
+        # エンジン別設定フレーム
+        self.engine_config_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        self.engine_config_frame.pack(fill="x")
+        self._update_engine_config_ui()
+
+        self._add_panel_divider(parent)
+
+        # 音声認識API設定
+        self._add_panel_section(parent, "音声認識API設定")
+        ctk.CTkLabel(parent, text="Gladia API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
         ctk.CTkEntry(parent, textvariable=self.gladia_key, show="*", height=32).pack(fill="x", pady=(0, 4))
 
         # マイク選択
@@ -2368,6 +2391,17 @@ class KototsunaApp:
             self.comment_bubble_style,
             self.chat_html_output,
             self.chat_html_path,
+            # プラットフォーム設定
+            self.twitch_enabled,
+            self.youtube_enabled,
+            self.youtube_client_id,
+            self.youtube_client_secret,
+            self.youtube_live_id,
+            # 翻訳エンジン設定
+            self.translation_engine,
+            self.google_translate_key,
+            self.libre_translate_url,
+            self.libre_translate_key,
         ]
         for var in watch_vars:
             try:
@@ -2403,6 +2437,19 @@ class KototsunaApp:
             self.config["chat_html_output"] = self.chat_html_output.get()
             self.config["chat_html_path"] = self.chat_html_path.get().strip()
             self.config["chat_html_newest_first"] = self.chat_html_newest_first.get()
+
+            # プラットフォーム設定
+            self.config["twitch_enabled"] = self.twitch_enabled.get()
+            self.config["youtube_enabled"] = self.youtube_enabled.get()
+            self.config["youtube_client_id"] = self.youtube_client_id.get().strip()
+            self.config["youtube_client_secret"] = self.youtube_client_secret.get().strip()
+            self.config["youtube_live_id"] = self.youtube_live_id.get().strip()
+
+            # 翻訳エンジン設定
+            self.config["translation_engine"] = self.translation_engine.get()
+            self.config["google_translate_api_key"] = self.google_translate_key.get().strip()
+            self.config["libre_translate_url"] = self.libre_translate_url.get().strip()
+            self.config["libre_translate_api_key"] = self.libre_translate_key.get().strip()
 
             # VOICEVOX Managerのパスを更新
             if self.voicevox_path.get().strip() and hasattr(self, "voicevox_manager"):
@@ -3841,6 +3888,66 @@ window.onload = function() {{
         twitch_status = "有効" if self.twitch_enabled.get() else "無効"
         youtube_status = "有効" if self.youtube_enabled.get() else "無効"
         self.log_message(f"プラットフォーム設定: Twitch={twitch_status}, YouTube={youtube_status}")
+
+    def _on_translation_engine_changed(self, value: str):
+        """翻訳エンジンが変更されたときの処理"""
+        self.config["translation_engine"] = value
+        save_config(self.config)
+        self._update_engine_config_ui()
+        self._apply_translation_engine()
+
+        engine_names = {"deepl": "DeepL", "google": "Google翻訳", "libre": "LibreTranslate"}
+        self.log_message(f"翻訳エンジンを {engine_names.get(value, value)} に変更しました")
+
+    def _update_engine_config_ui(self):
+        """エンジン別設定UIを更新"""
+        import customtkinter as ctk
+
+        # 既存のウィジェットをクリア
+        for widget in self.engine_config_frame.winfo_children():
+            widget.destroy()
+
+        engine = self.translation_engine.get()
+
+        if engine == "deepl":
+            ctk.CTkLabel(self.engine_config_frame, text="DeepL API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+            ctk.CTkEntry(self.engine_config_frame, textvariable=self.deepl_key, show="*", height=32).pack(fill="x", pady=(0, 4))
+            ctk.CTkButton(self.engine_config_frame, text="↗ DeepL API登録",
+                          command=lambda: webbrowser.open("https://www.deepl.com/pro-api"),
+                          fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+
+        elif engine == "google":
+            ctk.CTkLabel(self.engine_config_frame, text="Google Cloud API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+            ctk.CTkEntry(self.engine_config_frame, textvariable=self.google_translate_key, show="*", height=32).pack(fill="x", pady=(0, 4))
+            ctk.CTkButton(self.engine_config_frame, text="↗ Google Cloud Console",
+                          command=lambda: webbrowser.open("https://console.cloud.google.com/apis/credentials"),
+                          fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+            ctk.CTkLabel(self.engine_config_frame, text="※ Cloud Translation APIを有効化してください",
+                        font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+
+        elif engine == "libre":
+            ctk.CTkLabel(self.engine_config_frame, text="LibreTranslate URL", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+            ctk.CTkEntry(self.engine_config_frame, textvariable=self.libre_translate_url, height=32).pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(self.engine_config_frame, text="API Key（任意）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+            ctk.CTkEntry(self.engine_config_frame, textvariable=self.libre_translate_key, show="*", height=32).pack(fill="x", pady=(0, 4))
+            ctk.CTkButton(self.engine_config_frame, text="↗ LibreTranslate公式",
+                          command=lambda: webbrowser.open("https://libretranslate.com/"),
+                          fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+            ctk.CTkLabel(self.engine_config_frame, text="※ セルフホストも可能です",
+                        font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+
+    def _apply_translation_engine(self):
+        """現在の翻訳エンジン設定を適用"""
+        from src.translator import set_current_engine
+
+        engine = self.translation_engine.get()
+        set_current_engine(
+            engine=engine,
+            deepl_api_key=self.deepl_key.get(),
+            google_api_key=self.google_translate_key.get(),
+            libre_url=self.libre_translate_url.get(),
+            libre_api_key=self.libre_translate_key.get(),
+        )
 
     def start_youtube_auth(self):
         """YouTube認証を開始"""
