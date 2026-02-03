@@ -10,21 +10,44 @@ import json
 import platform
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+from collections import deque
 from datetime import datetime
 from typing import Dict
 
-# pygameは効果音再生で使用
-try:
-    import pygame
-    if not pygame.mixer.get_init():
-        pygame.mixer.init()
-    PYGAME_AVAILABLE = True
-except Exception as e:
-    pygame = None
-    PYGAME_AVAILABLE = False
+# メモリ最適化: ログ履歴の上限
+LOG_MAX_ENTRIES = 500
+CHAT_LOG_MAX_ENTRIES = 500
+
+# メモリ最適化: pygameは遅延インポート（使用時のみロード）
+_pygame = None
+_pygame_initialized = False
+
+
+def _get_pygame():
+    """pygameを遅延ロード（効果音再生時のみ初期化）"""
+    global _pygame, _pygame_initialized
+    if _pygame_initialized:
+        return _pygame
+    try:
+        import pygame
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        _pygame = pygame
+        _pygame_initialized = True
+        return pygame
+    except Exception as e:
+        _pygame_initialized = True
+        return None
+
+
+# 後方互換性のため
+PYGAME_AVAILABLE = True  # 実際の利用時にチェック
 
 from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info
+from src.auth.youtube import YouTubeAuthProvider
 from src.bot import TranslateBot
+from src.platforms.manager import MultiPlatformManager
+from src.platforms.base import PlatformType, SpecialEvent, EventType
 from src.config import load_config, save_config, validate_deepl_api_key, validate_twitch_client_id
 from src.voice_listener import VoiceTranslator
 from src.overlay_server import update_translation, run_server_thread
@@ -163,9 +186,9 @@ class KototsunaApp:
         self.tracker = get_tracker()
         self.tracker.enable()
 
-        # ログ履歴（時系列で記録）
-        self.chat_log_history = []
-        self.chat_history = []
+        # ログ履歴（時系列で記録、メモリ最適化のため上限あり）
+        self.chat_log_history = deque(maxlen=CHAT_LOG_MAX_ENTRIES)
+        self.chat_history = deque(maxlen=CHAT_LOG_MAX_ENTRIES)
 
         # Variables
         self.channel = tk.StringVar(value=self.config.get("channel_name", ""))
@@ -180,7 +203,24 @@ class KototsunaApp:
         self.config["chat_translation_enabled"] = False
         save_config(self.config)
         self.client_id = tk.StringVar(value=self.config.get("twitch_client_id", ""))
+        # プラットフォーム有効フラグ
+        self.twitch_enabled = tk.BooleanVar(value=self.config.get("twitch_enabled", False))
+        self.youtube_enabled = tk.BooleanVar(value=self.config.get("youtube_enabled", False))
+        # YouTube設定
+        self.youtube_client_id = tk.StringVar(value=self.config.get("youtube_client_id", ""))
+        self.youtube_client_secret = tk.StringVar(value=self.config.get("youtube_client_secret", ""))
+        self.youtube_live_id = tk.StringVar(value=self.config.get("youtube_live_id", ""))
+        self.youtube_access_token = self.config.get("youtube_access_token", "")
+        self.youtube_refresh_token = self.config.get("youtube_refresh_token", "")
+        self.youtube_auth_username = tk.StringVar(value="")
+        # マルチプラットフォームマネージャー
+        self.platform_manager = None
         self.deepl_key = tk.StringVar(value=self.config.get("deepl_api_key", ""))
+        # 翻訳エンジン設定
+        self.translation_engine = tk.StringVar(value=self.config.get("translation_engine", "deepl"))
+        self.google_translate_key = tk.StringVar(value=self.config.get("google_translate_api_key", ""))
+        self.libre_translate_url = tk.StringVar(value=self.config.get("libre_translate_url", "https://libretranslate.com"))
+        self.libre_translate_key = tk.StringVar(value=self.config.get("libre_translate_api_key", ""))
         self.gladia_key = tk.StringVar(value=self.config.get("gladia_api_key", ""))
         self.voicevox_path = tk.StringVar(value=self.config.get("voicevox_engine_path", ""))
         self.voicevox_auto_start = tk.BooleanVar(value=self.config.get("voicevox_auto_start", True))
@@ -268,6 +308,10 @@ class KototsunaApp:
         self.master.after(100, lambda: self._update_auth_button_states(authenticated=False))
         # 起動時に保存されたトークンをチェックして自動ログイン
         self.master.after(1000, self._check_saved_token)
+        # 起動時にYouTube認証状態をチェック
+        self.master.after(1500, self._check_youtube_auth_status)
+        # 翻訳エンジン設定を適用
+        self.master.after(200, self._apply_translation_engine)
 
     def _apply_theme_colors(self, theme_name):
         """
@@ -709,7 +753,7 @@ class KototsunaApp:
         self.comment_paned.add(tile_container, minsize=300)
         self.comment_paned.add(log_container, minsize=80)
 
-        self.log_history = []
+        self.log_history = deque(maxlen=LOG_MAX_ENTRIES)
 
     def _build_event_log_area(self):
         """特別イベントログエリアを構築"""
@@ -864,15 +908,31 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
-        # API設定
-        self._add_panel_section(parent, "API設定")
+        # 翻訳エンジン設定
+        self._add_panel_section(parent, "翻訳エンジン設定")
 
-        ctk.CTkLabel(parent, text="DeepL API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
-        ctk.CTkEntry(parent, textvariable=self.deepl_key, show="*", height=32).pack(fill="x", pady=(0, 4))
-        ctk.CTkButton(parent, text="↗ DeepL API登録", command=lambda: webbrowser.open("https://www.deepl.com/pro-api"),
-                      fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+        ctk.CTkLabel(parent, text="翻訳エンジン", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+        engine_options = ["deepl", "google", "libre"]
+        engine_display = {"deepl": "DeepL", "google": "Google翻訳", "libre": "LibreTranslate"}
+        self.engine_selector = ctk.CTkOptionMenu(
+            parent,
+            variable=self.translation_engine,
+            values=engine_options,
+            command=self._on_translation_engine_changed,
+            height=32
+        )
+        self.engine_selector.pack(fill="x", pady=(0, 8))
 
-        ctk.CTkLabel(parent, text="Gladia API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
+        # エンジン別設定フレーム
+        self.engine_config_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        self.engine_config_frame.pack(fill="x")
+        self._update_engine_config_ui()
+
+        self._add_panel_divider(parent)
+
+        # 音声認識API設定
+        self._add_panel_section(parent, "音声認識API設定")
+        ctk.CTkLabel(parent, text="Gladia API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
         ctk.CTkEntry(parent, textvariable=self.gladia_key, show="*", height=32).pack(fill="x", pady=(0, 4))
 
         # マイク選択
@@ -886,9 +946,43 @@ class KototsunaApp:
         # 初期化時にマイクリストを取得
         self.master.after(500, self._refresh_mic_list)
 
-        ctk.CTkLabel(parent, text="Twitch Client ID（Twitchアプリ登録で取得）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
+        self._add_panel_divider(parent)
+
+        # Twitch設定
+        self._add_panel_section(parent, "Twitch設定")
+        ctk.CTkCheckBox(parent, text="Twitch接続を有効にする", variable=self.twitch_enabled,
+                        command=self._on_platform_toggle_changed, font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 4))
+        ctk.CTkLabel(parent, text="Client ID", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
         ctk.CTkEntry(parent, textvariable=self.client_id, height=32).pack(fill="x", pady=(0, 4))
         ctk.CTkButton(parent, text="↗ Twitchデベロッパー登録", command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps"),
+                      fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+
+        self._add_panel_divider(parent)
+
+        # YouTube設定
+        self._add_panel_section(parent, "YouTube Live設定")
+        ctk.CTkCheckBox(parent, text="YouTube接続を有効にする", variable=self.youtube_enabled,
+                        command=self._on_platform_toggle_changed, font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 4))
+
+        ctk.CTkLabel(parent, text="Client ID", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+        ctk.CTkEntry(parent, textvariable=self.youtube_client_id, height=32).pack(fill="x", pady=(0, 4))
+
+        ctk.CTkLabel(parent, text="Client Secret", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+        ctk.CTkEntry(parent, textvariable=self.youtube_client_secret, show="*", height=32).pack(fill="x", pady=(0, 4))
+
+        ctk.CTkLabel(parent, text="ライブ配信ID（Video ID）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+        ctk.CTkEntry(parent, textvariable=self.youtube_live_id, height=32).pack(fill="x", pady=(0, 4))
+
+        # YouTube認証ボタン
+        yt_auth_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        yt_auth_frame.pack(fill="x", pady=(4, 0))
+        self.youtube_auth_btn = ctk.CTkButton(yt_auth_frame, text="YouTube認証", command=self.start_youtube_auth,
+                                               fg_color="#FF0000", hover_color="#CC0000", width=100, height=28)
+        self.youtube_auth_btn.pack(side="left")
+        self.youtube_auth_status = ctk.CTkLabel(yt_auth_frame, text="未認証", font=("Segoe UI", 10), text_color=ACCENT_WARN)
+        self.youtube_auth_status.pack(side="left", padx=(8, 0))
+
+        ctk.CTkButton(parent, text="↗ Google Cloud Console", command=lambda: webbrowser.open("https://console.cloud.google.com/apis/credentials"),
                       fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
 
         self._add_panel_divider(parent)
@@ -1621,8 +1715,8 @@ class KototsunaApp:
         comment_paned.add(tile_container, minsize=200)
         comment_paned.add(log_container, minsize=100)
 
-        # ログ履歴
-        self.log_history = []
+        # ログ履歴（メモリ最適化のため上限あり）
+        self.log_history = deque(maxlen=LOG_MAX_ENTRIES)
 
         # ログ操作ボタン
         log_btn_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
@@ -2317,6 +2411,17 @@ class KototsunaApp:
             self.comment_bubble_style,
             self.chat_html_output,
             self.chat_html_path,
+            # プラットフォーム設定
+            self.twitch_enabled,
+            self.youtube_enabled,
+            self.youtube_client_id,
+            self.youtube_client_secret,
+            self.youtube_live_id,
+            # 翻訳エンジン設定
+            self.translation_engine,
+            self.google_translate_key,
+            self.libre_translate_url,
+            self.libre_translate_key,
         ]
         for var in watch_vars:
             try:
@@ -2352,6 +2457,19 @@ class KototsunaApp:
             self.config["chat_html_output"] = self.chat_html_output.get()
             self.config["chat_html_path"] = self.chat_html_path.get().strip()
             self.config["chat_html_newest_first"] = self.chat_html_newest_first.get()
+
+            # プラットフォーム設定
+            self.config["twitch_enabled"] = self.twitch_enabled.get()
+            self.config["youtube_enabled"] = self.youtube_enabled.get()
+            self.config["youtube_client_id"] = self.youtube_client_id.get().strip()
+            self.config["youtube_client_secret"] = self.youtube_client_secret.get().strip()
+            self.config["youtube_live_id"] = self.youtube_live_id.get().strip()
+
+            # 翻訳エンジン設定
+            self.config["translation_engine"] = self.translation_engine.get()
+            self.config["google_translate_api_key"] = self.google_translate_key.get().strip()
+            self.config["libre_translate_url"] = self.libre_translate_url.get().strip()
+            self.config["libre_translate_api_key"] = self.libre_translate_key.get().strip()
 
             # VOICEVOX Managerのパスを更新
             if self.voicevox_path.get().strip() and hasattr(self, "voicevox_manager"):
@@ -3418,6 +3536,10 @@ window.onload = function() {{
             return
 
         try:
+            pygame = _get_pygame()
+            if pygame is None:
+                logger.warning("pygame利用不可のため効果音スキップ")
+                return
             if not pygame.mixer.get_init():
                 pygame.mixer.init()
             sound = pygame.mixer.Sound(path)
@@ -3442,10 +3564,10 @@ window.onload = function() {{
         self.log_special_event(message, event_type=event_type)
 
     def start_participant_auto_refresh(self):
-        """参加者リストの自動更新を開始（3秒ごと）"""
+        """参加者リストの自動更新を開始（5秒ごと、メモリ最適化）"""
         self.refresh_main_participant_list()
-        # 3秒後に再度実行
-        self.participant_refresh_timer = self.master.after(3000, self.start_participant_auto_refresh)
+        # 5秒後に再度実行（3秒→5秒に延長してCPU負荷軽減）
+        self.participant_refresh_timer = self.master.after(5000, self.start_participant_auto_refresh)
 
     def refresh_main_participant_list(self):
         """メイン画面の参加者リストを更新"""
@@ -3781,6 +3903,211 @@ window.onload = function() {{
         # 認証フロー開始
         self.start_auth()
 
+    def _on_platform_toggle_changed(self):
+        """プラットフォーム有効フラグが変更されたときの処理"""
+        self.config["twitch_enabled"] = self.twitch_enabled.get()
+        self.config["youtube_enabled"] = self.youtube_enabled.get()
+        save_config(self.config)
+
+        twitch_status = "有効" if self.twitch_enabled.get() else "無効"
+        youtube_status = "有効" if self.youtube_enabled.get() else "無効"
+        self.log_message(f"プラットフォーム設定: Twitch={twitch_status}, YouTube={youtube_status}")
+
+    def _on_translation_engine_changed(self, value: str):
+        """翻訳エンジンが変更されたときの処理"""
+        self.config["translation_engine"] = value
+        save_config(self.config)
+        self._update_engine_config_ui()
+        self._apply_translation_engine()
+
+        engine_names = {"deepl": "DeepL", "google": "Google翻訳", "libre": "LibreTranslate"}
+        self.log_message(f"翻訳エンジンを {engine_names.get(value, value)} に変更しました")
+
+    def _update_engine_config_ui(self):
+        """エンジン別設定UIを更新"""
+        import customtkinter as ctk
+
+        # 既存のウィジェットをクリア
+        for widget in self.engine_config_frame.winfo_children():
+            widget.destroy()
+
+        engine = self.translation_engine.get()
+
+        if engine == "deepl":
+            ctk.CTkLabel(self.engine_config_frame, text="DeepL API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+            ctk.CTkEntry(self.engine_config_frame, textvariable=self.deepl_key, show="*", height=32).pack(fill="x", pady=(0, 4))
+            ctk.CTkButton(self.engine_config_frame, text="↗ DeepL API登録",
+                          command=lambda: webbrowser.open("https://www.deepl.com/pro-api"),
+                          fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+
+        elif engine == "google":
+            ctk.CTkLabel(self.engine_config_frame, text="Google Cloud API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+            ctk.CTkEntry(self.engine_config_frame, textvariable=self.google_translate_key, show="*", height=32).pack(fill="x", pady=(0, 4))
+            ctk.CTkButton(self.engine_config_frame, text="↗ Google Cloud Console",
+                          command=lambda: webbrowser.open("https://console.cloud.google.com/apis/credentials"),
+                          fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+            ctk.CTkLabel(self.engine_config_frame, text="※ Cloud Translation APIを有効化してください",
+                        font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+
+        elif engine == "libre":
+            ctk.CTkLabel(self.engine_config_frame, text="LibreTranslate URL", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+            ctk.CTkEntry(self.engine_config_frame, textvariable=self.libre_translate_url, height=32).pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(self.engine_config_frame, text="API Key（任意）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+            ctk.CTkEntry(self.engine_config_frame, textvariable=self.libre_translate_key, show="*", height=32).pack(fill="x", pady=(0, 4))
+            ctk.CTkButton(self.engine_config_frame, text="↗ LibreTranslate公式",
+                          command=lambda: webbrowser.open("https://libretranslate.com/"),
+                          fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+            ctk.CTkLabel(self.engine_config_frame, text="※ セルフホストも可能です",
+                        font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(4, 0))
+
+    def _apply_translation_engine(self):
+        """現在の翻訳エンジン設定を適用"""
+        from src.translator import set_current_engine
+
+        engine = self.translation_engine.get()
+        set_current_engine(
+            engine=engine,
+            deepl_api_key=self.deepl_key.get(),
+            google_api_key=self.google_translate_key.get(),
+            libre_url=self.libre_translate_url.get(),
+            libre_api_key=self.libre_translate_key.get(),
+        )
+
+    def start_youtube_auth(self):
+        """YouTube認証を開始"""
+        client_id = self.youtube_client_id.get().strip()
+        client_secret = self.youtube_client_secret.get().strip()
+
+        if not client_id or not client_secret:
+            messagebox.showerror("エラー", "YouTube Client IDとClient Secretを入力してください")
+            return
+
+        # 既存のトークンをチェック
+        if self.youtube_access_token:
+            provider = YouTubeAuthProvider(client_id, client_secret)
+            result = provider.validate_token(self.youtube_access_token)
+            if result.success:
+                self.log_message("✅ 既に有効なYouTubeトークンがあります。再認証は不要です。")
+                self._update_youtube_auth_status(True)
+                return
+
+        # 認証フローを別スレッドで実行
+        threading.Thread(target=self._run_youtube_auth_flow, args=(client_id, client_secret), daemon=True).start()
+
+    def _run_youtube_auth_flow(self, client_id: str, client_secret: str):
+        """YouTube認証フローを実行"""
+        self.log_message("🔗 YouTube認証ページを開きます...")
+
+        provider = YouTubeAuthProvider(client_id, client_secret)
+        auth_url = provider.build_auth_url()
+
+        # ブラウザで認証ページを開く
+        try:
+            webbrowser.open(auth_url)
+        except Exception as e:
+            logger.error(f"Failed to open browser: {e}")
+            self.master.after(0, lambda: self.log_message("⚠ ブラウザを手動で開いてください"))
+
+        # 認証サーバーを起動して待機
+        result = provider.start_auth_server()
+
+        if result.success:
+            self.youtube_access_token = result.access_token
+            self.youtube_refresh_token = result.refresh_token or ""
+
+            # config.jsonに保存
+            self.config["youtube_access_token"] = self.youtube_access_token
+            self.config["youtube_refresh_token"] = self.youtube_refresh_token
+            save_config(self.config)
+
+            self.master.after(0, lambda: self._handle_youtube_auth_success(result))
+        else:
+            self.master.after(0, lambda: self._handle_youtube_auth_failure(result.error_message))
+
+    def _handle_youtube_auth_success(self, result):
+        """YouTube認証成功時の処理"""
+        self.log_message("✅ YouTube認証に成功しました")
+        if result.user_name:
+            self.youtube_auth_username.set(result.user_name)
+            self.log_message(f"👤 YouTubeユーザー: {result.user_name}")
+        self._update_youtube_auth_status(True)
+        self.log_message("💾 YouTubeトークンを保存しました")
+
+    def _handle_youtube_auth_failure(self, error_message: str):
+        """YouTube認証失敗時の処理"""
+        self.log_message(f"⚠ YouTube認証に失敗しました: {error_message}")
+        self._update_youtube_auth_status(False)
+
+    def _update_youtube_auth_status(self, authenticated: bool):
+        """YouTube認証ステータスUIを更新"""
+        if hasattr(self, 'youtube_auth_btn') and hasattr(self, 'youtube_auth_status'):
+            if authenticated:
+                self.youtube_auth_btn.configure(fg_color="#4B5563", text="✓ 認証済み")
+                username = self.youtube_auth_username.get() or "認証済み"
+                self.youtube_auth_status.configure(text=username, text_color=ACCENT)
+            else:
+                self.youtube_auth_btn.configure(fg_color="#FF0000", text="YouTube認証")
+                self.youtube_auth_status.configure(text="未認証", text_color=ACCENT_WARN)
+
+    def _check_youtube_auth_status(self):
+        """起動時にYouTube認証状態をチェック"""
+        if not self.youtube_access_token:
+            return
+
+        client_id = self.youtube_client_id.get().strip()
+        client_secret = self.youtube_client_secret.get().strip()
+
+        if not client_id or not client_secret:
+            return
+
+        # トークンの有効性をチェック
+        try:
+            provider = YouTubeAuthProvider(client_id, client_secret)
+            result = provider.validate_token(self.youtube_access_token)
+
+            if result.success:
+                self._update_youtube_auth_status(True)
+                self.log_message("✅ 保存されたYouTubeトークンが有効です")
+            else:
+                # トークンが無効な場合、リフレッシュを試みる
+                if self.youtube_refresh_token:
+                    self.log_message("🔄 YouTubeトークンを更新しています...")
+                    # リフレッシュは非同期なので別スレッドで実行
+                    threading.Thread(target=self._refresh_youtube_token, args=(client_id, client_secret), daemon=True).start()
+                else:
+                    self.log_message("⚠ YouTubeトークンが無効です。再認証してください。")
+                    self._update_youtube_auth_status(False)
+        except Exception as e:
+            logger.error(f"YouTube auth check error: {e}")
+            self._update_youtube_auth_status(False)
+
+    def _refresh_youtube_token(self, client_id: str, client_secret: str):
+        """YouTubeトークンをリフレッシュ"""
+        import asyncio
+
+        try:
+            provider = YouTubeAuthProvider(client_id, client_secret)
+            provider._refresh_token = self.youtube_refresh_token
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(provider.refresh_access_token())
+            loop.close()
+
+            if result.success:
+                self.youtube_access_token = result.access_token
+                self.config["youtube_access_token"] = result.access_token
+                save_config(self.config)
+
+                self.master.after(0, lambda: self.log_message("✅ YouTubeトークンを更新しました"))
+                self.master.after(0, lambda: self._update_youtube_auth_status(True))
+            else:
+                self.master.after(0, lambda: self.log_message("⚠ YouTubeトークンの更新に失敗しました。再認証してください。"))
+                self.master.after(0, lambda: self._update_youtube_auth_status(False))
+        except Exception as e:
+            logger.error(f"YouTube token refresh error: {e}")
+            self.master.after(0, lambda: self._update_youtube_auth_status(False))
+
     def disconnect_all(self):
         """全ての接続を切断（BOT、TTS、音声認識）"""
         stopped_items = []
@@ -3879,19 +4206,38 @@ window.onload = function() {{
 
     def start_bot(self):
         # 既存のBOTがあれば停止（多重起動防止）
-        if self.bot_instance:
+        if self.bot_instance or self.platform_manager:
             self.stop_bot()
             # 少し待機して古いBOTが停止するのを待つ
             import time
             time.sleep(0.5)
 
-        if not self.token:
-            messagebox.showerror("エラー", "まずは「① トークン認証」を行ってください")
+        # プラットフォーム有効状態を確認
+        twitch_enabled = self.twitch_enabled.get()
+        youtube_enabled = self.youtube_enabled.get()
+
+        if not twitch_enabled and not youtube_enabled:
+            messagebox.showerror("エラー", "TwitchまたはYouTubeのいずれかを有効にしてください\n（設定パネルで有効化できます）")
+            return
+
+        # Twitch有効だがトークンがない場合
+        if twitch_enabled and not self.token:
+            messagebox.showerror("エラー", "Twitchが有効ですが、まず「① トークン認証」を行ってください")
+            return
+
+        # YouTube有効だがトークンがない場合
+        if youtube_enabled and not self.youtube_access_token:
+            messagebox.showerror("エラー", "YouTubeが有効ですが、YouTube認証を行ってください")
             return
 
         channel = self.channel.get().strip()
-        if not channel:
+        if twitch_enabled and not channel:
             messagebox.showerror("エラー", "チャンネル名を設定してください")
+            return
+
+        youtube_live_id = self.youtube_live_id.get().strip()
+        if youtube_enabled and not youtube_live_id:
+            messagebox.showerror("エラー", "YouTubeライブ配信IDを設定してください")
             return
 
         deepl_key = self.deepl_key.get().strip()
@@ -3901,36 +4247,182 @@ window.onload = function() {{
         # 読み上げエンジンを先に起動しておく
         self._ensure_tts_started()
 
-        # BOT起動パラメータを準備（BOTインスタンスはスレッド内で作成）
-        client_id = self.client_id.get().strip()
-        bot_params = (
-            self.token,
-            channel,
-            lambda: self.lang_mode.get(),
-            self,
-            deepl_key,
-            lambda: True,  # tts_enabled_getter
-            lambda: self.tts_include_name_var.get(),  # tts_include_name_getter
-            client_id  # フォロー検知用
-        )
+        # マルチプラットフォームマネージャーで接続を開始
+        threading.Thread(
+            target=self._run_platform_manager,
+            args=(twitch_enabled, youtube_enabled, channel, youtube_live_id, deepl_key),
+            daemon=True
+        ).start()
 
-        # 新しいイベントループでBOTを実行（スレッド内でBOTインスタンス作成）
-        threading.Thread(target=self._run_bot_in_thread, args=bot_params, daemon=True).start()
-        self.log_message(f"🤖 BOTを起動しました (Channel: {channel})")
-        self._set_status(f"BOT稼働中: {channel}", "success")
-        # ヘッダーUI更新
-        self._update_header_bot_button(True)
-        self._update_connection_badge(True)
+    def _run_platform_manager(self, twitch_enabled: bool, youtube_enabled: bool,
+                               channel: str, youtube_live_id: str, deepl_key: str):
+        """マルチプラットフォームマネージャーを実行"""
+        import asyncio
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            # マネージャーを作成
+            manager = MultiPlatformManager(
+                deepl_api_key=deepl_key,
+                get_lang_mode=lambda: self.lang_mode.get(),
+                tts_enabled_getter=lambda: True,
+                tts_include_name_getter=lambda: self.tts_include_name_var.get(),
+                gui_ref=self,
+            )
+
+            # コールバックを設定
+            manager.set_message_callback(self._on_platform_message)
+            manager.set_event_callback(self._on_platform_event)
+
+            self.platform_manager = manager
+
+            # 接続結果を格納
+            connected_platforms = []
+
+            async def connect_platforms():
+                # Twitch接続
+                if twitch_enabled:
+                    client_id = self.client_id.get().strip()
+                    success = await manager.connect_twitch(
+                        token=self.token,
+                        client_id=client_id,
+                        channel=channel,
+                    )
+                    if success:
+                        connected_platforms.append("Twitch")
+                        self.master.after(0, lambda: self.log_message(f"✅ Twitchに接続しました: {channel}"))
+                        # 旧bot_instanceも互換性のため設定
+                        twitch_adapter = manager.get_twitch_adapter()
+                        if twitch_adapter:
+                            self.bot_instance = twitch_adapter.bot
+                    else:
+                        self.master.after(0, lambda: self.log_message("❌ Twitch接続に失敗しました"))
+
+                # YouTube接続
+                if youtube_enabled:
+                    youtube_client_id = self.youtube_client_id.get().strip()
+                    youtube_client_secret = self.youtube_client_secret.get().strip()
+                    success = await manager.connect_youtube(
+                        access_token=self.youtube_access_token,
+                        refresh_token=self.youtube_refresh_token,
+                        client_id=youtube_client_id,
+                        client_secret=youtube_client_secret,
+                        live_id=youtube_live_id,
+                    )
+                    if success:
+                        connected_platforms.append("YouTube")
+                        self.master.after(0, lambda: self.log_message(f"✅ YouTubeに接続しました: {youtube_live_id}"))
+                    else:
+                        self.master.after(0, lambda: self.log_message("❌ YouTube接続に失敗しました"))
+
+                return connected_platforms
+
+            # 接続を実行
+            platforms = loop.run_until_complete(connect_platforms())
+
+            if platforms:
+                status_text = ", ".join(platforms)
+                self.master.after(0, lambda: self.log_message(f"🤖 BOTを起動しました ({status_text})"))
+                self.master.after(0, lambda: self._set_status(f"BOT稼働中: {status_text}", "success"))
+                self.master.after(0, lambda: self._update_header_bot_button(True))
+                self.master.after(0, lambda: self._update_connection_badge(True))
+
+                # イベントループを維持（Twitchのbot.run()は内部で行われるので、YouTubeのポーリングを待機）
+                try:
+                    loop.run_forever()
+                except Exception:
+                    pass
+            else:
+                self.master.after(0, lambda: self.log_message("❌ どのプラットフォームにも接続できませんでした"))
+                self.master.after(0, lambda: self._set_status("接続に失敗しました", "error"))
+
+        except Exception as e:
+            logger.error(f"Platform manager error: {e}", exc_info=True)
+            self.master.after(0, lambda: self.log_message(f"❌ エラーが発生しました: {e}"))
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    def _on_platform_message(self, comment: CommentData):
+        """プラットフォームからのメッセージを受信したとき"""
+        # GUIにコメントを表示
+        self.master.after(0, lambda: self.display_comment(comment))
+
+    def _on_platform_event(self, event: SpecialEvent):
+        """プラットフォームからの特別イベントを受信したとき"""
+        self.master.after(0, lambda: self._handle_special_event(event))
+
+    def _handle_special_event(self, event: SpecialEvent):
+        """特別イベント（フォロー、サブスク、Bits等）を処理"""
+        # イベントタイプに応じたログ出力
+        event_icons = {
+            EventType.FOLLOW: "💚",
+            EventType.SUBSCRIPTION: "⭐",
+            EventType.GIFT_SUB: "🎁",
+            EventType.BITS: "💎",
+            EventType.SUPER_CHAT: "💰",
+            EventType.MEMBER: "🎖️",
+        }
+        icon = event_icons.get(event.event_type, "🔔")
+        self.log_message(f"{icon} {event.message}", log_type="event")
+
+        # 効果音再生
+        sound_map = {
+            EventType.FOLLOW: ("follow_sound_path", "follow_volume_var"),
+            EventType.SUBSCRIPTION: ("sub_sound_path", "sub_volume_var"),
+            EventType.GIFT_SUB: ("gift_sub_sound_path", "gift_sub_volume_var"),
+            EventType.BITS: ("bits_sound_path", "bits_volume_var"),
+            EventType.SUPER_CHAT: ("bits_sound_path", "bits_volume_var"),  # スパチャはBitsと同じ音
+        }
+
+        if event.event_type in sound_map:
+            path_attr, vol_attr = sound_map[event.event_type]
+            sound_path = getattr(self, path_attr, tk.StringVar()).get()
+            volume = getattr(self, vol_attr, tk.DoubleVar()).get()
+            if sound_path:
+                self._play_sound_file(sound_path, volume / 100.0)
+
+    def _play_sound_file(self, path: str, volume: float = 1.0):
+        """効果音ファイルを再生"""
+        if not path or not os.path.exists(path):
+            return
+        pygame = _get_pygame()
+        if pygame is None:
+            return
+        try:
+            sound = pygame.mixer.Sound(path)
+            sound.set_volume(volume)
+            sound.play()
+        except Exception as e:
+            logger.error(f"Sound play error: {e}")
 
     def stop_bot(self):
+        stopped = False
+
+        # マルチプラットフォームマネージャーを停止
+        if self.platform_manager:
+            try:
+                self.platform_manager.stop_sync()
+                self.platform_manager = None
+                stopped = True
+            except Exception as e:
+                logger.error(f"Platform manager停止エラー: {e}")
+
+        # 旧方式のbot_instanceも停止（互換性のため）
         if self.bot_instance:
             try:
                 self.bot_instance.stop()
             except Exception as e:
                 logger.error(f"BOT停止エラー: {e}")
             finally:
-                # BOTインスタンスをクリア
                 self.bot_instance = None
+            stopped = True
+
+        if stopped:
             self.log_message("⛔ BOTを停止しました")
             self._set_status("BOTを停止しました。認証済みです。", "warn")
 
@@ -3966,6 +4458,16 @@ window.onload = function() {{
             logger.info("Voice translator stopped.")
         except Exception as e:
             logger.error(f"Failed to stop voice translator: {e}", exc_info=True)
+
+        try:
+            # プラットフォームマネージャーを停止
+            if self.platform_manager:
+                logger.info("Stopping platform manager...")
+                self.platform_manager.stop_sync()
+                self.platform_manager = None
+                logger.info("Platform manager stopped.")
+        except Exception as e:
+            logger.error(f"Failed to stop platform manager: {e}", exc_info=True)
 
         try:
             # Botを停止
@@ -5028,8 +5530,8 @@ window.onload = function() {{
     def start_participant_tab_auto_refresh(self):
         """参加者管理タブのリストを自動更新"""
         self.refresh_participant_list()
-        # 3秒ごとに更新
-        self.participant_tab_refresh_timer = self.master.after(3000, self.start_participant_tab_auto_refresh)
+        # 5秒ごとに更新（3秒→5秒に延長してCPU負荷軽減）
+        self.participant_tab_refresh_timer = self.master.after(5000, self.start_participant_tab_auto_refresh)
 
     def clear_participants(self):
         """参加者リストを全てクリア"""

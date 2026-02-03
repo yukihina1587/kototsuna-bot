@@ -7,8 +7,18 @@ from src.logger import logger
 CONFIG_FILE = "config.json"
 
 DEFAULT_CONFIG = {
+    # Twitch設定
+    "twitch_enabled": False,  # Twitch接続を有効にするか
     "twitch_client_id": "",
     "twitch_access_token": "",  # 保存されたアクセストークン（自動ログイン用）
+    # YouTube設定
+    "youtube_enabled": False,  # YouTube接続を有効にするか
+    "youtube_client_id": "",
+    "youtube_client_secret": "",
+    "youtube_access_token": "",
+    "youtube_refresh_token": "",
+    "youtube_live_id": "",  # ライブ配信ID（ビデオID）
+    # 共通設定
     "deepl_api_key": "",
     "channel_name": "",
     "channel_mode": "manual",  # auto: 認証アカウントと同じ, manual: 手動入力
@@ -31,6 +41,12 @@ DEFAULT_CONFIG = {
     "gift_sub_sound_volume": 80,
     "follow_sound_path": "",  # フォロー
     "follow_sound_volume": 80,
+    # 翻訳設定
+    "chat_translation_enabled": False,  # チャット翻訳を有効にするか
+    "translation_engine": "deepl",  # 翻訳エンジン: deepl / google / libre
+    "google_translate_api_key": "",  # Google Cloud Translation APIキー
+    "libre_translate_url": "https://libretranslate.com",  # LibreTranslate URL
+    "libre_translate_api_key": "",  # LibreTranslate APIキー（任意）
     # 翻訳フィルタとカスタム辞書
     "translation_filters": [],
     "translation_dictionary": [],  # [{ "source": "原文", "target": "置換後" }]
@@ -49,6 +65,7 @@ DEFAULT_CONFIG = {
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
+VALID_TRANSLATION_ENGINES = {"deepl", "google", "libre"}
 VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
@@ -66,6 +83,12 @@ def validate_config(config_data):
     if validated.get("translate_mode") not in VALID_TRANSLATE_MODES:
         logger.warning(f"translate_mode is invalid: {validated.get('translate_mode')}, fallback to 自動")
         validated["translate_mode"] = "自動"
+        changed = True
+
+    # translation_engine
+    if validated.get("translation_engine") not in VALID_TRANSLATION_ENGINES:
+        logger.warning(f"translation_engine is invalid: {validated.get('translation_engine')}, fallback to deepl")
+        validated["translation_engine"] = "deepl"
         changed = True
 
     # ui_theme
@@ -95,11 +118,26 @@ def validate_config(config_data):
             validated[key] = bool(validated.get(key))
             changed = True
 
+    # プラットフォーム有効フラグ
+    for key in ["twitch_enabled", "youtube_enabled"]:
+        if not isinstance(validated.get(key), bool):
+            validated[key] = bool(validated.get(key))
+            changed = True
+
     # 文字列系はNone回避
     for key in [
         "twitch_client_id",
         "twitch_access_token",
+        "youtube_client_id",
+        "youtube_client_secret",
+        "youtube_access_token",
+        "youtube_refresh_token",
+        "youtube_live_id",
         "deepl_api_key",
+        "google_translate_api_key",
+        "libre_translate_url",
+        "libre_translate_api_key",
+        "translation_engine",
         "channel_name",
         "channel_mode",
         "voicevox_url",
@@ -132,7 +170,7 @@ def validate_config(config_data):
         changed = True
 
     # ブール系
-    for key in ["chat_html_output", "chat_html_newest_first"]:
+    for key in ["chat_html_output", "chat_html_newest_first", "chat_translation_enabled"]:
         if not isinstance(validated.get(key), bool):
             validated[key] = bool(validated.get(key))
             changed = True
