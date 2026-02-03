@@ -10,18 +10,38 @@ import json
 import platform
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+from collections import deque
 from datetime import datetime
 from typing import Dict
 
-# pygameは効果音再生で使用
-try:
-    import pygame
-    if not pygame.mixer.get_init():
-        pygame.mixer.init()
-    PYGAME_AVAILABLE = True
-except Exception as e:
-    pygame = None
-    PYGAME_AVAILABLE = False
+# メモリ最適化: ログ履歴の上限
+LOG_MAX_ENTRIES = 500
+CHAT_LOG_MAX_ENTRIES = 500
+
+# メモリ最適化: pygameは遅延インポート（使用時のみロード）
+_pygame = None
+_pygame_initialized = False
+
+
+def _get_pygame():
+    """pygameを遅延ロード（効果音再生時のみ初期化）"""
+    global _pygame, _pygame_initialized
+    if _pygame_initialized:
+        return _pygame
+    try:
+        import pygame
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        _pygame = pygame
+        _pygame_initialized = True
+        return pygame
+    except Exception as e:
+        _pygame_initialized = True
+        return None
+
+
+# 後方互換性のため
+PYGAME_AVAILABLE = True  # 実際の利用時にチェック
 
 from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info
 from src.auth.youtube import YouTubeAuthProvider
@@ -166,9 +186,9 @@ class KototsunaApp:
         self.tracker = get_tracker()
         self.tracker.enable()
 
-        # ログ履歴（時系列で記録）
-        self.chat_log_history = []
-        self.chat_history = []
+        # ログ履歴（時系列で記録、メモリ最適化のため上限あり）
+        self.chat_log_history = deque(maxlen=CHAT_LOG_MAX_ENTRIES)
+        self.chat_history = deque(maxlen=CHAT_LOG_MAX_ENTRIES)
 
         # Variables
         self.channel = tk.StringVar(value=self.config.get("channel_name", ""))
@@ -733,7 +753,7 @@ class KototsunaApp:
         self.comment_paned.add(tile_container, minsize=300)
         self.comment_paned.add(log_container, minsize=80)
 
-        self.log_history = []
+        self.log_history = deque(maxlen=LOG_MAX_ENTRIES)
 
     def _build_event_log_area(self):
         """特別イベントログエリアを構築"""
@@ -1695,8 +1715,8 @@ class KototsunaApp:
         comment_paned.add(tile_container, minsize=200)
         comment_paned.add(log_container, minsize=100)
 
-        # ログ履歴
-        self.log_history = []
+        # ログ履歴（メモリ最適化のため上限あり）
+        self.log_history = deque(maxlen=LOG_MAX_ENTRIES)
 
         # ログ操作ボタン
         log_btn_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
@@ -3516,6 +3536,10 @@ window.onload = function() {{
             return
 
         try:
+            pygame = _get_pygame()
+            if pygame is None:
+                logger.warning("pygame利用不可のため効果音スキップ")
+                return
             if not pygame.mixer.get_init():
                 pygame.mixer.init()
             sound = pygame.mixer.Sound(path)
@@ -3540,10 +3564,10 @@ window.onload = function() {{
         self.log_special_event(message, event_type=event_type)
 
     def start_participant_auto_refresh(self):
-        """参加者リストの自動更新を開始（3秒ごと）"""
+        """参加者リストの自動更新を開始（5秒ごと、メモリ最適化）"""
         self.refresh_main_participant_list()
-        # 3秒後に再度実行
-        self.participant_refresh_timer = self.master.after(3000, self.start_participant_auto_refresh)
+        # 5秒後に再度実行（3秒→5秒に延長してCPU負荷軽減）
+        self.participant_refresh_timer = self.master.after(5000, self.start_participant_auto_refresh)
 
     def refresh_main_participant_list(self):
         """メイン画面の参加者リストを更新"""
@@ -4364,7 +4388,10 @@ window.onload = function() {{
 
     def _play_sound_file(self, path: str, volume: float = 1.0):
         """効果音ファイルを再生"""
-        if not PYGAME_AVAILABLE or not path or not os.path.exists(path):
+        if not path or not os.path.exists(path):
+            return
+        pygame = _get_pygame()
+        if pygame is None:
             return
         try:
             sound = pygame.mixer.Sound(path)
@@ -5503,8 +5530,8 @@ window.onload = function() {{
     def start_participant_tab_auto_refresh(self):
         """参加者管理タブのリストを自動更新"""
         self.refresh_participant_list()
-        # 3秒ごとに更新
-        self.participant_tab_refresh_timer = self.master.after(3000, self.start_participant_tab_auto_refresh)
+        # 5秒ごとに更新（3秒→5秒に延長してCPU負荷軽減）
+        self.participant_tab_refresh_timer = self.master.after(5000, self.start_participant_tab_auto_refresh)
 
     def clear_participants(self):
         """参加者リストを全てクリア"""

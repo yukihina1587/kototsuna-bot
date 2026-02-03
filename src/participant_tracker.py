@@ -1,12 +1,19 @@
 """
 参加者追跡モジュール
 チャットのキーワードを検出して参加者を記録
+
+メモリ最適化:
+- Dict使用でO(1)ルックアップ
+- 参加者数上限設定
 """
 import json
-import os
+from collections import OrderedDict
 from datetime import datetime
 from typing import List, Dict, Optional
 from src.logger import logger
+
+# メモリ最適化: 参加者数の上限
+PARTICIPANT_MAX = 1000
 
 
 class ParticipantTracker:
@@ -20,37 +27,23 @@ class ParticipantTracker:
             keywords: 検出するキーワードリスト（デフォルト: ["参加希望", "参加"]）
         """
         self.keywords = keywords or ["参加希望", "参加", "!参加", "!join"]
-        self.participants: List[Dict[str, str]] = []
+        # OrderedDictで挿入順を保持しつつO(1)ルックアップ
+        self._participants: OrderedDict[str, Dict[str, str]] = OrderedDict()
         self.enabled = False
 
     def set_keywords(self, keywords: List[str]):
-        """
-        キーワードを設定
-
-        Args:
-            keywords: 検出するキーワードリスト
-        """
+        """キーワードを設定"""
         self.keywords = keywords
         logger.info(f"参加キーワードを設定: {keywords}")
 
     def add_keyword(self, keyword: str):
-        """
-        キーワードを追加
-
-        Args:
-            keyword: 追加するキーワード
-        """
+        """キーワードを追加"""
         if keyword and keyword not in self.keywords:
             self.keywords.append(keyword)
             logger.info(f"参加キーワードを追加: {keyword}")
 
     def remove_keyword(self, keyword: str):
-        """
-        キーワードを削除
-
-        Args:
-            keyword: 削除するキーワード
-        """
+        """キーワードを削除"""
         if keyword in self.keywords:
             self.keywords.remove(keyword)
             logger.info(f"参加キーワードを削除: {keyword}")
@@ -59,17 +52,12 @@ class ParticipantTracker:
         """
         メッセージにキーワードが含まれているかチェック
 
-        Args:
-            username: ユーザー名
-            message: メッセージ内容
-
         Returns:
             参加者として登録した場合True
         """
         if not self.enabled:
             return False
 
-        # メッセージにキーワードが含まれているかチェック
         for keyword in self.keywords:
             if keyword.lower() in message.lower():
                 return self.add_participant(username, message, keyword)
@@ -80,137 +68,116 @@ class ParticipantTracker:
         """
         参加者を追加
 
-        Args:
-            username: ユーザー名
-            message: メッセージ内容
-            keyword: 検出されたキーワード
-
         Returns:
             追加に成功した場合True（重複の場合False）
         """
-        # 既に登録されているかチェック
-        if any(p['username'] == username for p in self.participants):
+        # O(1)で重複チェック
+        if username in self._participants:
             logger.debug(f"Already registered: {username}")
             return False
 
+        # 上限チェック - 古い参加者を削除
+        while len(self._participants) >= PARTICIPANT_MAX:
+            oldest = next(iter(self._participants))
+            del self._participants[oldest]
+            logger.debug(f"参加者上限到達、古い参加者を削除: {oldest}")
+
         # 参加者を追加
-        participant = {
+        self._participants[username] = {
             'username': username,
             'message': message,
             'keyword': keyword,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
-        self.participants.append(participant)
         logger.info(f"参加者登録: {username} (キーワード: {keyword})")
         return True
 
     def remove_participant(self, username: str) -> bool:
-        """
-        参加者を削除
-
-        Args:
-            username: ユーザー名
-
-        Returns:
-            削除に成功した場合True
-        """
-        original_count = len(self.participants)
-        self.participants = [p for p in self.participants if p['username'] != username]
-
-        if len(self.participants) < original_count:
+        """参加者を削除"""
+        if username in self._participants:
+            del self._participants[username]
             logger.info(f"参加者削除: {username}")
             return True
         return False
 
     def get_participants(self) -> List[Dict[str, str]]:
-        """
-        参加者リストを取得
+        """参加者リストを取得（後方互換性のためリストで返す）"""
+        return list(self._participants.values())
 
-        Returns:
-            参加者情報のリスト
-        """
-        return self.participants.copy()
+    # 後方互換性のためプロパティを追加
+    @property
+    def participants(self) -> List[Dict[str, str]]:
+        """後方互換性のためリストとしてアクセス可能"""
+        return list(self._participants.values())
 
     def get_participant_names(self) -> List[str]:
-        """
-        参加者名のリストを取得
-
-        Returns:
-            参加者名のリスト
-        """
-        return [p['username'] for p in self.participants]
+        """参加者名のリストを取得"""
+        return list(self._participants.keys())
 
     def get_count(self) -> int:
-        """
-        参加者数を取得
-
-        Returns:
-            参加者数
-        """
-        return len(self.participants)
+        """参加者数を取得"""
+        return len(self._participants)
 
     def clear(self):
         """参加者リストをクリア"""
-        count = len(self.participants)
-        self.participants.clear()
+        count = len(self._participants)
+        self._participants.clear()
         logger.info(f"参加者リストをクリア ({count}人)")
 
     def move_participant(self, from_index: int, to_index: int) -> bool:
-        """
-        参加者の順序を変更
+        """参加者の順序を変更"""
+        participants_list = list(self._participants.keys())
+        if 0 <= from_index < len(participants_list) and 0 <= to_index < len(participants_list):
+            # OrderedDictの順序を変更
+            username = participants_list[from_index]
+            participant_data = self._participants[username]
 
-        Args:
-            from_index: 移動元のインデックス
-            to_index: 移動先のインデックス
+            # 新しいOrderedDictを作成して順序を変更
+            new_participants = OrderedDict()
+            keys = list(self._participants.keys())
+            keys.remove(username)
+            keys.insert(to_index, username)
 
-        Returns:
-            成功した場合True
-        """
-        if 0 <= from_index < len(self.participants) and 0 <= to_index < len(self.participants):
-            participant = self.participants.pop(from_index)
-            self.participants.insert(to_index, participant)
+            for key in keys:
+                new_participants[key] = self._participants[key]
+
+            self._participants = new_participants
             logger.debug(f"参加者順序変更: {from_index} → {to_index}")
             return True
         return False
 
     def update_participant(self, old_username: str, new_username: str) -> bool:
-        """
-        参加者のユーザー名を更新
-
-        Args:
-            old_username: 元のユーザー名
-            new_username: 新しいユーザー名
-
-        Returns:
-            成功した場合True
-        """
-        for participant in self.participants:
-            if participant['username'] == old_username:
-                participant['username'] = new_username
-                logger.info(f"参加者名変更: {old_username} → {new_username}")
-                return True
+        """参加者のユーザー名を更新"""
+        if old_username in self._participants:
+            data = self._participants[old_username]
+            data['username'] = new_username
+            # 順序を保持しつつキーを変更
+            new_participants = OrderedDict()
+            for key, value in self._participants.items():
+                if key == old_username:
+                    new_participants[new_username] = data
+                else:
+                    new_participants[key] = value
+            self._participants = new_participants
+            logger.info(f"参加者名変更: {old_username} → {new_username}")
+            return True
         return False
 
     def export_to_text(self) -> str:
-        """
-        テキスト形式でエクスポート
-
-        Returns:
-            参加者リストのテキスト
-        """
-        if not self.participants:
+        """テキスト形式でエクスポート"""
+        if not self._participants:
             return "参加者はいません。"
 
         lines = [
             "=== 参加者リスト ===",
-            f"合計: {len(self.participants)}人",
+            f"合計: {len(self._participants)}人",
             f"生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "No. | ユーザー名 | 登録日時 | キーワード",
             "-" * 60
         ]
 
-        for i, participant in enumerate(self.participants, 1):
+        for i, participant in enumerate(self._participants.values(), 1):
             lines.append(
                 f"{i:3d} | {participant['username']:20s} | "
                 f"{participant['timestamp']} | {participant['keyword']}"
@@ -219,15 +186,7 @@ class ParticipantTracker:
         return "\n".join(lines)
 
     def export_to_file(self, filepath: str) -> bool:
-        """
-        ファイルにエクスポート
-
-        Args:
-            filepath: 出力先ファイルパス
-
-        Returns:
-            成功した場合True
-        """
+        """ファイルにエクスポート"""
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(self.export_to_text())
@@ -238,21 +197,13 @@ class ParticipantTracker:
             return False
 
     def export_to_json(self, filepath: str) -> bool:
-        """
-        JSON形式でエクスポート
-
-        Args:
-            filepath: 出力先ファイルパス
-
-        Returns:
-            成功した場合True
-        """
+        """JSON形式でエクスポート"""
         try:
             data = {
                 'export_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'count': len(self.participants),
+                'count': len(self._participants),
                 'keywords': self.keywords,
-                'participants': self.participants
+                'participants': list(self._participants.values())
             }
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)

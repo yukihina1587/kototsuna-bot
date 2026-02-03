@@ -37,6 +37,20 @@ class EventSubHandler:
         self._moderator_id: Optional[str] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._task: Optional[asyncio.Task] = None
+        # メモリ最適化: HTTP APIコール用の共有セッション
+        self._http_session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_http_session(self) -> aiohttp.ClientSession:
+        """共有HTTPセッションを取得（再利用）"""
+        if self._http_session is None or self._http_session.closed:
+            self._http_session = aiohttp.ClientSession()
+        return self._http_session
+
+    async def _close_http_session(self) -> None:
+        """HTTPセッションをクローズ"""
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
+            self._http_session = None
 
     async def start(self) -> None:
         """EventSub接続を開始"""
@@ -77,6 +91,8 @@ class EventSubHandler:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        # HTTPセッションをクリーンアップ
+        await self._close_http_session()
 
     async def _get_user_id(self, login: str) -> Optional[str]:
         """ユーザー名からユーザーIDを取得"""
@@ -86,12 +102,12 @@ class EventSubHandler:
             "Client-Id": self.client_id,
         }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if data.get("data"):
-                            return data["data"][0]["id"]
+            session = await self._get_http_session()
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("data"):
+                        return data["data"][0]["id"]
         except Exception as e:
             logger.error(f"Failed to get user ID for {login}: {e}")
         return None
@@ -104,12 +120,12 @@ class EventSubHandler:
             "Client-Id": self.client_id,
         }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if data.get("data"):
-                            return data["data"][0]["id"]
+            session = await self._get_http_session()
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("data"):
+                        return data["data"][0]["id"]
         except Exception as e:
             logger.error(f"Failed to get token user ID: {e}")
         return None
@@ -191,13 +207,13 @@ class EventSubHandler:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=body) as resp:
-                    if resp.status in (200, 202):
-                        logger.info("EventSub: Subscribed to channel.follow")
-                    else:
-                        error = await resp.text()
-                        logger.error(f"EventSub subscription failed: {resp.status} - {error}")
+            session = await self._get_http_session()
+            async with session.post(url, headers=headers, json=body) as resp:
+                if resp.status in (200, 202):
+                    logger.info("EventSub: Subscribed to channel.follow")
+                else:
+                    error = await resp.text()
+                    logger.error(f"EventSub subscription failed: {resp.status} - {error}")
         except Exception as e:
             logger.error(f"Failed to subscribe to follows: {e}", exc_info=True)
 

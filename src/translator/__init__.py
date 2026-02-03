@@ -50,10 +50,11 @@ __all__ = [
 
 # ========================================
 # キャッシュ・レート制限・統計（共通）
+# メモリ最適化: キャッシュサイズ・TTLを削減
 # ========================================
 
-CACHE_MAX_ENTRIES = 500
-CACHE_TTL_SECONDS = 600
+CACHE_MAX_ENTRIES = 200  # 500→200に削減
+CACHE_TTL_SECONDS = 300  # 10分→5分に短縮
 MIN_REQUEST_INTERVAL = 0.4
 MAX_CONCURRENT_REQUESTS = 2
 
