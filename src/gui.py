@@ -2597,6 +2597,10 @@ class KototsunaApp:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self._build_chat_html())
             logger.debug(f"Chat HTML exported to {path}")
+
+            # オーバーレイサーバーにパスを通知（OBS Browser Source用）
+            from src.overlay_server import set_chat_html_path
+            set_chat_html_path(path)
         except Exception as e:
             logger.error(f"Failed to export chat HTML: {e}", exc_info=True)
             self.log_message(f"⚠️ チャットHTMLの書き出しに失敗しました: {e}", log_type="error")
@@ -2959,8 +2963,7 @@ window.onload = function() {{
                 self.setWindowTitle("チャット - 配信用")
                 self.setGeometry(50, 50, 350, 900)
 
-                # 常に最前面に表示
-                self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+                # 通常のウィンドウとして表示（最前面固定なし）
 
                 # WebEngineViewを作成
                 self.browser = QWebEngineView()
@@ -3017,8 +3020,7 @@ window.onload = function() {{
         self.chat_html_window.geometry("350x900+50+50")
         self.chat_html_window.configure(bg="#1a1a1a")
 
-        # ウィンドウを常に最前面に表示（配信用）
-        self.chat_html_window.attributes('-topmost', True)
+        # 通常のウィンドウとして表示（最前面固定なし）
 
         # 閉じるボタンの動作を設定（×ボタンで閉じたときにトグルもOFFにする）
         self.chat_html_window.protocol("WM_DELETE_WINDOW", self._on_tkinter_window_closed)

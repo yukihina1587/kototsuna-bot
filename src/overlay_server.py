@@ -12,6 +12,7 @@ history = []
 _httpd_instance = None
 _server_thread = None
 _overlay_port = DEFAULT_PORT
+_chat_html_path = None
 
 
 class RequestHandler(http.server.SimpleHTTPRequestHandler):
@@ -28,9 +29,28 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(history).encode('utf-8'))
+        elif self.path.startswith('/chat'):
+            self._serve_chat_html()
         else:
             # Serve static files (overlay.html)
             super().do_GET()
+
+    def _serve_chat_html(self):
+        """チャットHTMLを配信"""
+        if _chat_html_path and os.path.exists(_chat_html_path):
+            try:
+                with open(_chat_html_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.end_headers()
+                self.wfile.write(content.encode('utf-8'))
+            except Exception as e:
+                self.send_error(500, f"Error reading chat HTML: {e}")
+        else:
+            self.send_error(404, "Chat HTML not available")
 
 
 def _find_free_port(start_port: int = DEFAULT_PORT, max_tries: int = 10) -> int:
@@ -88,6 +108,12 @@ def run_server_thread():
     t = threading.Thread(target=start_server, daemon=True)
     t.start()
     _server_thread = t
+
+
+def set_chat_html_path(path: str):
+    """チャットHTMLのファイルパスを設定"""
+    global _chat_html_path
+    _chat_html_path = path
 
 
 def stop_server():
