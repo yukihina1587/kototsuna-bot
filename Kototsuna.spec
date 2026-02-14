@@ -44,13 +44,19 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('tkinterweb')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
-# PyQt6とWebEngineを収集（完全なブラウザエンジンのHTML表示用）
-for module in ['PyQt6', 'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', 'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebEngineCore']:
-    try:
-        tmp_ret = collect_all(module)
-        datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-    except Exception as e:
-        print(f"Warning: Could not collect {module}: {e}")
+# PyQt6: 必要なモジュールのみ明示指定（全モジュール収集による警告・肥大化を防止）
+hiddenimports += [
+    'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets',
+    'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebEngineCore',
+    'PyQt6.QtNetwork', 'PyQt6.QtWebChannel', 'PyQt6.QtPrintSupport',
+]
+# PyQt6のデータファイルとバイナリはパッケージから収集（WebEngineリソース等）
+try:
+    tmp_ret = collect_all('PyQt6')
+    datas += tmp_ret[0]; binaries += tmp_ret[1]
+    # hiddenimportsはcollect_allから取らない（不要な全モジュールが入るため）
+except Exception as e:
+    print(f"Warning: Could not collect PyQt6: {e}")
 
 # srcパッケージ内の全サブモジュールを収集
 hiddenimports += collect_submodules('src')
@@ -70,7 +76,20 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=['rthook_tcltk.py'],
-    excludes=[],
+    excludes=[
+        # 未使用PyQt6モジュールを除外（ビルド警告削減・exe軽量化）
+        'PyQt6.QtBluetooth', 'PyQt6.QAxContainer', 'PyQt6.QtDBus',
+        'PyQt6.QtDesigner', 'PyQt6.QtHelp', 'PyQt6.QtMultimedia',
+        'PyQt6.QtMultimediaWidgets', 'PyQt6.QtNfc', 'PyQt6.QtOpenGL',
+        'PyQt6.QtOpenGLWidgets', 'PyQt6.QtPdf', 'PyQt6.QtPdfWidgets',
+        'PyQt6.QtPositioning', 'PyQt6.QtQml', 'PyQt6.QtQuick',
+        'PyQt6.QtQuick3D', 'PyQt6.QtQuickWidgets', 'PyQt6.QtRemoteObjects',
+        'PyQt6.QtSensors', 'PyQt6.QtSerialPort', 'PyQt6.QtSpatialAudio',
+        'PyQt6.QtSql', 'PyQt6.QtStateMachine', 'PyQt6.QtSvg',
+        'PyQt6.QtSvgWidgets', 'PyQt6.QtTest', 'PyQt6.QtTextToSpeech',
+        'PyQt6.QtWebEngineQuick', 'PyQt6.QtWebSockets', 'PyQt6.QtXml',
+        'PyQt6.lupdate',
+    ],
     noarchive=False,
     optimize=0,
 )
