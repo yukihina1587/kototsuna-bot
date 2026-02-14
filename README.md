@@ -35,6 +35,9 @@ Twitchのチャットメッセージをリアルタイムで翻訳するBOTで�
 - **UIテーマ**: 4種類のテーマから選択可能
 - **ログレベル切り替え**: DEBUG/INFO/WARNING/ERRORの動的切り替え
 - **API安定性**: ネットワークエラー時の自動リトライ（指数バックオフ）
+- **リソース監視**: メモリ/CPU/スレッドのリアルタイム監視
+- **パフォーマンス最適化**: 翻訳バッチ処理、GUI差分更新、メモリ自動制限
+- **自動アップデート**: GitHub Releasesからの自動更新チェック
 
 ## 必要なもの
 
@@ -169,6 +172,11 @@ OBSなどの配信ソフトでブラウザソースとして使用できます�
 | `log_level` | ログレベル | "INFO" |
 | `bits_sound_path` | Bits効果音パス | "" |
 | `bits_sound_volume` | Bits効果音音量 | 80 |
+| `chat_log_history_limit` | ログ履歴の上限 | 1000 |
+| `participant_limit` | 参加者数の上限 | 1000 |
+| `auto_restart_enabled` | メモリ超過時の自動再起動 | false |
+| `auto_restart_threshold_mb` | 自動再起動の閾値(MB) | 1000 |
+| `auto_update_check` | 起動時のアップデート確認 | true |
 
 </details>
 
@@ -197,6 +205,12 @@ OBSなどの配信ソフトでブラウザソースとして使用できます�
 1. マイクが正しく選択されていることを確認
 2. Gladia API Keyが設定されていることを確認（または Google SR を使用）
 3. マイクのアクセス権限を確認
+
+### メモリ使用量が増え続ける
+
+1. `config.json`の`auto_restart_enabled`を`true`に設定すると閾値超過時に自動再起動
+2. ログ履歴上限は`chat_log_history_limit`で調整可能（デフォルト1000）
+3. `scripts/profile_app.py cpu`でCPUプロファイリングが可能
 
 ## ライセンス
 

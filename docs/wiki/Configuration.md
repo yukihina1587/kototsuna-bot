@@ -29,6 +29,8 @@
 | `chat_translation_enabled` | チャット翻訳の有効/無効 | `false` |
 | `translation_filters` | 翻訳スキップワード | `[]` |
 | `translation_dictionary` | カスタム辞書 | `[]` |
+| `translation_batch_size` | バッチ翻訳の最大件数 | `5` |
+| `translation_batch_wait_ms` | バッチ翻訳の待機時間（ms） | `100` |
 
 ### カスタム辞書の形式
 
@@ -95,6 +97,26 @@
 ### バブルスタイル
 
 `classic`, `modern`, `box`, `bubble`, `neon`, `cute`, `minimal`
+
+## アップデート設定
+
+| キー | 説明 | デフォルト |
+|-----|------|-----------|
+| `auto_update_check` | 起動時にアップデートを確認 | `true` |
+| `include_prerelease` | プレリリースも含めて確認 | `false` |
+
+## パフォーマンス設定
+
+| キー | 説明 | デフォルト |
+|-----|------|-----------|
+| `chat_log_history_limit` | ログ履歴の保持上限数 | `1000` |
+| `participant_limit` | 参加者リストの上限数 | `1000` |
+| `auto_restart_enabled` | メモリ超過時の自動再起動 | `false` |
+| `auto_restart_threshold_mb` | 自動再起動のメモリ閾値（MB） | `1000` |
+
+### 自動再起動
+
+`auto_restart_enabled` を `true` にすると、メモリ使用量が `auto_restart_threshold_mb` を超えた時にダイアログを表示し、ユーザーの確認後にアプリケーションを再起動します。
 
 ## 設定ファイルの場所
 

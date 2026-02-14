@@ -23,6 +23,7 @@ Twitchのチャットメッセージをリアルタイムで翻訳するBOTで�
 | [はじめに](Getting-Started) | インストールと初期設定 |
 | [機能一覧](Features) | すべての機能の詳細 |
 | [設定](Configuration) | 設定項目の説明 |
+| [パフォーマンス](Performance) | メモリ管理・最適化・プロファイリング |
 | [トラブルシューティング](Troubleshooting) | よくある問題と解決方法 |
 | [API参照](API-Reference) | オーバーレイAPIの仕様 |
 

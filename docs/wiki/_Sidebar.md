@@ -7,6 +7,7 @@
 ### 機能
 - [機能一覧](Features)
 - [設定](Configuration)
+- [パフォーマンス](Performance)
 
 ### サポート
 - [トラブルシューティング](Troubleshooting)
