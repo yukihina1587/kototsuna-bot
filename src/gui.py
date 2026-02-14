@@ -1027,9 +1027,6 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
-        # 保存ボタン
-        ctk.CTkButton(parent, text="設定を保存", command=self.save_settings, height=40).pack(fill="x", pady=(8, 0))
-
     def _build_dictionary_panel(self, parent):
         """辞書パネルのコンテンツ"""
         try:
@@ -1985,10 +1982,7 @@ class KototsunaApp:
         ctk.CTkButton(follow_frame, text="再生", width=60, fg_color="#2e8b57",
                       command=lambda: self.play_event_sound("follow")).grid(row=0, column=3)
 
-        # 保存ボタン
-        ctk.CTkButton(frm_set, text="設定を保存", command=self.save_settings, height=40, width=220).grid(row=event_row+6, column=0, columnspan=3, pady=30, sticky="w")
-
-        ctk.CTkLabel(frm_set, text="※ 設定変更後は必ず「保存」を押してください。\n※ チャンネル名なども保存されます。", text_color="gray").grid(row=event_row+7, column=0, columnspan=3)
+        ctk.CTkLabel(frm_set, text="※ 設定は自動保存されます。", text_color="gray").grid(row=event_row+6, column=0, columnspan=3, pady=(20, 0))
 
     def diagnose_tts(self):
         """TTS（読み上げ）システムの診断を実行"""
@@ -2304,6 +2298,8 @@ class KototsunaApp:
             self.gladia_key,
             self.voicevox_path,
             self.voicevox_auto_start,
+            self.voicevox_speaker_id,
+            self.voicevox_speaker_name,
             self.channel,
             self.channel_mode,
             self.lang_mode,
@@ -2311,12 +2307,20 @@ class KototsunaApp:
             self.sub_sound_path,
             self.bits_volume_var,
             self.sub_volume_var,
+            self.gift_sub_sound_path,
+            self.gift_sub_volume_var,
+            self.follow_sound_path,
+            self.follow_volume_var,
             self.comment_bg,
             self.comment_fg,
             self.comment_font,
             self.comment_bubble_style,
             self.chat_html_output,
             self.chat_html_path,
+            self.chat_html_newest_first,
+            self.tts_volume_var,
+            self.tts_speed_var,
+            self.tts_include_name_var,
         ]
         for var in watch_vars:
             try:
@@ -2352,6 +2356,9 @@ class KototsunaApp:
             self.config["chat_html_output"] = self.chat_html_output.get()
             self.config["chat_html_path"] = self.chat_html_path.get().strip()
             self.config["chat_html_newest_first"] = self.chat_html_newest_first.get()
+            self.config["tts_volume"] = int(self.tts_volume_var.get())
+            self.config["tts_speed"] = round(self.tts_speed_var.get(), 2)
+            self.config["tts_include_name"] = self.tts_include_name_var.get()
 
             # VOICEVOX Managerのパスを更新
             if self.voicevox_path.get().strip() and hasattr(self, "voicevox_manager"):
@@ -2496,7 +2503,8 @@ class KototsunaApp:
             "name": comment.display_username,
             "message": comment.message,
             "translated": comment.translated,
-            "time": comment.formatted_timestamp
+            "time": comment.formatted_timestamp,
+            "emotes": comment.emotes if comment.emotes else [],
         }
         self.chat_history.append(entry)
         if len(self.chat_history) > 100:
@@ -2706,6 +2714,37 @@ class KototsunaApp:
                 .sub { color: #88c0d0; margin-left: 10px; }
             """
 
+    def _replace_emotes_with_images(self, message: str, emotes: list) -> str:
+        """エモートをimg タグに置換し、テキスト部分はHTMLエスケープする"""
+        if not emotes:
+            return message.replace("<", "&lt;").replace(">", "&gt;")
+
+        # エモートを位置でソート（昇順）
+        sorted_emotes = sorted(emotes, key=lambda e: e["start"])
+        parts = []
+        last_end = 0
+        for emote in sorted_emotes:
+            start = emote["start"]
+            end = emote["end"] + 1  # endは含む位置なので+1
+            # エモート前のテキストをエスケープ
+            if start > last_end:
+                text = message[last_end:start]
+                parts.append(text.replace("<", "&lt;").replace(">", "&gt;"))
+            # エモートをimg タグに置換
+            emote_id = str(emote["id"]).replace('"', "")
+            emote_name = emote.get("name", "").replace('"', "&quot;")
+            parts.append(
+                f'<img src="https://static-cdn.jtvnw.net/emoticons/v2/{emote_id}/static/light/1.0" '
+                f'alt="{emote_name}" title="{emote_name}" '
+                f'style="vertical-align: middle; height: 1.2em;">'
+            )
+            last_end = end
+        # 残りのテキスト
+        if last_end < len(message):
+            text = message[last_end:]
+            parts.append(text.replace("<", "&lt;").replace(">", "&gt;"))
+        return "".join(parts)
+
     def _build_chat_html(self) -> str:
         style_name = self.comment_bubble_style.get()
         css = self._get_css_style(style_name)
@@ -2731,7 +2770,7 @@ class KototsunaApp:
         for c in chat_list:
             # HTMLエスケープ（簡易）
             name = str(c['name']).replace("<", "&lt;").replace(">", "&gt;")
-            message = str(c['message']).replace("<", "&lt;").replace(">", "&gt;")
+            message = self._replace_emotes_with_images(str(c['message']), c.get('emotes', []))
             translated = str(c['translated']).replace("<", "&lt;").replace(">", "&gt;") if c.get("translated") else ""
 
             sub_html = f"<div class='sub'>{translated}</div>" if translated else ""
@@ -2852,6 +2891,14 @@ window.onload = function() {{
 
     def _on_tkinter_window_closed(self):
         """Tkinterウィンドウが×で閉じられた時の処理"""
+        # ウィンドウジオメトリを保存
+        if hasattr(self, 'chat_html_window') and self.chat_html_window:
+            try:
+                geom = self.chat_html_window.geometry()
+                self.config["chat_html_window_geometry"] = geom
+                save_config(self.config)
+            except Exception:
+                pass
         # ウィンドウを破棄
         if hasattr(self, 'chat_html_window') and self.chat_html_window:
             try:
@@ -2961,7 +3008,18 @@ window.onload = function() {{
                 self.html_path = html_path
                 self.parent_gui = parent_gui
                 self.setWindowTitle("チャット - 配信用")
-                self.setGeometry(50, 50, 350, 900)
+                # 保存済みジオメトリから復元
+                geom = parent_gui.config.get("chat_html_window_geometry", "350x900+50+50")
+                try:
+                    import re as _re
+                    m = _re.match(r'(\d+)x(\d+)\+(-?\d+)\+(-?\d+)', geom)
+                    if m:
+                        w, h, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                        self.setGeometry(x, y, w, h)
+                    else:
+                        self.setGeometry(50, 50, 350, 900)
+                except Exception:
+                    self.setGeometry(50, 50, 350, 900)
 
                 # 通常のウィンドウとして表示（最前面固定なし）
 
@@ -2981,6 +3039,12 @@ window.onload = function() {{
 
             def closeEvent(self, event):
                 """ウィンドウが閉じられたときの処理"""
+                # ウィンドウジオメトリを保存
+                if self.parent_gui:
+                    geom = self.geometry()
+                    geom_str = f"{geom.width()}x{geom.height()}+{geom.x()}+{geom.y()}"
+                    self.parent_gui.config["chat_html_window_geometry"] = geom_str
+                    save_config(self.parent_gui.config)
                 # 親GUIのトグルスイッチをOFFにする
                 if self.parent_gui and self.parent_gui.chat_html_output.get():
                     self.parent_gui.master.after(0, self.parent_gui._on_qt_window_closed)
@@ -3017,7 +3081,8 @@ window.onload = function() {{
         # 新しいウィンドウを作成
         self.chat_html_window = tk.Toplevel(self.master)
         self.chat_html_window.title("チャット - 配信用")
-        self.chat_html_window.geometry("350x900+50+50")
+        saved_geom = self.config.get("chat_html_window_geometry", "350x900+50+50")
+        self.chat_html_window.geometry(saved_geom)
         self.chat_html_window.configure(bg="#1a1a1a")
 
         # 通常のウィンドウとして表示（最前面固定なし）
