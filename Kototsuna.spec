@@ -19,6 +19,16 @@ if os.path.isdir(ctk_assets):
             dst = os.path.join('customtkinter', 'assets', os.path.relpath(root, ctk_assets))
             datas.append((src, dst))
 
+# Tcl/Tkライブラリを明示的に収集（CI環境でhookが不完全な場合の保険）
+import tkinter
+_tcl = tkinter.Tcl()
+_tcl_lib = _tcl.eval('info library')
+_tk_lib = _tcl.eval('set tk_library')
+if os.path.isdir(_tcl_lib):
+    datas.append((_tcl_lib, '_tcl_data'))
+if os.path.isdir(_tk_lib):
+    datas.append((_tk_lib, '_tk_data'))
+
 # tkinterwebを収集（これが無いとEXE化した際に読み込めない）
 tmp_ret = collect_all('tkinterweb')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]

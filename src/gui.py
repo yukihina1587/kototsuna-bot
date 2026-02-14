@@ -3396,10 +3396,8 @@ window.onload = function() {{
                 width=70
             ).pack(side="left", padx=(0, 6))
 
-            # エモート画像がある場合はText widgetでインライン表示
-            if comment.emotes and any(
-                self._get_emote_tk_image(str(e.get("id", ""))) for e in comment.emotes
-            ):
+            # エモートがある場合はText widgetでインライン画像表示
+            if comment.emotes:
                 msg_text = tk.Text(
                     meta_and_msg,
                     wrap="word",
@@ -3487,14 +3485,6 @@ window.onload = function() {{
         Args:
             comment: CommentDataオブジェクト
         """
-        # エモート画像をバックグラウンドでプリフェッチ
-        if comment.emotes:
-            threading.Thread(
-                target=self._prefetch_emote_images,
-                args=(comment.emotes,),
-                daemon=True,
-            ).start()
-
         def _update_ui():
             # 拡張フォーマットでログに表示
             badge_str = f"{comment.badge_text} " if comment.badge_text else ""
@@ -3522,8 +3512,15 @@ window.onload = function() {{
         if comment.translated:
             update_translation(comment.translated)
 
-        # UI操作はメインスレッドに投げる
-        self.master.after(0, _update_ui)
+        # エモートがある場合: 画像DL完了後にUI更新（画像がインライン表示される）
+        # エモートがない場合: 即座にUI更新
+        if comment.emotes:
+            def _prefetch_then_update():
+                self._prefetch_emote_images(comment.emotes)
+                self.master.after(0, _update_ui)
+            threading.Thread(target=_prefetch_then_update, daemon=True).start()
+        else:
+            self.master.after(0, _update_ui)
 
     def log_special_event(self, message: str, event_type: str = "other"):
         """
