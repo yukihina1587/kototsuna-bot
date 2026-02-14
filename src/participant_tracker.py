@@ -71,7 +71,7 @@ class ParticipantTracker:
 
         # メッセージにキーワードが含まれているかチェック
         for keyword in self.keywords:
-            if keyword.lower() in message.lower():
+            if message.strip().lower() == keyword.lower():
                 return self.add_participant(username, message, keyword)
 
         return False
