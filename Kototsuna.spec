@@ -19,6 +19,20 @@ if os.path.isdir(ctk_assets):
             dst = os.path.join('customtkinter', 'assets', os.path.relpath(root, ctk_assets))
             datas.append((src, dst))
 
+# Tcl/Tkデータを明示収集（PyInstaller標準フックが期待する _tcl_data/_tk_data に配置）
+# 標準hook-_tkinter.pyの収集がCI環境で失敗するケースへの保険
+import tkinter
+_tcl = tkinter.Tcl()
+_tcl_lib = _tcl.eval('info library')
+_tcl_ver = _tcl.eval('info patchlevel').rsplit('.', 1)[0]
+_tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
+if os.path.isdir(_tcl_lib):
+    datas += [(_tcl_lib, '_tcl_data')]
+    print(f"[SPEC] Tcl: {_tcl_lib} -> _tcl_data")
+if os.path.isdir(_tk_lib):
+    datas += [(_tk_lib, '_tk_data')]
+    print(f"[SPEC] Tk:  {_tk_lib} -> _tk_data")
+
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
