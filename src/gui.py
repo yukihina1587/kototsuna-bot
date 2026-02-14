@@ -2974,6 +2974,7 @@ window.onload = function() {{
 
     def _on_chat_html_window_close(self):
         """チャットHTMLウィンドウが閉じられた時の処理（プログラムから呼ばれる）"""
+        self._save_html_window_geometry()
         # PyQt6ウィンドウを破棄
         if self.qt_html_window:
             try:
@@ -4352,9 +4353,30 @@ window.onload = function() {{
             f"アップデートに失敗しました:\n{message}",
         )
 
+    def _save_html_window_geometry(self):
+        """HTMLウィンドウのジオメトリをconfigに保存する"""
+        try:
+            if self.qt_html_window:
+                geom = self.qt_html_window.geometry()
+                geom_str = f"{geom.width()}x{geom.height()}+{geom.x()}+{geom.y()}"
+                self.config["chat_html_window_geometry"] = geom_str
+                save_config(self.config)
+                return
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'chat_html_window') and self.chat_html_window and self.chat_html_window.winfo_exists():
+                self.config["chat_html_window_geometry"] = self.chat_html_window.geometry()
+                save_config(self.config)
+        except Exception:
+            pass
+
     def cleanup_resources(self):
         """アプリケーション終了時に全てのリソースを解放"""
         logger.info("Starting cleanup_resources...")
+
+        # HTMLウィンドウのサイズを保存
+        self._save_html_window_geometry()
 
         try:
             # リソース監視を停止
