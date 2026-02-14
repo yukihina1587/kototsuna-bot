@@ -42,6 +42,40 @@ jobs:
           Write-Host "Build successful: Kototsuna.exe ($([math]::Round($size, 2)) MB)"
         shell: pwsh
 
+      - name: Verify Tcl/Tk in bundle
+        run: |
+          Write-Host "=== Checking PyInstaller work directory for Tcl/Tk ==="
+          $tclData = Get-ChildItem -Recurse -Path "build" -Filter "init.tcl" -ErrorAction SilentlyContinue
+          if ($tclData) {
+            foreach ($f in $tclData) { Write-Host "Found: $($f.FullName)" }
+          } else {
+            Write-Host "WARNING: init.tcl not found in build directory"
+          }
+          $tkData = Get-ChildItem -Recurse -Path "build" -Filter "tk.tcl" -ErrorAction SilentlyContinue
+          if ($tkData) {
+            foreach ($f in $tkData) { Write-Host "Found: $($f.FullName)" }
+          } else {
+            Write-Host "WARNING: tk.tcl not found in build directory"
+          }
+          # Check datas TOC
+          $tocFile = Get-ChildItem -Recurse -Path "build" -Filter "*.toc" | Where-Object { $_.Name -match "datas" } | Select-Object -First 1
+          if ($tocFile) {
+            Write-Host "=== Checking datas TOC for _tcl_data ==="
+            Select-String -Path $tocFile.FullName -Pattern "_tcl_data" | Select-Object -First 5 | ForEach-Object { Write-Host $_.Line }
+          }
+        shell: pwsh
+
+      - name: Inspect exe for Tcl/Tk files
+        run: |
+          Write-Host "=== Inspecting exe archive for init.tcl ==="
+          7z l dist/Kototsuna.exe 2>$null | Select-String "init.tcl" | Select-Object -First 5
+          Write-Host "=== Inspecting exe archive for _tcl_data ==="
+          7z l dist/Kototsuna.exe 2>$null | Select-String "_tcl_data" | Select-Object -First 5
+          Write-Host "=== Inspecting exe archive for _tk_data ==="
+          7z l dist/Kototsuna.exe 2>$null | Select-String "_tk_data" | Select-Object -First 5
+        shell: pwsh
+        continue-on-error: true
+
       - name: Calculate SHA256 hash
         id: hash
         run: |

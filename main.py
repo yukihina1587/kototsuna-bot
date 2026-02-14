@@ -5,34 +5,86 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
 
 # PyInstaller exe環境でTcl/Tkデータパスを明示設定（init.tcl検索エラー対策）
+# rthook_tcltk.py ランタイムフックが先に実行済み。ここでは再チェック+診断ログ出力。
 if getattr(sys, 'frozen', False):
     _meipass = sys._MEIPASS
-    # init.tclを複数の候補パスから探索
-    _tcl_found = False
-    for _candidate in [
-        os.path.join(_meipass, '_tcl_data'),
-        os.path.join(_meipass, 'tcl'),
-        os.path.join(_meipass, 'lib', 'tcl8.6'),
-    ]:
-        if os.path.isfile(os.path.join(_candidate, 'init.tcl')):
-            os.environ['TCL_LIBRARY'] = _candidate
-            _tcl_found = True
-            break
-    # 候補になければ再帰探索
-    if not _tcl_found:
-        for _root, _dirs, _files in os.walk(_meipass):
-            if 'init.tcl' in _files:
-                os.environ['TCL_LIBRARY'] = _root
+    _diag_lines = [f"_MEIPASS: {_meipass}"]
+
+    if 'TCL_LIBRARY' in os.environ:
+        _tcl_env = os.environ['TCL_LIBRARY']
+        _has_init = os.path.isfile(os.path.join(_tcl_env, 'init.tcl'))
+        _diag_lines.append(f"TCL_LIBRARY={_tcl_env} (init.tcl exists: {_has_init})")
+        if not _has_init:
+            # ランタイムフックが見つけられなかった場合、再探索
+            _tcl_found = False
+            for _candidate in [
+                os.path.join(_meipass, '_tcl_data'),
+                os.path.join(_meipass, 'tcl'),
+                os.path.join(_meipass, 'tcl8.6'),
+                os.path.join(_meipass, 'tcl', 'tcl8.6'),
+                os.path.join(_meipass, 'lib', 'tcl8.6'),
+            ]:
+                if os.path.isfile(os.path.join(_candidate, 'init.tcl')):
+                    os.environ['TCL_LIBRARY'] = _candidate
+                    _diag_lines.append(f"Found init.tcl at: {_candidate}")
+                    _tcl_found = True
+                    break
+            if not _tcl_found:
+                for _root, _dirs, _files in os.walk(_meipass):
+                    if 'init.tcl' in _files:
+                        os.environ['TCL_LIBRARY'] = _root
+                        _diag_lines.append(f"Found init.tcl (recursive) at: {_root}")
+                        _tcl_found = True
+                        break
+                if not _tcl_found:
+                    _diag_lines.append("ERROR: init.tcl NOT FOUND ANYWHERE in _MEIPASS")
+    else:
+        _diag_lines.append("TCL_LIBRARY not set by runtime hook!")
+        for _candidate in [
+            os.path.join(_meipass, '_tcl_data'),
+            os.path.join(_meipass, 'tcl'),
+            os.path.join(_meipass, 'tcl8.6'),
+            os.path.join(_meipass, 'tcl', 'tcl8.6'),
+            os.path.join(_meipass, 'lib', 'tcl8.6'),
+        ]:
+            if os.path.isfile(os.path.join(_candidate, 'init.tcl')):
+                os.environ['TCL_LIBRARY'] = _candidate
+                _diag_lines.append(f"Found init.tcl at: {_candidate}")
                 break
-    # Tk libraryも同様に探索
-    for _candidate in [
-        os.path.join(_meipass, '_tk_data'),
-        os.path.join(_meipass, 'tk'),
-        os.path.join(_meipass, 'lib', 'tk8.6'),
-    ]:
-        if os.path.isfile(os.path.join(_candidate, 'tk.tcl')):
-            os.environ['TK_LIBRARY'] = _candidate
-            break
+        else:
+            for _root, _dirs, _files in os.walk(_meipass):
+                if 'init.tcl' in _files:
+                    os.environ['TCL_LIBRARY'] = _root
+                    _diag_lines.append(f"Found init.tcl (recursive) at: {_root}")
+                    break
+
+    # TK_LIBRARYも同様にチェック（簡略版）
+    if 'TK_LIBRARY' not in os.environ or not os.path.isfile(
+        os.path.join(os.environ.get('TK_LIBRARY', ''), 'tk.tcl')
+    ):
+        for _candidate in [
+            os.path.join(_meipass, '_tk_data'),
+            os.path.join(_meipass, 'tk'),
+            os.path.join(_meipass, 'tk8.6'),
+            os.path.join(_meipass, 'tcl', 'tk8.6'),
+            os.path.join(_meipass, 'lib', 'tk8.6'),
+        ]:
+            if os.path.isfile(os.path.join(_candidate, 'tk.tcl')):
+                os.environ['TK_LIBRARY'] = _candidate
+                break
+        else:
+            for _root, _dirs, _files in os.walk(_meipass):
+                if 'tk.tcl' in _files:
+                    os.environ['TK_LIBRARY'] = _root
+                    break
+
+    # 診断ログをファイルに書き出し（次回のデバッグ用）
+    try:
+        _diag_path = os.path.join(os.path.dirname(sys.executable), 'tcl_diag.log')
+        with open(_diag_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(_diag_lines))
+    except Exception:
+        pass
 
 import tkinter as tk
 from dotenv import load_dotenv
