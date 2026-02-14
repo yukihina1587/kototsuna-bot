@@ -22,8 +22,9 @@ if os.path.isdir(ctk_assets):
 # Tcl/Tkライブラリを明示的に収集（CI環境でhookが不完全な場合の保険）
 import tkinter
 _tcl = tkinter.Tcl()
-_tcl_lib = _tcl.eval('info library')
-_tk_lib = _tcl.eval('set tk_library')
+_tcl_lib = _tcl.eval('info library')  # e.g. C:/Python312/tcl/tcl8.6
+_tcl_ver = _tcl.eval('info patchlevel').rsplit('.', 1)[0]  # e.g. "8.6"
+_tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
 if os.path.isdir(_tcl_lib):
     datas.append((_tcl_lib, '_tcl_data'))
 if os.path.isdir(_tk_lib):
