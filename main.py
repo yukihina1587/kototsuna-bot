@@ -7,12 +7,32 @@ os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告�
 # PyInstaller exe環境でTcl/Tkデータパスを明示設定（init.tcl検索エラー対策）
 if getattr(sys, 'frozen', False):
     _meipass = sys._MEIPASS
-    _tcl_dir = os.path.join(_meipass, '_tcl_data')
-    _tk_dir = os.path.join(_meipass, '_tk_data')
-    if os.path.isdir(_tcl_dir):
-        os.environ['TCL_LIBRARY'] = _tcl_dir
-    if os.path.isdir(_tk_dir):
-        os.environ['TK_LIBRARY'] = _tk_dir
+    # init.tclを複数の候補パスから探索
+    _tcl_found = False
+    for _candidate in [
+        os.path.join(_meipass, '_tcl_data'),
+        os.path.join(_meipass, 'tcl'),
+        os.path.join(_meipass, 'lib', 'tcl8.6'),
+    ]:
+        if os.path.isfile(os.path.join(_candidate, 'init.tcl')):
+            os.environ['TCL_LIBRARY'] = _candidate
+            _tcl_found = True
+            break
+    # 候補になければ再帰探索
+    if not _tcl_found:
+        for _root, _dirs, _files in os.walk(_meipass):
+            if 'init.tcl' in _files:
+                os.environ['TCL_LIBRARY'] = _root
+                break
+    # Tk libraryも同様に探索
+    for _candidate in [
+        os.path.join(_meipass, '_tk_data'),
+        os.path.join(_meipass, 'tk'),
+        os.path.join(_meipass, 'lib', 'tk8.6'),
+    ]:
+        if os.path.isfile(os.path.join(_candidate, 'tk.tcl')):
+            os.environ['TK_LIBRARY'] = _candidate
+            break
 
 import tkinter as tk
 from dotenv import load_dotenv

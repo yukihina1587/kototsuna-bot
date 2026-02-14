@@ -19,16 +19,24 @@ if os.path.isdir(ctk_assets):
             dst = os.path.join('customtkinter', 'assets', os.path.relpath(root, ctk_assets))
             datas.append((src, dst))
 
-# Tcl/Tkライブラリを明示的に収集（CI環境でhookが不完全な場合の保険）
+# Tcl/Tkライブラリを明示的にファイル単位で収集（CI環境でhookが不完全な場合の保険）
 import tkinter
 _tcl = tkinter.Tcl()
 _tcl_lib = _tcl.eval('info library')  # e.g. C:/Python312/tcl/tcl8.6
 _tcl_ver = _tcl.eval('info patchlevel').rsplit('.', 1)[0]  # e.g. "8.6"
 _tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
-if os.path.isdir(_tcl_lib):
-    datas.append((_tcl_lib, '_tcl_data'))
-if os.path.isdir(_tk_lib):
-    datas.append((_tk_lib, '_tk_data'))
+print(f"[SPEC] Tcl library: {_tcl_lib} (exists={os.path.isdir(_tcl_lib)})")
+print(f"[SPEC] Tk  library: {_tk_lib} (exists={os.path.isdir(_tk_lib)})")
+# ファイル単位でコピー（ディレクトリ丸ごとだとサブディレクトリになる問題を回避）
+for _src_dir, _dst_name in [(_tcl_lib, '_tcl_data'), (_tk_lib, '_tk_data')]:
+    if os.path.isdir(_src_dir):
+        for _root, _dirs, _files in os.walk(_src_dir):
+            for _f in _files:
+                _src_file = os.path.join(_root, _f)
+                _rel = os.path.relpath(_root, _src_dir)
+                _dst_dir = os.path.join(_dst_name, _rel) if _rel != '.' else _dst_name
+                datas.append((_src_file, _dst_dir))
+        print(f"[SPEC] Collected {_dst_name} from {_src_dir}")
 
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
