@@ -10,9 +10,13 @@ import json
 import platform
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+import io
 from collections import deque
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
+
+import requests
+from PIL import Image, ImageTk
 
 # pygameは効果音再生で使用
 try:
@@ -46,7 +50,10 @@ from src.updater import (
 # 外観設定 / テーマ
 # 初期設定（後でconfigから読み込んだテーマで上書き）
 ctk.set_appearance_mode("Dark")
-ctk.set_default_color_theme("blue")
+try:
+    ctk.set_default_color_theme("blue")
+except Exception:
+    pass  # Theme file may be missing in bundled exe
 
 # テーマ定義
 THEMES = {
@@ -221,6 +228,10 @@ class KototsunaApp:
         # アップデート設定
         self.auto_update_check = tk.BooleanVar(value=self.config.get("auto_update_check", True))
         self.include_prerelease = tk.BooleanVar(value=self.config.get("include_prerelease", False))
+
+        # エモート画像キャッシュ
+        self._emote_pil_cache: Dict[str, Optional[Image.Image]] = {}
+        self._emote_tk_cache: Dict[str, Optional[tk.PhotoImage]] = {}
 
         # 参加者タブ自動更新用
         self.participant_tab_refresh_timer = None
@@ -3245,6 +3256,45 @@ window.onload = function() {{
 
 
 
+    # =========================================
+    # エモート画像キャッシュ
+    # =========================================
+
+    def _prefetch_emote_images(self, emotes: list) -> None:
+        """エモート画像をバックグラウンドでプリフェッチする"""
+        for emote in emotes:
+            emote_id = str(emote.get("id", ""))
+            if emote_id and emote_id not in self._emote_pil_cache:
+                self._download_emote_image(emote_id)
+
+    def _download_emote_image(self, emote_id: str) -> None:
+        """Twitch CDNからエモート画像をダウンロードしPILキャッシュに保存する"""
+        try:
+            url = f"https://static-cdn.jtvnw.net/emoticons/v2/{emote_id}/static/light/1.0"
+            resp = requests.get(url, timeout=5)
+            resp.raise_for_status()
+            img = Image.open(io.BytesIO(resp.content))
+            img = img.resize((24, 24), Image.LANCZOS)
+            self._emote_pil_cache[emote_id] = img
+        except Exception as e:
+            logger.debug(f"Failed to download emote {emote_id}: {e}")
+            self._emote_pil_cache[emote_id] = None
+
+    def _get_emote_tk_image(self, emote_id: str) -> Optional[tk.PhotoImage]:
+        """PILキャッシュからPhotoImageを取得する（メインスレッドで呼ぶこと）"""
+        if emote_id in self._emote_tk_cache:
+            return self._emote_tk_cache[emote_id]
+        pil_img = self._emote_pil_cache.get(emote_id)
+        if pil_img is None:
+            return None
+        try:
+            photo = ImageTk.PhotoImage(pil_img)
+            self._emote_tk_cache[emote_id] = photo
+            return photo
+        except Exception:
+            self._emote_tk_cache[emote_id] = None
+            return None
+
     def _add_comment_tile(self, comment: CommentData):
         """コメントをタイル形式で表示"""
         if not hasattr(self, "comment_tile_frame"):
@@ -3345,15 +3395,56 @@ window.onload = function() {{
                 width=70
             ).pack(side="left", padx=(0, 6))
 
-            ctk.CTkLabel(
-                meta_and_msg,
-                text=comment.message,
-                anchor="w",
-                justify="left",
-                wraplength=420,
-                font=("Arial", 13),
-                text_color="#FFFFFF"
-            ).pack(side="left", fill="x", expand=True)
+            # エモート画像がある場合はText widgetでインライン表示
+            if comment.emotes and any(
+                self._get_emote_tk_image(str(e.get("id", ""))) for e in comment.emotes
+            ):
+                msg_text = tk.Text(
+                    meta_and_msg,
+                    wrap="word",
+                    height=1,
+                    bg=tile_bg,
+                    fg="#FFFFFF",
+                    font=("Arial", 13),
+                    borderwidth=0,
+                    highlightthickness=0,
+                    relief="flat",
+                    cursor="arrow",
+                    insertwidth=0,
+                    selectbackground=tile_bg,
+                )
+                msg_text.pack(side="left", fill="x", expand=True)
+                sorted_emotes = sorted(comment.emotes, key=lambda e: e["start"])
+                last_end = 0
+                for emote in sorted_emotes:
+                    start = emote.get("start", 0)
+                    end = emote.get("end", 0) + 1
+                    text_before = comment.message[last_end:start]
+                    if text_before:
+                        msg_text.insert("end", text_before)
+                    img = self._get_emote_tk_image(str(emote.get("id", "")))
+                    if img:
+                        msg_text.image_create("end", image=img)
+                    else:
+                        msg_text.insert("end", emote.get("name", ""))
+                    last_end = end
+                if last_end < len(comment.message):
+                    msg_text.insert("end", comment.message[last_end:])
+                msg_text.config(state="disabled")
+                # 高さ自動調整
+                msg_text.update_idletasks()
+                line_count = int(msg_text.index("end-1c").split(".")[0])
+                msg_text.config(height=max(1, line_count))
+            else:
+                ctk.CTkLabel(
+                    meta_and_msg,
+                    text=comment.message,
+                    anchor="w",
+                    justify="left",
+                    wraplength=420,
+                    font=("Arial", 13),
+                    text_color="#FFFFFF"
+                ).pack(side="left", fill="x", expand=True)
 
             # 翻訳結果（明るい青色）
             if comment.translated:
@@ -3395,6 +3486,14 @@ window.onload = function() {{
         Args:
             comment: CommentDataオブジェクト
         """
+        # エモート画像をバックグラウンドでプリフェッチ
+        if comment.emotes:
+            threading.Thread(
+                target=self._prefetch_emote_images,
+                args=(comment.emotes,),
+                daemon=True,
+            ).start()
+
         def _update_ui():
             # 拡張フォーマットでログに表示
             badge_str = f"{comment.badge_text} " if comment.badge_text else ""

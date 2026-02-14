@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = []
@@ -6,6 +7,17 @@ binaries = []
 hiddenimports = []
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# customtkinterテーマファイルを明示的に追加（CI環境でhookが欠落する場合の保険）
+import customtkinter
+ctk_path = os.path.dirname(customtkinter.__file__)
+ctk_assets = os.path.join(ctk_path, 'assets')
+if os.path.isdir(ctk_assets):
+    for root, dirs, files in os.walk(ctk_assets):
+        for f in files:
+            src = os.path.join(root, f)
+            dst = os.path.join('customtkinter', 'assets', os.path.relpath(root, ctk_assets))
+            datas.append((src, dst))
 
 # tkinterwebを収集（これが無いとEXE化した際に読み込めない）
 tmp_ret = collect_all('tkinterweb')
