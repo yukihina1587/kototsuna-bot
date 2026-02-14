@@ -3067,18 +3067,9 @@ window.onload = function() {{
                 self.html_path = html_path
                 self.parent_gui = parent_gui
                 self.setWindowTitle("チャット - 配信用")
-                # 保存済みジオメトリから復元
-                geom = parent_gui.config.get("chat_html_window_geometry", "350x900+50+50")
-                try:
-                    import re as _re
-                    m = _re.match(r'(\d+)x(\d+)\+(-?\d+)\+(-?\d+)', geom)
-                    if m:
-                        w, h, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-                        self.setGeometry(x, y, w, h)
-                    else:
-                        self.setGeometry(50, 50, 350, 900)
-                except Exception:
-                    self.setGeometry(50, 50, 350, 900)
+                # ジオメトリはshow()後に適用（コンストラクタ内だとQtにリセットされる）
+                self._saved_geom = parent_gui.config.get("chat_html_window_geometry", "350x900+50+50")
+                self.resize(350, 900)  # 初期サイズ（show後に上書き）
 
                 # 通常のウィンドウとして表示（最前面固定なし）
 
@@ -3095,6 +3086,18 @@ window.onload = function() {{
                 logger.debug(f"File URL: {file_url.toString()}")
 
                 self.browser.setUrl(file_url)
+
+            def apply_saved_geometry(self):
+                """保存済みジオメトリをshow()後に適用する"""
+                import re as _re
+                try:
+                    m = _re.match(r'(\d+)x(\d+)[+\-](-?\d+)[+\-](-?\d+)', self._saved_geom)
+                    if m:
+                        w, h, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                        self.resize(w, h)
+                        self.move(x, y)
+                except Exception:
+                    pass
 
             def closeEvent(self, event):
                 """ウィンドウが閉じられたときの処理"""
@@ -3115,6 +3118,7 @@ window.onload = function() {{
         # ウィンドウを作成
         self.qt_html_window = HtmlViewerWindow(path, self)
         self.qt_html_window.show()
+        self.qt_html_window.apply_saved_geometry()
 
         # Qt のイベントループを処理（安全なラッパー）
         def process_qt_events():
