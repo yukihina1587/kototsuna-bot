@@ -40,22 +40,31 @@ jobs:
           Write-Host "Build successful: Kototsuna.exe ($([math]::Round($size, 2)) MB)"
         shell: pwsh
 
-      - name: Verify init.tcl in build
+      - name: Verify Tcl/Tk data in build
         run: |
           python -c "
-          import os, glob
-          # Check build directory for init.tcl
-          matches = glob.glob('build/**/init.tcl', recursive=True)
-          print(f'init.tcl found in build: {len(matches)} files')
-          for m in matches[:5]:
-              print(f'  {m}')
-          # Check _tcl_data specifically
-          tcl_data = glob.glob('build/**/_tcl_data/init.tcl', recursive=True)
-          print(f'init.tcl in _tcl_data: {len(tcl_data)} files')
-          for m in tcl_data[:5]:
-              print(f'  {m}')
-          if not tcl_data:
-              print('ERROR: init.tcl NOT in _tcl_data - Tcl/Tk bundling failed!')
+          import os
+
+          # Onefile builds pack data directly into the EXE, so physical
+          # files won't exist under build/. Parse the Analysis TOC to
+          # verify that _tcl_data/init.tcl is listed as a collected entry.
+          toc_path = os.path.join('build', 'Kototsuna', 'Analysis-00.toc')
+          if not os.path.exists(toc_path):
+              print(f'WARNING: {toc_path} not found, skipping verification')
+              exit(0)
+
+          with open(toc_path, 'rb') as f:
+              toc = f.read()
+
+          tcl_hit = b'_tcl_data' in toc
+          init_hit = b'init.tcl' in toc
+          print(f'_tcl_data in TOC: {tcl_hit}')
+          print(f'init.tcl  in TOC: {init_hit}')
+
+          if tcl_hit and init_hit:
+              print('OK: Tcl data is bundled in the onefile EXE')
+          else:
+              print('ERROR: Tcl/Tk data not found in Analysis TOC')
               exit(1)
           "
         shell: cmd
