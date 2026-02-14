@@ -51,6 +51,11 @@ DEFAULT_CONFIG = {
     "ui_theme": "default",  # default / gradient / minimal / cyberpunk
     # ログ設定
     "log_level": "INFO",  # DEBUG / INFO / WARNING / ERROR
+    # アップデート設定
+    "auto_update_check": True,
+    "include_prerelease": False,
+    "last_update_check": "",
+    "skipped_version": "",
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
@@ -95,7 +100,7 @@ def validate_config(config_data):
         validated["log_level"] = log_level
 
     # ブール値はbool化
-    for key in ["voicevox_auto_start"]:
+    for key in ["voicevox_auto_start", "auto_update_check", "include_prerelease"]:
         if not isinstance(validated.get(key), bool):
             validated[key] = bool(validated.get(key))
             changed = True
@@ -122,6 +127,8 @@ def validate_config(config_data):
         "comment_bubble_style",
         "chat_html_path",
         "ui_theme",
+        "last_update_check",
+        "skipped_version",
     ]:
         if validated.get(key) is None:
             validated[key] = DEFAULT_CONFIG.get(key, "")

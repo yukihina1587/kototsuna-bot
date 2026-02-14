@@ -102,6 +102,13 @@ def on_closing():
         root.destroy()
 
 if __name__ == '__main__':
+    # 前回アップデート後のクリーンアップ
+    if "--cleanup" in sys.argv:
+        import time
+        time.sleep(2)
+        from src.updater import cleanup_old_exe
+        cleanup_old_exe()
+
     # メインウィンドウを作成（非表示）
     root = ctk.CTk()
     root.withdraw()  # 最初は非表示

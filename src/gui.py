@@ -34,8 +34,12 @@ from src.tts_dictionary import get_dictionary
 from src.participant_tracker import get_tracker
 from src.voicevox_manager import get_voicevox_manager
 from src.comment_data import CommentData
-from src import translator
+from src import translator, __version__
 from src.resource_monitor import get_monitor
+from src.updater import (
+    check_for_updates, download_update, apply_update, restart_app,
+    ReleaseInfo, UpdateError, format_file_size,
+)
 
 # 外観設定 / テーマ
 # 初期設定（後でconfigから読み込んだテーマで上書き）
@@ -208,6 +212,10 @@ class KototsunaApp:
         self.chat_html_window = None  # Tkinterウィンドウ（フォールバック用）
         self.qt_html_window = None  # PyQt6ウィンドウ（Chromiumベース）
         self.qt_app = None  # PyQt6アプリケーションインスタンス
+        # アップデート設定
+        self.auto_update_check = tk.BooleanVar(value=self.config.get("auto_update_check", True))
+        self.include_prerelease = tk.BooleanVar(value=self.config.get("include_prerelease", False))
+
         # 設定変更は即時保存
         self._setup_auto_save()
         # 参加者タブ自動更新用
@@ -268,6 +276,8 @@ class KototsunaApp:
         self.master.after(100, lambda: self._update_auth_button_states(authenticated=False))
         # 起動時に保存されたトークンをチェックして自動ログイン
         self.master.after(1000, self._check_saved_token)
+        # 起動時にアップデートを確認
+        self.master.after(3000, self._check_for_updates_on_startup)
 
     def _apply_theme_colors(self, theme_name):
         """
@@ -1024,6 +1034,36 @@ class KototsunaApp:
         ctk.CTkSlider(follow_vol_frame, from_=0, to=100, variable=self.follow_volume_var, width=200, command=lambda v: self._update_follow_vol_label()).pack(side="left", fill="x", expand=True, padx=4)
         self.follow_vol_label = ctk.CTkLabel(follow_vol_frame, text=f"{int(self.follow_volume_var.get())}%", font=("Consolas", 10), width=40)
         self.follow_vol_label.pack(side="right")
+
+        self._add_panel_divider(parent)
+
+        # アップデート設定
+        self._add_panel_section(parent, "アップデート")
+
+        # バージョン表示 + 更新確認ボタン
+        update_header = ctk.CTkFrame(parent, fg_color="transparent")
+        update_header.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(
+            update_header, text=f"v{__version__}",
+            font=("Consolas", 11), text_color=TEXT_SUBTLE,
+        ).pack(side="left")
+        ctk.CTkButton(
+            update_header, text="更新確認",
+            command=self._manual_update_check,
+            width=80, height=28, font=("Segoe UI", 10),
+        ).pack(side="right")
+
+        # 起動時に自動でアップデートを確認
+        ctk.CTkCheckBox(
+            parent, text="起動時に自動でアップデートを確認",
+            variable=self.auto_update_check, font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=2)
+
+        # ベータ版も受け取る
+        ctk.CTkCheckBox(
+            parent, text="ベータ版も受け取る",
+            variable=self.include_prerelease, font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=2)
 
         self._add_panel_divider(parent)
 
@@ -2321,6 +2361,8 @@ class KototsunaApp:
             self.tts_volume_var,
             self.tts_speed_var,
             self.tts_include_name_var,
+            self.auto_update_check,
+            self.include_prerelease,
         ]
         for var in watch_vars:
             try:
@@ -2359,6 +2401,8 @@ class KototsunaApp:
             self.config["tts_volume"] = int(self.tts_volume_var.get())
             self.config["tts_speed"] = round(self.tts_speed_var.get(), 2)
             self.config["tts_include_name"] = self.tts_include_name_var.get()
+            self.config["auto_update_check"] = self.auto_update_check.get()
+            self.config["include_prerelease"] = self.include_prerelease.get()
 
             # VOICEVOX Managerのパスを更新
             if self.voicevox_path.get().strip() and hasattr(self, "voicevox_manager"):
@@ -4011,6 +4055,203 @@ window.onload = function() {{
         # ヘッダーUI更新
         self._update_header_bot_button(False)
         self._update_connection_badge(False)
+
+    # =========================================
+    # アップデート関連メソッド
+    # =========================================
+
+    def _check_for_updates_on_startup(self) -> None:
+        """起動時の自動アップデートチェック"""
+        if not self.auto_update_check.get():
+            return
+        threading.Thread(
+            target=self._do_update_check,
+            args=(False,),
+            daemon=True,
+        ).start()
+
+    def _manual_update_check(self) -> None:
+        """手動アップデートチェック（ボタン押下）"""
+        self.log_message("アップデートを確認中...")
+        threading.Thread(
+            target=self._do_update_check,
+            args=(True,),
+            daemon=True,
+        ).start()
+
+    def _do_update_check(self, is_manual: bool) -> None:
+        """バックグラウンドでアップデートチェックを実行する。
+
+        Args:
+            is_manual: ユーザーが手動で確認した場合 True
+        """
+        try:
+            release = check_for_updates(
+                __version__,
+                include_prerelease=self.include_prerelease.get(),
+            )
+
+            # 最終チェック日時を記録
+            self.config["last_update_check"] = datetime.now().isoformat()
+            save_config(self.config)
+
+            if release is None:
+                if is_manual:
+                    self.master.after(0, lambda: messagebox.showinfo(
+                        "アップデート確認",
+                        f"最新バージョン (v{__version__}) を使用中です。",
+                    ))
+                return
+
+            # スキップ済みバージョンの場合、自動チェックでは通知しない
+            skipped = self.config.get("skipped_version", "")
+            if not is_manual and skipped == release.version:
+                logger.debug(f"Skipping notification for version {release.version}")
+                return
+
+            # UIスレッドでダイアログ表示
+            self.master.after(0, lambda r=release: self._show_update_dialog(r))
+
+        except Exception as e:
+            logger.error(f"Update check error: {e}", exc_info=True)
+            if is_manual:
+                self.master.after(0, lambda: messagebox.showerror(
+                    "エラー",
+                    f"アップデート確認中にエラーが発生しました:\n{e}",
+                ))
+
+    def _show_update_dialog(self, release: ReleaseInfo) -> None:
+        """アップデートダイアログを表示する。"""
+        dialog = ctk.CTkToplevel(self.master)
+        dialog.title("新しいバージョンが利用可能！")
+        dialog.geometry("500x450")
+        dialog.resizable(False, False)
+        dialog.transient(self.master)
+        dialog.grab_set()
+
+        # タイトル
+        title_text = "新しいバージョンが利用可能！"
+        if release.prerelease:
+            title_text = "新しいベータ版が利用可能！"
+        ctk.CTkLabel(
+            dialog, text=title_text,
+            font=("Segoe UI Semibold", 16),
+        ).pack(pady=(16, 4))
+
+        # バージョン遷移
+        ctk.CTkLabel(
+            dialog, text=f"v{__version__}  →  v{release.version}",
+            font=("Consolas", 14), text_color=ACCENT,
+        ).pack(pady=(0, 8))
+
+        # 変更履歴
+        ctk.CTkLabel(
+            dialog, text="変更履歴:",
+            font=("Segoe UI Semibold", 12),
+        ).pack(anchor="w", padx=20)
+
+        changelog = ctk.CTkTextbox(dialog, height=200, font=("Segoe UI", 11))
+        changelog.pack(fill="both", expand=True, padx=20, pady=(4, 8))
+        changelog.insert("1.0", release.body or "変更履歴なし")
+        changelog.configure(state="disabled")
+
+        # ダウンロードサイズ
+        size_text = format_file_size(release.asset_size) if release.asset_size else "不明"
+        ctk.CTkLabel(
+            dialog, text=f"ダウンロードサイズ: {size_text}",
+            font=("Segoe UI", 10), text_color=TEXT_SUBTLE,
+        ).pack(pady=(0, 8))
+
+        # プログレスバー（初期非表示）
+        self._update_progress = ctk.CTkProgressBar(dialog, width=400)
+        self._update_progress.set(0)
+        self._update_progress_label = ctk.CTkLabel(
+            dialog, text="", font=("Segoe UI", 10), text_color=TEXT_SUBTLE,
+        )
+
+        # ボタンフレーム
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(0, 16))
+
+        self._update_btn = ctk.CTkButton(
+            btn_frame, text="アップデート",
+            command=lambda: self._start_update(release, dialog),
+            width=120, fg_color=ACCENT, hover_color="#1CA04E",
+        )
+        self._update_btn.pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame, text="スキップ",
+            command=lambda: self._skip_update(release.version, dialog),
+            width=80, fg_color="gray",
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame, text="後で",
+            command=dialog.destroy,
+            width=80, fg_color="gray",
+        ).pack(side="left")
+
+    def _skip_update(self, version: str, dialog: ctk.CTkToplevel) -> None:
+        """指定バージョンの通知をスキップする。"""
+        self.config["skipped_version"] = version
+        save_config(self.config)
+        logger.info(f"Skipped update notification for v{version}")
+        dialog.destroy()
+
+    def _start_update(self, release: ReleaseInfo, dialog: ctk.CTkToplevel) -> None:
+        """アップデートのダウンロードと適用を開始する。"""
+        # ボタンを無効化
+        self._update_btn.configure(state="disabled", text="ダウンロード中...")
+
+        # プログレスバーを表示
+        self._update_progress.pack(padx=20, pady=(0, 4))
+        self._update_progress_label.pack(pady=(0, 8))
+
+        def do_download() -> None:
+            try:
+                def on_progress(downloaded: int, total: int) -> None:
+                    progress = downloaded / total if total > 0 else 0
+                    dl_text = f"{format_file_size(downloaded)} / {format_file_size(total)}"
+                    self.master.after(0, lambda: self._update_progress.set(progress))
+                    self.master.after(0, lambda t=dl_text: self._update_progress_label.configure(text=t))
+
+                temp_path = download_update(release, progress_callback=on_progress)
+                self.master.after(0, lambda: self._update_progress_label.configure(text="適用中..."))
+
+                apply_update(temp_path)
+
+                self.master.after(0, lambda: self._confirm_restart(dialog))
+
+            except UpdateError as e:
+                logger.error(f"Update failed: {e}")
+                self.master.after(0, lambda: self._show_update_error(str(e), dialog))
+            except Exception as e:
+                logger.error(f"Unexpected update error: {e}", exc_info=True)
+                self.master.after(0, lambda: self._show_update_error(str(e), dialog))
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    def _confirm_restart(self, dialog: ctk.CTkToplevel) -> None:
+        """アップデート適用完了後、再起動を確認する。"""
+        dialog.destroy()
+        result = messagebox.askyesno(
+            "アップデート完了",
+            "アップデートが完了しました。\n今すぐ再起動しますか？",
+        )
+        if result:
+            self.cleanup_resources()
+            restart_app()
+
+    def _show_update_error(self, message: str, dialog: ctk.CTkToplevel) -> None:
+        """アップデートエラーを表示し、ボタンを復元する。"""
+        self._update_btn.configure(state="normal", text="アップデート")
+        self._update_progress.pack_forget()
+        self._update_progress_label.pack_forget()
+        messagebox.showerror(
+            "アップデートエラー",
+            f"アップデートに失敗しました:\n{message}",
+        )
 
     def cleanup_resources(self):
         """アプリケーション終了時に全てのリソースを解放"""
