@@ -216,8 +216,6 @@ class KototsunaApp:
         self.auto_update_check = tk.BooleanVar(value=self.config.get("auto_update_check", True))
         self.include_prerelease = tk.BooleanVar(value=self.config.get("include_prerelease", False))
 
-        # 設定変更は即時保存
-        self._setup_auto_save()
         # 参加者タブ自動更新用
         self.participant_tab_refresh_timer = None
         # 参加者リスト自動送信用
@@ -233,6 +231,9 @@ class KototsunaApp:
         self.tts_speed_var = tk.DoubleVar(value=self.config.get("tts_speed", 1.0))
         self.voice_var = tk.BooleanVar(value=False)  # 音声認識トグル
         self.tts_include_name_var = tk.BooleanVar(value=self.config.get("tts_include_name", False))  # 名前読み上げ
+
+        # 設定変更は即時保存（全変数の初期化後に呼ぶ）
+        self._setup_auto_save()
 
         # 音声翻訳クラスの初期化
         mic_device_index = self.config.get("mic_device_index", None)
