@@ -3,6 +3,17 @@ import io
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
+
+# PyInstaller exe環境でTcl/Tkデータパスを明示設定（init.tcl検索エラー対策）
+if getattr(sys, 'frozen', False):
+    _meipass = sys._MEIPASS
+    _tcl_dir = os.path.join(_meipass, '_tcl_data')
+    _tk_dir = os.path.join(_meipass, '_tk_data')
+    if os.path.isdir(_tcl_dir):
+        os.environ['TCL_LIBRARY'] = _tcl_dir
+    if os.path.isdir(_tk_dir):
+        os.environ['TK_LIBRARY'] = _tk_dir
+
 import tkinter as tk
 from dotenv import load_dotenv
 
