@@ -1,0 +1,74 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install pipwin
+          pipwin install pyaudio
+          pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller Kototsuna.spec
+
+      - name: Verify build output
+        run: |
+          if (!(Test-Path "dist/Kototsuna.exe")) {
+            Write-Error "Build failed: Kototsuna.exe not found"
+            exit 1
+          }
+          $size = (Get-Item "dist/Kototsuna.exe").Length / 1MB
+          Write-Host "Build successful: Kototsuna.exe ($([math]::Round($size, 2)) MB)"
+        shell: pwsh
+
+      - name: Calculate SHA256 hash
+        id: hash
+        run: |
+          $hash = (Get-FileHash -Path "dist/Kototsuna.exe" -Algorithm SHA256).Hash
+          Write-Host "SHA256: $hash"
+          "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        shell: pwsh
+
+      - name: Determine prerelease
+        id: prerelease
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $isPrerelease = $tag -match '-(alpha|beta|rc)'
+          if ($isPrerelease) { $val = "true" } else { $val = "false" }
+          "is_prerelease=$val" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Tag: $tag, Prerelease: $isPrerelease"
+        shell: pwsh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Kototsuna.exe
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          body: |
+            ## SHA256
+            ```
+            ${{ steps.hash.outputs.sha256 }}  Kototsuna.exe
+            ```
+          append_body: true
