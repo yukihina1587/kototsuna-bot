@@ -573,11 +573,6 @@ class KototsunaApp:
             command=self.toggle_chat_html_output, font=FONT_BODY
         ).pack(fill="x", pady=4)
 
-        ctk.CTkButton(
-            scroll, text="🌐 ブラウザで確認", command=self.open_chat_html_in_browser,
-            fg_color="#0D9488", hover_color="#0F766E", height=32
-        ).pack(fill="x", pady=2)
-
     def _add_sidebar_section(self, parent, text):
         """サイドバーセクションラベルを追加"""
         ctk.CTkLabel(parent, text=text.upper(), font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 4))
@@ -1743,16 +1738,6 @@ class KototsunaApp:
             command=self.toggle_chat_html_output,
             font=FONT_BODY
         ).pack(side="left", padx=8)
-
-        # ブラウザで開くボタン
-        ctk.CTkButton(
-            log_btn_frame,
-            text="🌐 ブラウザで確認",
-            command=self.open_chat_html_in_browser,
-            width=120,
-            fg_color="#0D9488",
-            hover_color="#0F766E"
-        ).pack(side="left", padx=5)
 
         # === 右側: 上下2分割のPanedWindow（垂直方向） ===
         right_paned = tk.PanedWindow(
@@ -2934,32 +2919,6 @@ window.onload = function() {{
 </script>
 </head><body>{body}</body></html>"""
 
-    def open_chat_html_in_browser(self):
-        """チャットHTMLを既定のブラウザで開く"""
-        path = self.chat_html_path.get().strip() or self._default_chat_html_path("")
-
-        # HTMLファイルを強制的に生成
-        try:
-            self._export_chat_html(force=True)
-        except Exception as e:
-            logger.error(f"Failed to export HTML: {e}", exc_info=True)
-            self.log_message(f"❌ HTMLファイルの作成に失敗しました: {e}")
-            return
-
-        if not os.path.exists(path):
-            self.log_message(f"❌ HTMLファイルが見つかりません: {path}")
-            return
-
-        try:
-            import webbrowser
-            # ファイルパスをURIに変換
-            url = f"file://{os.path.abspath(path)}"
-            webbrowser.open(url)
-            self.log_message(f"🌐 ブラウザで開きました: {path}")
-        except Exception as e:
-            logger.error(f"Failed to open browser: {e}")
-            self.log_message(f"❌ ブラウザの起動に失敗しました: {e}")
-
     def _on_qt_window_closed(self):
         """PyQt6ウィンドウが×で閉じられた時の処理"""
         # ウィンドウを破棄
@@ -3246,7 +3205,7 @@ window.onload = function() {{
                         text_widget.delete("1.0", "end")
                         
                         # 注釈を追加
-                        note = "【⚠ 簡易プレビューモード】\nここにはデザイン（CSS）は適用されません。\n正しい表示を確認するには、設定タブの「🌐 ブラウザで確認」ボタンを押してください。\n\n" + ("-"*50) + "\n\n"
+                        note = "【⚠ 簡易プレビューモード】\nここにはデザイン（CSS）は適用されません。\n正しい表示を確認するには、HTMLファイルをブラウザで直接開いてください。\n\n" + ("-"*50) + "\n\n"
                         
                         text_widget.insert("1.0", note + content)
                         text_widget.config(state="disabled")
