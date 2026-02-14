@@ -2,7 +2,7 @@ import asyncio
 import aiohttp
 import json
 from twitchio.ext import commands
-from src.translator import translate_text, should_filter, apply_translation_dictionary, get_stats
+from src.translator import translate_text, translate_text_batched, should_filter, apply_translation_dictionary, get_stats
 from src.logger import logger
 from src.tts import get_tts_instance, is_japanese
 from src.participant_tracker import get_tracker
@@ -415,7 +415,7 @@ class TranslateBot(commands.Bot):
             return
 
         lang_mode = self.get_lang_mode()
-        translated = await translate_text(content, lang_mode, self.deepl_api_key)
+        translated = await translate_text_batched(content, lang_mode, self.deepl_api_key)
 
         # フィルタでスキップされた場合
         if translated == "":

@@ -12,15 +12,19 @@ from src.logger import logger
 class ParticipantTracker:
     """参加者追跡クラス"""
 
-    def __init__(self, keywords: List[str] = None):
+    DEFAULT_MAX_PARTICIPANTS = 1000
+
+    def __init__(self, keywords: List[str] = None, max_participants: int = None):
         """
         初期化
 
         Args:
             keywords: 検出するキーワードリスト（デフォルト: ["参加希望", "参加"]）
+            max_participants: 参加者数の上限（デフォルト: 1000）
         """
         self.keywords = keywords or ["参加希望", "参加", "!参加", "!join"]
         self.participants: List[Dict[str, str]] = []
+        self.max_participants = max_participants or self.DEFAULT_MAX_PARTICIPANTS
         self.enabled = False
 
     def set_keywords(self, keywords: List[str]):
@@ -91,6 +95,11 @@ class ParticipantTracker:
         # 既に登録されているかチェック
         if any(p['username'] == username for p in self.participants):
             logger.debug(f"Already registered: {username}")
+            return False
+
+        # 上限チェック
+        if len(self.participants) >= self.max_participants:
+            logger.warning(f"参加者数上限({self.max_participants})に達しています: {username}")
             return False
 
         # 参加者を追加
@@ -277,9 +286,11 @@ class ParticipantTracker:
 _tracker_instance = None
 
 
-def get_tracker() -> ParticipantTracker:
+def get_tracker(max_participants: int = None) -> ParticipantTracker:
     """グローバル追跡インスタンスを取得"""
     global _tracker_instance
     if _tracker_instance is None:
-        _tracker_instance = ParticipantTracker()
+        _tracker_instance = ParticipantTracker(max_participants=max_participants)
+    elif max_participants is not None:
+        _tracker_instance.max_participants = max_participants
     return _tracker_instance

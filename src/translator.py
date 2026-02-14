@@ -8,6 +8,7 @@ import re
 from collections import OrderedDict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from src.logger import logger
+from src.performance_logger import get_perf
 
 
 class DeepLRetryableError(Exception):
@@ -162,8 +163,86 @@ class _RateLimiter:
                 await asyncio.sleep(wait)
 
 
+class _SessionManager:
+    """aiohttp.ClientSessionを再利用するためのマネージャー"""
+
+    def __init__(self):
+        self._session: aiohttp.ClientSession | None = None
+        self._lock = asyncio.Lock()
+
+    async def get_session(self) -> aiohttp.ClientSession:
+        async with self._lock:
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=30)
+                )
+        return self._session
+
+    async def close(self):
+        async with self._lock:
+            if self._session and not self._session.closed:
+                await self._session.close()
+                self._session = None
+
+
+class _TranslationBatcher:
+    """翻訳リクエストをバッチ化して効率的にAPI呼び出しを行う"""
+
+    def __init__(self, batch_size: int = 5, wait_ms: int = 100):
+        self.batch_size = batch_size
+        self.wait_ms = wait_ms
+        self._pending: list[tuple[str, str, str, asyncio.Future]] = []
+        self._lock = asyncio.Lock()
+        self._flush_task: asyncio.Task | None = None
+
+    async def submit(self, text: str, mode: str, api_key: str) -> str:
+        """翻訳リクエストを送信。バッチ処理で効率化される。"""
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        async with self._lock:
+            self._pending.append((text, mode, api_key, future))
+
+            if len(self._pending) >= self.batch_size:
+                # バッチサイズに達したら即座にフラッシュ
+                batch = self._pending[:]
+                self._pending.clear()
+                if self._flush_task and not self._flush_task.done():
+                    self._flush_task.cancel()
+                asyncio.create_task(self._process_batch(batch))
+            elif self._flush_task is None or self._flush_task.done():
+                # 待機タイマーを開始
+                self._flush_task = asyncio.create_task(self._delayed_flush())
+
+        return await future
+
+    async def _delayed_flush(self):
+        """待機時間後にバッチをフラッシュ"""
+        await asyncio.sleep(self.wait_ms / 1000.0)
+        async with self._lock:
+            if self._pending:
+                batch = self._pending[:]
+                self._pending.clear()
+                asyncio.create_task(self._process_batch(batch))
+
+    async def _process_batch(self, batch: list):
+        """バッチ内のリクエストを処理"""
+        for text, mode, api_key, future in batch:
+            if future.done():
+                continue
+            try:
+                result = await translate_text(text, mode, api_key)
+                if not future.done():
+                    future.set_result(result)
+            except Exception as e:
+                if not future.done():
+                    future.set_exception(e)
+
+
 _cache = _TranslationCache()
 _rate_limiter = _RateLimiter()
+_session_manager = _SessionManager()
+_batcher = _TranslationBatcher()
 _translation_filters = []
 _translation_dictionary = []
 _stats = {
@@ -171,6 +250,7 @@ _stats = {
     "cache_hits": 0,
     "filtered": 0,
     "errors": 0,
+    "batched": 0,
 }
 
 
@@ -230,7 +310,13 @@ def apply_translation_dictionary(text: str) -> str:
 
 
 def get_stats():
-    return _stats.copy()
+    stats = _stats.copy()
+    _perf = get_perf()
+    api_stats = _perf.get_stats("deepl_api")
+    if api_stats:
+        stats["avg_api_ms"] = api_stats["avg"]
+        stats["p95_api_ms"] = api_stats.get("p95")
+    return stats
 
 
 def _build_payload(text, mode):
@@ -271,15 +357,15 @@ def _build_payload(text, mode):
     reraise=True
 )
 async def _translate_http_async(payload, endpoint, api_key):
-    """DeepL API呼び出し（指数バックオフリトライ付き）"""
+    """DeepL API呼び出し（指数バックオフリトライ付き、セッション再利用）"""
     headers = {"Authorization": f"DeepL-Auth-Key {api_key}"}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(endpoint, data=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            if resp.status in (429, 503):
-                logger.warning(f"DeepL rate limited ({resp.status}). Will retry with exponential backoff...")
-                raise DeepLRetryableError(f"Rate limited: {resp.status}")
-            body = await resp.text()
-            return resp.status, body, await resp.json() if resp.status == 200 else None
+    session = await _session_manager.get_session()
+    async with session.post(endpoint, data=payload, headers=headers) as resp:
+        if resp.status in (429, 503):
+            logger.warning(f"DeepL rate limited ({resp.status}). Will retry with exponential backoff...")
+            raise DeepLRetryableError(f"Rate limited: {resp.status}")
+        body = await resp.text()
+        return resp.status, body, await resp.json() if resp.status == 200 else None
 
 
 @retry(
@@ -328,8 +414,10 @@ async def translate_text(text, mode, api_key):
     await _rate_limiter.wait_async()
     _stats["requests"] += 1
 
+    _perf = get_perf()
     try:
-        status, body, result = await _translate_http_async(payload, endpoint, api_key)
+        with _perf.measure("deepl_api"):
+            status, body, result = await _translate_http_async(payload, endpoint, api_key)
         if status == 200:
             translated = result["translations"][0]["text"]
             _cache.set(cache_key, translated)
@@ -390,3 +478,47 @@ def translate_text_sync(text, mode, api_key):
         _stats["errors"] += 1
 
     return text
+
+
+async def translate_text_batched(text: str, mode: str, api_key: str) -> str:
+    """バッチ処理対応の翻訳関数。キャッシュ済みは即返却、未キャッシュはバッチ対象。"""
+    if not api_key:
+        logger.error("DeepL API Key is missing.")
+        return _normalize_text(text)
+
+    text = _normalize_text(text)
+    if not text.strip():
+        return text
+
+    if should_filter(text):
+        _stats["filtered"] += 1
+        return ""
+
+    text = apply_translation_dictionary(text)
+
+    # キャッシュ済みは即返却
+    cache_key = _make_cache_key(text, mode, api_key)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        _stats["cache_hits"] += 1
+        return cached
+
+    _stats["batched"] += 1
+    return await _batcher.submit(text, mode, api_key)
+
+
+def configure_batcher(batch_size: int = 5, wait_ms: int = 100):
+    """バッチ処理の設定を変更（ペンディング中のリクエストはキャンセルされる）"""
+    global _batcher
+    old_batcher = _batcher
+    _batcher = _TranslationBatcher(batch_size=batch_size, wait_ms=wait_ms)
+    # 旧バッチャーのペンディングリクエストをキャンセル
+    for _, _, _, future in old_batcher._pending:
+        if not future.done():
+            future.cancel()
+    old_batcher._pending.clear()
+
+
+async def cleanup():
+    """モジュールクリーンアップ（セッション解放）"""
+    await _session_manager.close()

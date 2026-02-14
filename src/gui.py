@@ -10,6 +10,7 @@ import json
 import platform
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+from collections import deque
 from datetime import datetime
 from typing import Dict
 
@@ -36,6 +37,7 @@ from src.voicevox_manager import get_voicevox_manager
 from src.comment_data import CommentData
 from src import translator, __version__
 from src.resource_monitor import get_monitor
+from src.gui_helpers import DifferentialListManager, create_participant_row, create_simple_list_row
 from src.updater import (
     check_for_updates, download_update, apply_update, restart_app,
     ReleaseInfo, UpdateError, format_file_size,
@@ -164,12 +166,16 @@ class KototsunaApp:
         self.token = None
         self.bot_instance = None
         self.tts_started = False
-        self.tracker = get_tracker()
+        self.tracker = get_tracker(
+            max_participants=self.config.get("participant_limit", 1000)
+        )
         self.tracker.enable()
 
-        # ログ履歴（時系列で記録）
-        self.chat_log_history = []
-        self.chat_history = []
+        # ログ履歴（時系列で記録、上限付きdeque）
+        self._log_history_limit = self.config.get("chat_log_history_limit", 1000)
+        self._chat_history_limit = 200
+        self.log_history = deque(maxlen=self._log_history_limit)
+        self.chat_history = deque(maxlen=self._chat_history_limit)
 
         # Variables
         self.channel = tk.StringVar(value=self.config.get("channel_name", ""))
@@ -263,6 +269,9 @@ class KototsunaApp:
         self.resource_monitor = get_monitor()
         # 警告コールバックを設定
         self.resource_monitor.warning_callback = self._on_resource_warning
+        # 自動再起動設定
+        self.resource_monitor.auto_restart_enabled = self.config.get("auto_restart_enabled", False)
+        self.resource_monitor.auto_restart_threshold_mb = self.config.get("auto_restart_threshold_mb", 1000)
 
         self.build_widgets()
 
@@ -720,7 +729,7 @@ class KototsunaApp:
         self.comment_paned.add(tile_container, minsize=300)
         self.comment_paned.add(log_container, minsize=80)
 
-        self.log_history = []
+        self.log_history = deque(maxlen=self._log_history_limit)
 
     def _build_event_log_area(self):
         """特別イベントログエリアを構築"""
@@ -743,6 +752,14 @@ class KototsunaApp:
 
         self.main_participant_list = ctk.CTkScrollableFrame(self.participant_frame, height=150, fg_color="transparent")
         self.main_participant_list.pack(fill="both", expand=True, padx=8, pady=(0, 10))
+
+        # メイン画面の参加者リスト差分更新マネージャー
+        self._main_participant_manager = DifferentialListManager(
+            parent=self.main_participant_list,
+            key_func=lambda p: p["username"],
+            create_widget_func=lambda parent, p, i: self._create_simple_participant_label(parent, p, i),
+            empty_widget_func=lambda parent: self._create_empty_label(parent, "参加者なし"),
+        )
 
     # ========================================
     # 右パネル（折りたたみ可能）
@@ -1175,6 +1192,14 @@ class KototsunaApp:
 
         self.panel_participant_list = ctk.CTkScrollableFrame(parent, height=150, fg_color=CARD_BG)
         self.panel_participant_list.pack(fill="x", pady=(0, 8))
+
+        # パネル用差分更新マネージャー
+        self._panel_participant_manager = DifferentialListManager(
+            parent=self.panel_participant_list,
+            key_func=lambda p: p["username"],
+            create_widget_func=lambda parent, p, i: self._create_panel_participant_row(parent, p),
+            empty_widget_func=lambda parent: self._create_panel_empty_label(parent),
+        )
         self._refresh_panel_participants()
 
         # ボタン行1
@@ -1407,19 +1432,36 @@ class KototsunaApp:
         self.tracker.remove_keyword(kw)
         self._refresh_keyword_list()
 
+    def _create_panel_participant_row(self, parent, participant):
+        """パネル用のシンプルな参加者行を作成"""
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", pady=1)
+        ctk.CTkLabel(row, text=participant.get("username", ""), font=("Segoe UI", 10)).pack(side="left")
+        return row
+
+    def _create_panel_empty_label(self, parent):
+        """パネル用の空ラベルを作成"""
+        label = ctk.CTkLabel(parent, text="参加者なし", text_color=TEXT_SUBTLE, font=("Segoe UI", 10))
+        label.pack(pady=4)
+        return label
+
     def _refresh_panel_participants(self):
         if not hasattr(self, 'panel_participant_list'):
             return
-        for w in self.panel_participant_list.winfo_children():
-            w.destroy()
-        participants = self.tracker.get_participants()
-        if not participants:
-            ctk.CTkLabel(self.panel_participant_list, text="参加者なし", text_color=TEXT_SUBTLE, font=("Segoe UI", 10)).pack(pady=4)
-            return
-        for p in participants[:20]:
-            row = ctk.CTkFrame(self.panel_participant_list, fg_color="transparent")
-            row.pack(fill="x", pady=1)
-            ctk.CTkLabel(row, text=p.get("username", ""), font=("Segoe UI", 10)).pack(side="left")
+        if hasattr(self, '_panel_participant_manager'):
+            participants = self.tracker.get_participants()[:20]
+            self._panel_participant_manager.update(participants)
+        else:
+            for w in self.panel_participant_list.winfo_children():
+                w.destroy()
+            participants = self.tracker.get_participants()
+            if not participants:
+                ctk.CTkLabel(self.panel_participant_list, text="参加者なし", text_color=TEXT_SUBTLE, font=("Segoe UI", 10)).pack(pady=4)
+                return
+            for p in participants[:20]:
+                row = ctk.CTkFrame(self.panel_participant_list, fg_color="transparent")
+                row.pack(fill="x", pady=1)
+                ctk.CTkLabel(row, text=p.get("username", ""), font=("Segoe UI", 10)).pack(side="left")
 
     # ========================================
     # 旧タブビルダー（互換性のため残す - 未使用）
@@ -1660,7 +1702,7 @@ class KototsunaApp:
         comment_paned.add(log_container, minsize=100)
 
         # ログ履歴
-        self.log_history = []
+        self.log_history = deque(maxlen=self._log_history_limit)
 
         # ログ操作ボタン
         log_btn_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
@@ -2472,6 +2514,9 @@ class KototsunaApp:
         try:
             stats = translator.get_stats()
             msg = f"翻訳統計: {stats.get('requests',0)} req / {stats.get('cache_hits',0)} hit / {stats.get('filtered',0)} filtered"
+            avg_ms = stats.get("avg_api_ms")
+            if avg_ms is not None:
+                msg += f" / avg {avg_ms:.0f}ms"
             if hasattr(self, "stats_label"):
                 self.stats_label.configure(text=msg)
         except Exception as e:
@@ -2518,8 +2563,6 @@ class KototsunaApp:
                 "time": timestamp
             }
             self.chat_history.append(entry)
-            if len(self.chat_history) > 200:
-                self.chat_history.pop(0)
             if self.chat_html_output.get():
                 self._export_chat_html()
 
@@ -2552,8 +2595,6 @@ class KototsunaApp:
             "emotes": comment.emotes if comment.emotes else [],
         }
         self.chat_history.append(entry)
-        if len(self.chat_history) > 100:
-            self.chat_history.pop(0)
 
     def _get_icon_path(self) -> str:
         """アイコンファイルのパスを取得（PyInstallerビルド対応）"""
@@ -2606,11 +2647,13 @@ class KototsunaApp:
                     icon_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
                     photo_images = []
 
+                    # 1回だけ画像を開いて各サイズにリサイズ
+                    base_image = Image.open(icon_path)
                     for size in icon_sizes:
-                        pil_image = Image.open(icon_path)
-                        pil_image = pil_image.resize(size, Image.Resampling.LANCZOS)
-                        photo = ImageTk.PhotoImage(pil_image)
+                        resized = base_image.resize(size, Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(resized)
                         photo_images.append(photo)
+                    base_image.close()
 
                     self.master.iconphoto(True, *photo_images)
                     self.master._icon_photos = photo_images
@@ -3559,44 +3602,41 @@ window.onload = function() {{
         # 3秒後に再度実行
         self.participant_refresh_timer = self.master.after(3000, self.start_participant_auto_refresh)
 
+    def _create_simple_participant_label(self, parent, participant, index):
+        """メイン画面用のシンプルな参加者ラベルを作成"""
+        label = ctk.CTkLabel(
+            parent,
+            text=f"{index + 1}. {participant['username']}",
+            font=("Arial", 14, "bold"),
+            anchor="w",
+        )
+        label.pack(fill="x", padx=6, pady=2)
+        return label
+
     def refresh_main_participant_list(self):
-        """メイン画面の参加者リストを更新"""
+        """メイン画面の参加者リストを差分更新"""
         if not hasattr(self, 'main_participant_list'):
             return
 
-        # trackerの初期化確認
         if not hasattr(self, 'tracker'):
             self.tracker = get_tracker()
 
-        # 既存のウィジェットをクリア
-        for widget in self.main_participant_list.winfo_children():
-            widget.destroy()
-
-        # 参加者数を更新
         count = self.tracker.get_count()
         if hasattr(self, 'main_participant_count_label'):
             self.main_participant_count_label.configure(text=f"({count}人)")
 
-        # 参加者を表示
         participants = self.tracker.get_participants()
-        if not participants:
-                ctk.CTkLabel(
-                    self.main_participant_list,
-                    text="参加者なし",
-                    text_color="gray",
-                    font=("Arial", 13, "bold")
-                ).pack(pady=6)
+        if hasattr(self, '_main_participant_manager'):
+            self._main_participant_manager.update(participants)
         else:
-            for i, participant in enumerate(participants, 1):
-                username = participant['username']
-                label_text = f"{i}. {username}"
-
-                ctk.CTkLabel(
-                    self.main_participant_list,
-                    text=label_text,
-                    font=("Arial", 14, "bold"),
-                    anchor="w"
-                ).pack(fill="x", padx=6, pady=2)
+            # フォールバック
+            for widget in self.main_participant_list.winfo_children():
+                widget.destroy()
+            if not participants:
+                ctk.CTkLabel(self.main_participant_list, text="参加者なし", text_color="gray", font=("Arial", 13, "bold")).pack(pady=6)
+            else:
+                for i, p in enumerate(participants, 1):
+                    ctk.CTkLabel(self.main_participant_list, text=f"{i}. {p['username']}", font=("Arial", 14, "bold"), anchor="w").pack(fill="x", padx=6, pady=2)
 
     def export_log_text(self):
         """ログをテキスト形式で出力"""
@@ -3659,7 +3699,7 @@ window.onload = function() {{
                     "channel": self.channel.get(),
                     "translate_mode": self.lang_mode.get()
                 },
-                "logs": self.log_history
+                "logs": list(self.log_history)
             }
 
             with open(file_path, "w", encoding="utf-8") as f:
@@ -4747,6 +4787,22 @@ window.onload = function() {{
         self.participant_scroll_frame = ctk.CTkScrollableFrame(right_frame, label_text="参加者リスト（ドラッグで順序変更）")
         self.participant_scroll_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
+        # 差分更新マネージャー（参加者タブ用）
+        self._participant_list_manager = DifferentialListManager(
+            parent=self.participant_scroll_frame,
+            key_func=lambda p: p["username"],
+            create_widget_func=lambda parent, p, i: create_participant_row(
+                parent, p, i,
+                on_edit=self.edit_participant,
+                on_delete=self.remove_participant,
+                on_drag_start=self.start_drag,
+                on_drag_motion=self.on_drag,
+                on_drag_end=self.end_drag,
+                on_hover=self.on_hover_enter,
+            ),
+            empty_widget_func=lambda parent: self._create_empty_label(parent, "（参加者はいません）"),
+        )
+
         # ドラッグアンドドロップ用の変数
         self.drag_data = {"item": None, "index": None}
 
@@ -5058,8 +5114,45 @@ window.onload = function() {{
         """リソース警告のコールバック"""
         message = warning_data.get("message", "")
         self.log_message(f"[リソース警告] {message}", log_type="system")
-        # GUI上でも警告を表示
-        self.master.after(0, lambda: self.update_resource_display())
+
+        if warning_type == "auto_restart":
+            self.master.after(0, lambda: self._show_auto_restart_dialog(message))
+        else:
+            self.master.after(0, lambda: self.update_resource_display())
+
+    def _show_auto_restart_dialog(self, message: str):
+        """メモリ閾値超過時の自動再起動ダイアログ"""
+        result = messagebox.askyesno(
+            "メモリ警告 - 再起動推奨",
+            f"{message}\n\nアプリケーションを再起動しますか？\n"
+            "（現在の設定は自動保存されます）",
+        )
+        if result:
+            self._restart_application()
+
+    def _restart_application(self):
+        """アプリケーションを再起動"""
+        import sys
+        import subprocess
+
+        try:
+            save_config(self.config)
+            self.log_message("設定を保存しました。再起動します...", log_type="system")
+
+            if self.bot_instance:
+                self.stop_bot()
+
+            # 新しいプロセスを起動してから現在のプロセスを終了
+            if getattr(sys, 'frozen', False):
+                subprocess.Popen([sys.executable])
+            else:
+                subprocess.Popen([sys.executable] + sys.argv)
+
+            self.master.destroy()
+            sys.exit(0)
+        except Exception as e:
+            logger.error(f"再起動に失敗しました: {e}")
+            messagebox.showerror("エラー", f"再起動に失敗しました: {e}")
 
     def copy_debug_info(self):
         """デバッグ情報をクリップボードにコピー"""
@@ -5127,73 +5220,32 @@ window.onload = function() {{
         self.log_message(f"キーワード削除: {keyword}")
         self.refresh_keyword_list()
 
-    def refresh_participant_list(self):
-        """参加者リストを更新"""
-        # 既存のウィジェットをクリア
-        for widget in self.participant_scroll_frame.winfo_children():
-            widget.destroy()
+    def _create_empty_label(self, parent, text="（参加者はいません）"):
+        """空リスト用のプレースホルダーラベルを作成"""
+        label = ctk.CTkLabel(parent, text=text, text_color="gray", font=("Arial", 13, "bold"))
+        label.pack(pady=10)
+        return label
 
+    def refresh_participant_list(self):
+        """参加者リストを差分更新"""
         # 参加者数を更新
         count = self.tracker.get_count()
         self.participant_count_label.configure(text=f"参加者数: {count}人")
 
-        # 参加者を表示
+        # 差分更新マネージャーで更新
         participants = self.tracker.get_participants()
-        if not participants:
-            ctk.CTkLabel(
-                self.participant_scroll_frame,
-                text="（参加者はいません）",
-                text_color="gray",
-                font=("Arial", 13, "bold")
-            ).pack(pady=10)
+        if hasattr(self, '_participant_list_manager'):
+            self._participant_list_manager.update(participants)
         else:
+            # フォールバック: マネージャー未初期化時は従来方式
+            for widget in self.participant_scroll_frame.winfo_children():
+                widget.destroy()
             for i, participant in enumerate(participants):
-                entry_frame = ctk.CTkFrame(self.participant_scroll_frame)
-                entry_frame.pack(fill="x", pady=2, padx=2)
-                entry_frame.grid_columnconfigure(0, weight=1)  # ユーザー名部分を可変に
-
-                # 順番表示とユーザー名（フレキシブルに拡張）
-                info_label = ctk.CTkLabel(
-                    entry_frame,
-                    text=f"{i+1}. {participant['username']}",
-                    font=("Arial", 14, "bold"),
-                    anchor="w"
+                create_participant_row(
+                    self.participant_scroll_frame, participant, i,
+                    on_edit=self.edit_participant,
+                    on_delete=self.remove_participant,
                 )
-                info_label.grid(row=0, column=0, sticky="ew", padx=(5, 2))
-
-                # ドラッグアンドドロップのイベントバインド
-                info_label.bind("<Button-1>", lambda e, idx=i, frame=entry_frame: self.start_drag(e, idx, frame))
-                info_label.bind("<B1-Motion>", self.on_drag)
-                info_label.bind("<ButtonRelease-1>", self.end_drag)
-                entry_frame.bind("<Enter>", lambda e, idx=i: self.on_hover_enter(e, idx))
-
-                # ボタンフレーム（右側に固定サイズで配置）
-                button_container = ctk.CTkFrame(entry_frame, fg_color="transparent")
-                button_container.grid(row=0, column=1, sticky="e")
-
-                # 編集ボタン（アイコン風）
-                ctk.CTkButton(
-                    button_container,
-                    text="✏️",
-                    command=lambda u=participant['username']: self.edit_participant(u),
-                    width=35,
-                    height=26,
-                    font=("Arial", 14),
-                    fg_color="#3B82F6",
-                    hover_color="#2563EB"
-                ).pack(side="left", padx=1)
-
-                # 削除ボタン（アイコン風）
-                ctk.CTkButton(
-                    button_container,
-                    text="🗑️",
-                    command=lambda u=participant['username']: self.remove_participant(u),
-                    width=35,
-                    height=26,
-                    font=("Arial", 14),
-                    fg_color="#EF4444",
-                    hover_color="#DC2626"
-                ).pack(side="left", padx=1)
 
     def remove_participant(self, username):
         """参加者を削除"""

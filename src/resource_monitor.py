@@ -27,11 +27,11 @@ from src.logger import logger
 
 class ResourceMonitor:
     """リソース監視クラス"""
-    
+
     # デフォルトの警告閾値
     DEFAULT_MEMORY_WARNING_THRESHOLD_MB = 500  # 500MB
     DEFAULT_CPU_WARNING_THRESHOLD_PERCENT = 80  # 80%
-    
+
     def __init__(
         self,
         memory_warning_threshold_mb: Optional[float] = None,
@@ -40,7 +40,7 @@ class ResourceMonitor:
     ):
         """
         リソース監視を初期化
-        
+
         Args:
             memory_warning_threshold_mb: メモリ警告閾値（MB）
             cpu_warning_threshold_percent: CPU警告閾値（%）
@@ -49,7 +49,7 @@ class ResourceMonitor:
         if not PSUTIL_AVAILABLE:
             error_msg = PSUTIL_IMPORT_ERROR or "不明なエラー"
             logger.warning(f"psutilが利用できません。リソース監視機能は制限されます。(Error: {error_msg})")
-        
+
         self.memory_warning_threshold_mb = (
             memory_warning_threshold_mb or self.DEFAULT_MEMORY_WARNING_THRESHOLD_MB
         )
@@ -57,23 +57,74 @@ class ResourceMonitor:
             cpu_warning_threshold_percent or self.DEFAULT_CPU_WARNING_THRESHOLD_PERCENT
         )
         self.warning_callback = warning_callback
-        
+
+        # 自動再起動設定
+        self.auto_restart_enabled = False
+        self.auto_restart_threshold_mb = 1000  # デフォルト1000MB
+
         self._monitoring = False
         self._monitor_thread: Optional[threading.Thread] = None
+        self._cpu_collector_thread: Optional[threading.Thread] = None
         self._last_warning_time: Dict[str, float] = {}
         self._warning_cooldown = 60  # 同じ警告を60秒間隔で抑制
-        
+
+        # 非ブロッキングCPU統計キャッシュ
+        self._cached_cpu_percent: float = 0.0
+        self._cached_system_cpu_percent: float = 0.0
+        self._cpu_lock = threading.Lock()
+        self._cpu_collecting = False
+
         # プロセス情報
         try:
             self._process = psutil.Process() if PSUTIL_AVAILABLE else None
         except Exception as e:
             logger.error(f"プロセス情報の取得に失敗: {e}")
             self._process = None
+
+        # CPU統計のバックグラウンド収集を開始
+        if PSUTIL_AVAILABLE and self._process:
+            self._start_cpu_collector()
     
+    def _start_cpu_collector(self) -> None:
+        """CPU統計をバックグラウンドで収集するスレッドを開始"""
+        self._cpu_collecting = True
+        self._cpu_collector_thread = threading.Thread(
+            target=self._cpu_collect_loop,
+            daemon=True,
+            name="CPUCollector",
+        )
+        self._cpu_collector_thread.start()
+
+    def _cpu_collect_loop(self) -> None:
+        """CPU統計を定期収集するループ（バックグラウンドスレッド、約2秒間隔）"""
+        # 初回プライミング（以降のinterval=None呼び出し用）
+        if PSUTIL_AVAILABLE:
+            try:
+                psutil.cpu_percent(interval=None)
+            except Exception:
+                pass
+        while self._cpu_collecting:
+            try:
+                if self._process and PSUTIL_AVAILABLE:
+                    # cpu_percent(interval=2.0)で2秒間のCPU使用率を計測
+                    proc_cpu = self._process.cpu_percent(interval=2.0)
+                    sys_cpu = psutil.cpu_percent(interval=None)
+                    with self._cpu_lock:
+                        self._cached_cpu_percent = proc_cpu
+                        self._cached_system_cpu_percent = sys_cpu
+            except Exception:
+                time.sleep(2.0)
+
+    def _stop_cpu_collector(self) -> None:
+        """CPU統計収集スレッドを停止"""
+        self._cpu_collecting = False
+        if self._cpu_collector_thread and self._cpu_collector_thread.is_alive():
+            self._cpu_collector_thread.join(timeout=2.0)
+
     def get_resource_stats(self) -> Dict:
         """
-        現在のリソース統計を取得
-        
+        現在のリソース統計を取得（非ブロッキング）
+
         Returns:
             リソース統計の辞書
         """
@@ -82,30 +133,29 @@ class ResourceMonitor:
                 "available": False,
                 "error": f"psutilが利用できません (Import Error: {PSUTIL_IMPORT_ERROR})"
             }
-            
+
         if self._process is None:
-             return {
+            return {
                 "available": False,
                 "error": "psutilプロセス情報の初期化に失敗しました"
             }
-        
+
         try:
-            # メモリ情報
+            # メモリ情報（非ブロッキング）
             memory_info = self._process.memory_info()
-            memory_mb = memory_info.rss / (1024 * 1024)  # RSSをMBに変換
-            
-            # CPU使用率（過去1秒間の平均）
-            cpu_percent = self._process.cpu_percent(interval=0.1)
-            
-            # システム全体のCPU使用率
-            system_cpu_percent = psutil.cpu_percent(interval=0.1)
-            
+            memory_mb = memory_info.rss / (1024 * 1024)
+
+            # CPU使用率はキャッシュから取得（非ブロッキング）
+            with self._cpu_lock:
+                cpu_percent = self._cached_cpu_percent
+                system_cpu_percent = self._cached_system_cpu_percent
+
             # スレッド数
             thread_count = threading.active_count()
-            
-            # システムメモリ情報
+
+            # システムメモリ情報（非ブロッキング）
             system_memory = psutil.virtual_memory()
-            
+
             stats = {
                 "available": True,
                 "timestamp": datetime.now().isoformat(),
@@ -114,7 +164,7 @@ class ResourceMonitor:
                     "memory_percent": round(self._process.memory_percent(), 2),
                     "cpu_percent": round(cpu_percent, 2),
                     "thread_count": thread_count,
-                    "num_fds": getattr(self._process, "num_fds", None),  # Unix系のみ
+                    "num_fds": getattr(self._process, "num_fds", None),
                 },
                 "system": {
                     "cpu_percent": round(system_cpu_percent, 2),
@@ -127,12 +177,12 @@ class ResourceMonitor:
                     "cpu_warning": cpu_percent > self.cpu_warning_threshold_percent,
                 }
             }
-            
+
             # 警告チェック
             self._check_warnings(stats)
-            
+
             return stats
-            
+
         except Exception as e:
             logger.error(f"リソース統計の取得に失敗: {e}")
             return {
@@ -144,11 +194,11 @@ class ResourceMonitor:
         """警告をチェックして、必要に応じてコールバックを呼び出す"""
         if not stats.get("available", False):
             return
-        
+
         current_time = time.time()
         warnings = stats.get("warnings", {})
         process_stats = stats.get("process", {})
-        
+
         # メモリ警告
         if warnings.get("memory_warning", False):
             memory_mb = process_stats.get("memory_mb", 0)
@@ -159,7 +209,7 @@ class ResourceMonitor:
                     f"{memory_mb:.2f}MB (閾値: {self.memory_warning_threshold_mb}MB)"
                 )
                 self._trigger_warning("memory", message, stats)
-        
+
         # CPU警告
         if warnings.get("cpu_warning", False):
             cpu_percent = process_stats.get("cpu_percent", 0)
@@ -170,6 +220,18 @@ class ResourceMonitor:
                     f"{cpu_percent:.2f}% (閾値: {self.cpu_warning_threshold_percent}%)"
                 )
                 self._trigger_warning("cpu", message, stats)
+
+        # 自動再起動チェック
+        if self.auto_restart_enabled:
+            memory_mb = process_stats.get("memory_mb", 0)
+            if memory_mb > self.auto_restart_threshold_mb:
+                warning_key = "auto_restart"
+                if self._should_trigger_warning(warning_key, current_time):
+                    message = (
+                        f"メモリ使用量が自動再起動閾値を超えました: "
+                        f"{memory_mb:.2f}MB (閾値: {self.auto_restart_threshold_mb}MB)"
+                    )
+                    self._trigger_warning("auto_restart", message, stats)
     
     def _should_trigger_warning(self, warning_key: str, current_time: float) -> bool:
         """警告を発火すべきかチェック（クールダウン期間を考慮）"""
@@ -222,10 +284,11 @@ class ResourceMonitor:
         """バックグラウンドでの監視を停止"""
         if not self._monitoring:
             return
-        
+
         self._monitoring = False
         if self._monitor_thread and self._monitor_thread.is_alive():
             self._monitor_thread.join(timeout=2.0)
+        self._stop_cpu_collector()
         logger.info("リソース監視を停止しました")
     
     def _monitor_loop(self, interval: float) -> None:
