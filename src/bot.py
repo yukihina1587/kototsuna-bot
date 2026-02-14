@@ -299,6 +299,27 @@ class TranslateBot(commands.Bot):
             logger.debug(f"Processing broadcaster's own message: {message.author.name}")
 
         original_content = message.content
+
+        # ビッツ（チア）イベント検知と通知（早期returnの前に実行）
+        bits = 0
+        if message.tags and message.tags.get("bits"):
+            try:
+                bits = int(message.tags.get("bits", "0"))
+            except ValueError:
+                bits = 0
+
+        if bits > 0:
+            bits_display_name = None
+            if hasattr(message, "author") and message.author:
+                bits_display_name = getattr(message.author, "display_name", None) or getattr(message.author, "name", None)
+            bits_display_name = bits_display_name or "匿名"
+
+            bits_msg = f"{bits_display_name} が {bits} ビッツを投げました"
+            if original_content:
+                bits_msg += f"「{original_content}」"
+
+            self._notify_special_event(bits_msg, event_type="bits")
+
         content = message.content
         if message.tags:
             # Emote ranges are stored in 'emotes' tag as 'id:start-end,start-end/id:start-end'
@@ -454,29 +475,10 @@ class TranslateBot(commands.Bot):
                 except Exception as e:
                     logger.error(f"TTS speak error: {e}", exc_info=True)
 
-        # ビッツ（チア）イベント検知と通知
-        bits = 0
-        if message.tags and message.tags.get("bits"):
-            try:
-                bits = int(message.tags.get("bits", "0"))
-            except ValueError:
-                bits = 0
 
-        if bits > 0:
-            display_name = None
-            if hasattr(message, "author") and message.author:
-                display_name = getattr(message.author, "display_name", None) or getattr(message.author, "name", None)
-            display_name = display_name or "匿名"
-
-            bits_msg = f"{display_name} が {bits} ビッツを投げました"
-            if original_content:
-                bits_msg += f"「{original_content}」"
-
-            self._notify_special_event(bits_msg, event_type="bits")
-
-    async def event_usernotice(self, message):
-        """サブスクやギフトなどのUSERNOTICEイベントを処理"""
-        msg_id = message.tags.get("msg-id") if message.tags else None
+    async def event_raw_usernotice(self, channel, tags: dict):
+        """サブスクやギフトなどのUSERNOTICEイベントを処理（twitchio 2.x準拠）"""
+        msg_id = tags.get("msg-id") if tags else None
 
         # 自分でサブスク登録（sub, resub, primepaidupgrade）
         self_sub_types = {"sub", "resub", "primepaidupgrade"}
@@ -497,14 +499,11 @@ class TranslateBot(commands.Bot):
         if msg_id not in all_sub_related:
             return
 
-        display_name = None
-        if hasattr(message, "author") and message.author:
-            display_name = getattr(message.author, "display_name", None) or getattr(message.author, "name", None)
-        display_name = display_name or "匿名"
+        display_name = tags.get("display-name") or tags.get("login") or "匿名"
 
         system_msg = ""
-        if message.tags and message.tags.get("system-msg"):
-            system_msg = self._decode_irc_tag(message.tags.get("system-msg"))
+        if tags.get("system-msg"):
+            system_msg = self._decode_irc_tag(tags.get("system-msg"))
 
         # イベントタイプを判別
         if msg_id in self_sub_types:

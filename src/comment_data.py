@@ -151,6 +151,34 @@ def create_twitch_comment(username: str, message: str, tags: Dict[str, Any],
     # ユーザー名の色
     color = tags.get("color") if tags else None
 
+    # エモート情報のパース
+    emotes = []
+    emotes_raw = tags.get("emotes") if tags else None
+    if emotes_raw and isinstance(emotes_raw, str):
+        # フォーマット: "emote_id:start-end,start-end/emote_id:start-end"
+        for emote_entry in emotes_raw.split("/"):
+            if ":" not in emote_entry:
+                continue
+            emote_id, positions = emote_entry.split(":", 1)
+            for pos in positions.split(","):
+                if "-" not in pos:
+                    continue
+                start_str, end_str = pos.split("-", 1)
+                try:
+                    start = int(start_str)
+                    end = int(end_str)
+                    name = message[start:end + 1]
+                    emotes.append({
+                        "id": emote_id,
+                        "start": start,
+                        "end": end,
+                        "name": name,
+                    })
+                except (ValueError, IndexError):
+                    continue
+        # 位置でソート（後ろから置換するため降順）
+        emotes.sort(key=lambda e: e["start"])
+
     return CommentData(
         username=username,
         message=message,
@@ -160,6 +188,7 @@ def create_twitch_comment(username: str, message: str, tags: Dict[str, Any],
         avatar_url=avatar_url,
         translated=translated,
         badges=badges,
+        emotes=emotes,
         is_moderator=is_moderator,
         is_subscriber=is_subscriber,
         is_vip=is_vip,
