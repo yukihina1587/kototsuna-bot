@@ -19,23 +19,6 @@ if os.path.isdir(ctk_assets):
             dst = os.path.join('customtkinter', 'assets', os.path.relpath(root, ctk_assets))
             datas.append((src, dst))
 
-# Tcl/Tkライブラリを収集（ディレクトリ単位・標準PyInstallerフォーマット）
-import tkinter
-_tcl = tkinter.Tcl()
-_tcl_lib = _tcl.eval('info library')  # e.g. C:/Python312/tcl/tcl8.6
-_tcl_ver = _tcl.eval('info patchlevel').rsplit('.', 1)[0]  # e.g. "8.6"
-_tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
-print(f"[SPEC] Tcl library: {_tcl_lib} (exists={os.path.isdir(_tcl_lib)})")
-print(f"[SPEC] Tk  library: {_tk_lib} (exists={os.path.isdir(_tk_lib)})")
-
-# ディレクトリ丸ごとdatasに追加（PyInstallerが中身をフラットに展開する）
-if os.path.isdir(_tcl_lib):
-    datas += [(_tcl_lib, '_tcl_data')]
-    print(f"[SPEC] Added _tcl_data from {_tcl_lib}")
-if os.path.isdir(_tk_lib):
-    datas += [(_tk_lib, '_tk_data')]
-    print(f"[SPEC] Added _tk_data from {_tk_lib}")
-
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
@@ -75,7 +58,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=['rthook_tcltk.py'],
+    runtime_hooks=[],
     excludes=[
         # 未使用PyQt6モジュールを除外（ビルド警告削減・exe軽量化）
         'PyQt6.QtBluetooth', 'PyQt6.QAxContainer', 'PyQt6.QtDBus',
