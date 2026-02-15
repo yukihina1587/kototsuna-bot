@@ -29,21 +29,6 @@ elif os.path.isfile(os.path.join(ctk_alt_assets, 'themes', 'blue.json')):
 else:
     print("[SPEC][WARN] CustomTkinter blue.json not found in expected asset paths")
 
-# Tcl/Tkデータを明示収集（PyInstaller標準フックが期待する _tcl_data/_tk_data に配置）
-# 標準hook-_tkinter.pyの収集がCI環境で失敗するケースへの保険
-import tkinter
-_tcl = tkinter.Tcl()
-_tcl_lib = _tcl.eval('info library')
-_tcl_ver = _tcl.eval('info patchlevel').rsplit('.', 1)[0]
-_tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
-if os.path.isdir(_tcl_lib):
-    # Keep both legacy and _internal layouts for onefile extraction differences.
-    datas += [(_tcl_lib, '_tcl_data'), (_tcl_lib, os.path.join('_internal', '_tcl_data'))]
-    print(f"[SPEC] Tcl: {_tcl_lib} -> _tcl_data, _internal/_tcl_data")
-if os.path.isdir(_tk_lib):
-    datas += [(_tk_lib, '_tk_data'), (_tk_lib, os.path.join('_internal', '_tk_data'))]
-    print(f"[SPEC] Tk:  {_tk_lib} -> _tk_data, _internal/_tk_data")
-
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
@@ -83,7 +68,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=['hooks/rthook_tk_paths.py'],
+    runtime_hooks=[],
     excludes=[
         # 未使用PyQt6モジュールを除外（ビルド警告削減・exe軽量化）
         'PyQt6.QtBluetooth', 'PyQt6.QAxContainer', 'PyQt6.QtDBus',
