@@ -1,0 +1,15 @@
+# Keep versions aligned with production constraints where defined.
+-c requirements.txt
+
+# Test runner
+pytest
+pytest-asyncio
+
+# Runtime deps required by CI-targeted tests
+twitchio
+requests
+aiohttp
+python-dotenv
+websockets
+tenacity
+psutil

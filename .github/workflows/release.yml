@@ -42,23 +42,27 @@ jobs:
 
       - name: Verify init.tcl in build
         run: |
-          python -c "
-          import os, glob
-          # Check build directory for init.tcl
+          $scriptPath = Join-Path $env:RUNNER_TEMP "verify_tcl.py"
+          @"
+          import glob
+          import sys
+
           matches = glob.glob('build/**/init.tcl', recursive=True)
           print(f'init.tcl found in build: {len(matches)} files')
           for m in matches[:5]:
               print(f'  {m}')
-          # Check _tcl_data specifically
+
           tcl_data = glob.glob('build/**/_tcl_data/init.tcl', recursive=True)
           print(f'init.tcl in _tcl_data: {len(tcl_data)} files')
           for m in tcl_data[:5]:
               print(f'  {m}')
+
           if not tcl_data:
               print('ERROR: init.tcl NOT in _tcl_data - Tcl/Tk bundling failed!')
-              exit(1)
-          "
-        shell: cmd
+              sys.exit(1)
+          "@ | Set-Content -Path $scriptPath -Encoding UTF8
+          python $scriptPath
+        shell: pwsh
 
       - name: Calculate SHA256 hash
         id: hash

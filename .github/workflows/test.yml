@@ -18,17 +18,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
-
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio
-          # Install project dependencies (excluding GUI-specific ones for CI)
-          pip install twitchio requests aiohttp python-dotenv websockets tenacity psutil
+          pip install -r requirements-ci.txt
 
       - name: Run tests
         run: |
