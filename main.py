@@ -4,7 +4,6 @@ import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
 
-import tkinter as tk
 from dotenv import load_dotenv
 
 # PyInstallerでの相対パス解決用にsrcをパスへ追加
@@ -41,6 +40,9 @@ def configure_tcl_tk_paths() -> None:
             break
 
 configure_tcl_tk_paths()
+
+# Tcl/Tkパス補正後にtkinterを読み込む
+import tkinter as tk
 
 # ロガーを最初にインポート（他のモジュールより先に初期化）
 from src.logger import logger  # noqa: E402
