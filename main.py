@@ -29,15 +29,29 @@ def configure_tcl_tk_paths() -> None:
         os.path.join(BASE_DIR, "tcl", "tk8.6"),
     ]
 
-    for path in tcl_candidates:
-        if os.path.isfile(os.path.join(path, "init.tcl")):
-            os.environ["TCL_LIBRARY"] = path
-            break
+    def _pick_with_file(candidates, filename):
+        for path in candidates:
+            if os.path.isfile(os.path.join(path, filename)):
+                return path
+        return ""
 
-    for path in tk_candidates:
-        if os.path.isfile(os.path.join(path, "tk.tcl")):
-            os.environ["TK_LIBRARY"] = path
-            break
+    tcl_path = _pick_with_file(tcl_candidates, "init.tcl")
+    tk_path = _pick_with_file(tk_candidates, "tk.tcl")
+
+    # Fallback: _MEIPASS 配下を再帰探索して実在パスを拾う
+    if not tcl_path or not tk_path:
+        for root, dirs, files in os.walk(BASE_DIR):
+            if not tcl_path and "init.tcl" in files:
+                tcl_path = root
+            if not tk_path and "tk.tcl" in files:
+                tk_path = root
+            if tcl_path and tk_path:
+                break
+
+    if tcl_path:
+        os.environ["TCL_LIBRARY"] = tcl_path
+    if tk_path:
+        os.environ["TK_LIBRARY"] = tk_path
 
 configure_tcl_tk_paths()
 
