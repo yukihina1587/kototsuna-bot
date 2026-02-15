@@ -41,6 +41,14 @@ try:
             _df.write(f"ctk_assets_exists={os.path.isdir(_ctk_assets)}\n")
             _df.write(f"ctk_themes_exists={os.path.isdir(_ctk_themes)}\n")
             _df.write(f"ctk_blue_json_exists={os.path.isfile(_ctk_blue)}\n")
+            # 実際にファイルを開けるかテスト（AV干渉検出）
+            if os.path.isfile(_ctk_blue):
+                try:
+                    with open(_ctk_blue, 'r') as _test_f:
+                        _first = _test_f.read(20)
+                    _df.write(f"ctk_blue_json_open=OK (first 20 chars: {_first!r})\n")
+                except Exception as e:
+                    _df.write(f"ctk_blue_json_open=FAILED: {e}\n")
             if os.path.isdir(_ctk_dir):
                 _df.write("ctk_dir_contents=\n")
                 try:
