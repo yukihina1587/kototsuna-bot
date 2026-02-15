@@ -4,6 +4,7 @@ import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
 
+import tkinter as tk
 from dotenv import load_dotenv
 
 # PyInstallerでの相対パス解決用にsrcをパスへ追加
@@ -11,52 +12,6 @@ BASE_DIR = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
-
-# PyInstaller onefile環境でのTcl/Tk探索先を補正
-def configure_tcl_tk_paths() -> None:
-    tcl_candidates = [
-        os.path.join(BASE_DIR, "_tcl_data"),
-        os.path.join(BASE_DIR, "_tcl_data", "tcl8.6"),
-        os.path.join(BASE_DIR, "_internal", "_tcl_data"),
-        os.path.join(BASE_DIR, "_internal", "_tcl_data", "tcl8.6"),
-        os.path.join(BASE_DIR, "tcl", "tcl8.6"),
-    ]
-    tk_candidates = [
-        os.path.join(BASE_DIR, "_tk_data"),
-        os.path.join(BASE_DIR, "_tk_data", "tk8.6"),
-        os.path.join(BASE_DIR, "_internal", "_tk_data"),
-        os.path.join(BASE_DIR, "_internal", "_tk_data", "tk8.6"),
-        os.path.join(BASE_DIR, "tcl", "tk8.6"),
-    ]
-
-    def _pick_with_file(candidates, filename):
-        for path in candidates:
-            if os.path.isfile(os.path.join(path, filename)):
-                return path
-        return ""
-
-    tcl_path = _pick_with_file(tcl_candidates, "init.tcl")
-    tk_path = _pick_with_file(tk_candidates, "tk.tcl")
-
-    # Fallback: _MEIPASS 配下を再帰探索して実在パスを拾う
-    if not tcl_path or not tk_path:
-        for root, dirs, files in os.walk(BASE_DIR):
-            if not tcl_path and "init.tcl" in files:
-                tcl_path = root
-            if not tk_path and "tk.tcl" in files:
-                tk_path = root
-            if tcl_path and tk_path:
-                break
-
-    if tcl_path:
-        os.environ["TCL_LIBRARY"] = tcl_path
-    if tk_path:
-        os.environ["TK_LIBRARY"] = tk_path
-
-configure_tcl_tk_paths()
-
-# Tcl/Tkパス補正後にtkinterを読み込む
-import tkinter as tk
 
 # ロガーを最初にインポート（他のモジュールより先に初期化）
 from src.logger import logger  # noqa: E402
