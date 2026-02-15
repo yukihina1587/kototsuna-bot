@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Callable, Optional
 
 import requests
+from packaging.version import InvalidVersion, Version
 
 from src.logger import logger
 
@@ -65,6 +66,18 @@ def parse_version(version_str: str) -> tuple[int, int, int]:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
+def _to_packaging_version(version_str: str) -> Optional[Version]:
+    """Git tag文字列を packaging.version.Version へ変換する。"""
+    cleaned = version_str.lstrip("vV").strip().lower()
+    cleaned = cleaned.replace("-alpha.", "a").replace("-alpha", "a")
+    cleaned = cleaned.replace("-beta.", "b").replace("-beta", "b")
+    cleaned = cleaned.replace("-rc.", "rc").replace("-rc", "rc")
+    try:
+        return Version(cleaned)
+    except InvalidVersion:
+        return None
+
+
 def is_newer(current: str, latest: str) -> bool:
     """latest が current より新しいか判定する。
 
@@ -75,6 +88,10 @@ def is_newer(current: str, latest: str) -> bool:
     Returns:
         latest > current なら True
     """
+    current_v = _to_packaging_version(current)
+    latest_v = _to_packaging_version(latest)
+    if current_v is not None and latest_v is not None:
+        return latest_v > current_v
     try:
         return parse_version(latest) > parse_version(current)
     except ValueError:
@@ -128,19 +145,51 @@ def check_for_updates(
             releases = response.json()
             if not releases:
                 return None
-            # 最新のリリース（プレリリース含む）を取得
-            release_data = releases[0]
+
+            current_v = _to_packaging_version(current_version)
+            best_release = None
+            best_version = None
+            best_asset_url = ""
+            best_asset_size = 0
+
+            for release in releases:
+                tag_name = release.get("tag_name", "")
+                rel_v = _to_packaging_version(tag_name)
+                if rel_v is None:
+                    continue
+                if current_v is not None and rel_v <= current_v:
+                    continue
+
+                asset_url = ""
+                asset_size = 0
+                for asset in release.get("assets", []):
+                    if asset.get("name") == EXE_ASSET_NAME:
+                        asset_url = asset.get("browser_download_url", "")
+                        asset_size = asset.get("size", 0)
+                        break
+                if not asset_url:
+                    continue
+
+                if best_version is None or rel_v > best_version:
+                    best_release = release
+                    best_version = rel_v
+                    best_asset_url = asset_url
+                    best_asset_size = asset_size
+
+            if best_release is None:
+                return None
+            release_data = best_release
+            asset_url = best_asset_url
+            asset_size = best_asset_size
         else:
             release_data = response.json()
-
-        # exe assetを検索
-        asset_url = ""
-        asset_size = 0
-        for asset in release_data.get("assets", []):
-            if asset.get("name") == EXE_ASSET_NAME:
-                asset_url = asset.get("browser_download_url", "")
-                asset_size = asset.get("size", 0)
-                break
+            asset_url = ""
+            asset_size = 0
+            for asset in release_data.get("assets", []):
+                if asset.get("name") == EXE_ASSET_NAME:
+                    asset_url = asset.get("browser_download_url", "")
+                    asset_size = asset.get("size", 0)
+                    break
 
         if not asset_url:
             logger.debug(f"Release {release_data.get('tag_name')} has no {EXE_ASSET_NAME} asset")

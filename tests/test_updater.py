@@ -67,6 +67,11 @@ class TestIsNewer:
     def test_with_v_prefix(self):
         assert is_newer("v1.0.0", "v1.0.1") is True
 
+    def test_rc_ordering(self):
+        assert is_newer("v1.1.3-rc9", "v1.1.3-rc10") is True
+        assert is_newer("v1.1.3-rc10", "v1.1.3-rc9") is False
+        assert is_newer("v1.1.3-rc10", "v1.1.3") is True
+
     def test_invalid_returns_false(self):
         assert is_newer("1.0.0", "invalid") is False
         assert is_newer("invalid", "1.0.0") is False
@@ -186,6 +191,39 @@ class TestCheckForUpdates:
         result = check_for_updates("1.0.0", include_prerelease=True)
         assert result is not None
         assert result.prerelease is True
+
+    @patch("src.updater.requests.get")
+    def test_prerelease_selects_highest_version(self, mock_get):
+        rc9 = {
+            **MOCK_RELEASE_DATA,
+            "tag_name": "v1.1.3-rc9",
+            "prerelease": True,
+            "assets": [{
+                "name": "Kototsuna.exe",
+                "browser_download_url": "https://example.com/v1.1.3-rc9/Kototsuna.exe",
+                "size": 100,
+            }],
+        }
+        rc11 = {
+            **MOCK_RELEASE_DATA,
+            "tag_name": "v1.1.3-rc11",
+            "prerelease": True,
+            "assets": [{
+                "name": "Kototsuna.exe",
+                "browser_download_url": "https://example.com/v1.1.3-rc11/Kototsuna.exe",
+                "size": 100,
+            }],
+        }
+
+        mock_response = MagicMock()
+        # intentionally unsorted order
+        mock_response.json.return_value = [rc9, rc11]
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        result = check_for_updates("v1.1.2", include_prerelease=True)
+        assert result is not None
+        assert result.tag_name == "v1.1.3-rc11"
 
 
 # =========================================
