@@ -13,6 +13,35 @@ SRC_DIR = os.path.join(BASE_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+# PyInstaller onefile環境でのTcl/Tk探索先を補正
+def configure_tcl_tk_paths() -> None:
+    tcl_candidates = [
+        os.path.join(BASE_DIR, "_tcl_data"),
+        os.path.join(BASE_DIR, "_tcl_data", "tcl8.6"),
+        os.path.join(BASE_DIR, "_internal", "_tcl_data"),
+        os.path.join(BASE_DIR, "_internal", "_tcl_data", "tcl8.6"),
+        os.path.join(BASE_DIR, "tcl", "tcl8.6"),
+    ]
+    tk_candidates = [
+        os.path.join(BASE_DIR, "_tk_data"),
+        os.path.join(BASE_DIR, "_tk_data", "tk8.6"),
+        os.path.join(BASE_DIR, "_internal", "_tk_data"),
+        os.path.join(BASE_DIR, "_internal", "_tk_data", "tk8.6"),
+        os.path.join(BASE_DIR, "tcl", "tk8.6"),
+    ]
+
+    for path in tcl_candidates:
+        if os.path.isfile(os.path.join(path, "init.tcl")):
+            os.environ["TCL_LIBRARY"] = path
+            break
+
+    for path in tk_candidates:
+        if os.path.isfile(os.path.join(path, "tk.tcl")):
+            os.environ["TK_LIBRARY"] = path
+            break
+
+configure_tcl_tk_paths()
+
 # ロガーを最初にインポート（他のモジュールより先に初期化）
 from src.logger import logger  # noqa: E402
 
