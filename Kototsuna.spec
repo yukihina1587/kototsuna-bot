@@ -12,12 +12,22 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
 ctk_assets = os.path.join(ctk_path, 'assets')
+ctk_alt_assets = os.path.join(ctk_path, 'windows', 'widgets', 'theme', 'assets')
 if os.path.isdir(ctk_assets):
     for root, dirs, files in os.walk(ctk_assets):
         for f in files:
             src = os.path.join(root, f)
             dst = os.path.join('customtkinter', 'assets', os.path.relpath(root, ctk_assets))
             datas.append((src, dst))
+# CustomTkinterのassetsディレクトリを丸ごと追加（blue.json欠落の再発防止）
+if os.path.isfile(os.path.join(ctk_assets, 'themes', 'blue.json')):
+    datas.append((ctk_assets, os.path.join('customtkinter', 'assets')))
+    print(f"[SPEC] CustomTkinter assets: {ctk_assets} -> customtkinter/assets")
+elif os.path.isfile(os.path.join(ctk_alt_assets, 'themes', 'blue.json')):
+    datas.append((ctk_alt_assets, os.path.join('customtkinter', 'assets')))
+    print(f"[SPEC] CustomTkinter assets(alt): {ctk_alt_assets} -> customtkinter/assets")
+else:
+    print("[SPEC][WARN] CustomTkinter blue.json not found in expected asset paths")
 
 # Tcl/Tkデータを明示収集（PyInstaller標準フックが期待する _tcl_data/_tk_data に配置）
 # 標準hook-_tkinter.pyの収集がCI環境で失敗するケースへの保険
