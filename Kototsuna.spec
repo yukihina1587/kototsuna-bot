@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import zipfile
+import tempfile as _tmpmod
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = []
@@ -19,41 +21,42 @@ if os.path.isdir(ctk_assets):
             dst = os.path.join('customtkinter', 'assets', os.path.relpath(root, ctk_assets))
             datas.append((src, dst))
 
-# Tcl/Tkデータを個別ファイルとして明示収集
-# PyInstaller標準フックがCI環境で_tcl_dataへの収集に失敗するケースへの保険
+# Tcl/TkデータをZIPにまとめてバンドル
+# PyInstallerのdatasパイプラインで個別ファイルが消失する問題のワークアラウンド:
+# 832+175の個別ファイルではなく1つのZIPとしてバンドルし、
+# カスタムランタイムフック(rthook_tcltk.py)で起動時に展開する。
 import tkinter as _tk_mod
 _tcl_interp = _tk_mod.Tcl()
 _tcl_lib = _tcl_interp.eval('info library')
 _tcl_ver = _tcl_interp.eval('info patchlevel').rsplit('.', 1)[0]
 _tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
 
-_tcl_count = 0
+_tcl_zip_path = os.path.join(_tmpmod.gettempdir(), 'tcl_tk_data.zip')
+_zip_count = 0
 _init_found = False
-if os.path.isdir(_tcl_lib):
-    for _root, _dirs, _files in os.walk(_tcl_lib):
-        for _f in _files:
-            _src = os.path.join(_root, _f)
-            _rel = os.path.relpath(_root, _tcl_lib)
-            _dst = '_tcl_data' if _rel == '.' else os.path.join('_tcl_data', _rel)
-            datas.append((_src, _dst))
-            _tcl_count += 1
-            if _f == 'init.tcl' and _rel == '.':
-                _init_found = True
-    print(f"[SPEC] Tcl: {_tcl_count} files from {_tcl_lib} -> _tcl_data (init.tcl: {'FOUND' if _init_found else 'MISSING'})")
+with zipfile.ZipFile(_tcl_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+    if os.path.isdir(_tcl_lib):
+        for _root, _dirs, _files in os.walk(_tcl_lib):
+            for _f in _files:
+                _src = os.path.join(_root, _f)
+                _rel = os.path.relpath(_root, _tcl_lib)
+                _arcname = _f if _rel == '.' else os.path.join(_rel, _f)
+                zf.write(_src, os.path.join('_tcl_data', _arcname))
+                _zip_count += 1
+                if _f == 'init.tcl' and _rel == '.':
+                    _init_found = True
+    if os.path.isdir(_tk_lib):
+        for _root, _dirs, _files in os.walk(_tk_lib):
+            for _f in _files:
+                _src = os.path.join(_root, _f)
+                _rel = os.path.relpath(_root, _tk_lib)
+                _arcname = _f if _rel == '.' else os.path.join(_rel, _f)
+                zf.write(_src, os.path.join('_tk_data', _arcname))
+                _zip_count += 1
 
-_tk_count = 0
-if os.path.isdir(_tk_lib):
-    for _root, _dirs, _files in os.walk(_tk_lib):
-        for _f in _files:
-            _src = os.path.join(_root, _f)
-            _rel = os.path.relpath(_root, _tk_lib)
-            _dst = '_tk_data' if _rel == '.' else os.path.join('_tk_data', _rel)
-            datas.append((_src, _dst))
-            _tk_count += 1
-    print(f"[SPEC] Tk:  {_tk_count} files from {_tk_lib} -> _tk_data")
-
-if not _init_found:
-    print("[SPEC] CRITICAL: init.tcl not found! Tcl may not work at runtime.")
+_zip_size = os.path.getsize(_tcl_zip_path)
+print(f"[SPEC] Tcl/Tk ZIP: {_zip_count} files, {_zip_size:,} bytes (init.tcl: {'FOUND' if _init_found else 'MISSING'})")
+datas.append((_tcl_zip_path, '.'))
 
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
@@ -94,7 +97,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=['hooks'],  # 標準hook-_tkinter.pyをオーバーライド（Tcl/Tkデータ干渉防止）
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['rthook_tcltk.py'],  # ZIP展開フック（標準rthookより先に実行）
     excludes=[
         # 未使用PyQt6モジュールを除外（ビルド警告削減・exe軽量化）
         'PyQt6.QtBluetooth', 'PyQt6.QAxContainer', 'PyQt6.QtDBus',
@@ -112,36 +115,6 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
-# Post-Analysis診断: Tcl/Tkデータがhookに除去されていないか確認
-_tcl_in_datas = sum(1 for name, _, _ in a.datas if '_tcl_data' in name)
-_init_in_datas = sum(1 for name, _, _ in a.datas if name.replace('\\', '/').endswith('_tcl_data/init.tcl'))
-print(f"[SPEC POST-ANALYSIS] _tcl_data entries: {_tcl_in_datas}, init.tcl entries: {_init_in_datas}")
-
-# init.tclがAnalysis後に消えていた場合、強制再注入
-if _init_in_datas == 0 and _init_found:
-    print("[SPEC] WARNING: init.tcl was removed by hooks! Re-injecting Tcl/Tk data...")
-    from PyInstaller.building.datastruct import TOC
-    _reinject = []
-    if os.path.isdir(_tcl_lib):
-        for _root, _dirs, _files in os.walk(_tcl_lib):
-            for _f in _files:
-                _src = os.path.join(_root, _f)
-                _rel = os.path.relpath(_root, _tcl_lib)
-                _name = os.path.join('_tcl_data', _f) if _rel == '.' else os.path.join('_tcl_data', _rel, _f)
-                _reinject.append((_name, _src, 'DATA'))
-    if os.path.isdir(_tk_lib):
-        for _root, _dirs, _files in os.walk(_tk_lib):
-            for _f in _files:
-                _src = os.path.join(_root, _f)
-                _rel = os.path.relpath(_root, _tk_lib)
-                _name = os.path.join('_tk_data', _f) if _rel == '.' else os.path.join('_tk_data', _rel, _f)
-                _reinject.append((_name, _src, 'DATA'))
-    a.datas = a.datas + TOC(_reinject)
-    print(f"[SPEC] Re-injected {len(_reinject)} Tcl/Tk entries")
-    _tcl_in_datas = sum(1 for name, _, _ in a.datas if '_tcl_data' in name)
-    _init_in_datas = sum(1 for name, _, _ in a.datas if name.replace('\\', '/').endswith('_tcl_data/init.tcl'))
-    print(f"[SPEC POST-REINJECT] _tcl_data entries: {_tcl_in_datas}, init.tcl entries: {_init_in_datas}")
-
 pyz = PYZ(a.pure)
 
 exe = EXE(
