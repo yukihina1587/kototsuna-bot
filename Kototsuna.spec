@@ -92,7 +92,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    hookspath=['hooks'],  # 標準hook-_tkinter.pyをオーバーライド（Tcl/Tkデータ干渉防止）
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
@@ -112,6 +112,36 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# Post-Analysis診断: Tcl/Tkデータがhookに除去されていないか確認
+_tcl_in_datas = sum(1 for name, _, _ in a.datas if '_tcl_data' in name)
+_init_in_datas = sum(1 for name, _, _ in a.datas if name.replace('\\', '/').endswith('_tcl_data/init.tcl'))
+print(f"[SPEC POST-ANALYSIS] _tcl_data entries: {_tcl_in_datas}, init.tcl entries: {_init_in_datas}")
+
+# init.tclがAnalysis後に消えていた場合、強制再注入
+if _init_in_datas == 0 and _init_found:
+    print("[SPEC] WARNING: init.tcl was removed by hooks! Re-injecting Tcl/Tk data...")
+    from PyInstaller.building.datastruct import TOC
+    _reinject = []
+    if os.path.isdir(_tcl_lib):
+        for _root, _dirs, _files in os.walk(_tcl_lib):
+            for _f in _files:
+                _src = os.path.join(_root, _f)
+                _rel = os.path.relpath(_root, _tcl_lib)
+                _name = os.path.join('_tcl_data', _f) if _rel == '.' else os.path.join('_tcl_data', _rel, _f)
+                _reinject.append((_name, _src, 'DATA'))
+    if os.path.isdir(_tk_lib):
+        for _root, _dirs, _files in os.walk(_tk_lib):
+            for _f in _files:
+                _src = os.path.join(_root, _f)
+                _rel = os.path.relpath(_root, _tk_lib)
+                _name = os.path.join('_tk_data', _f) if _rel == '.' else os.path.join('_tk_data', _rel, _f)
+                _reinject.append((_name, _src, 'DATA'))
+    a.datas = a.datas + TOC(_reinject)
+    print(f"[SPEC] Re-injected {len(_reinject)} Tcl/Tk entries")
+    _tcl_in_datas = sum(1 for name, _, _ in a.datas if '_tcl_data' in name)
+    _init_in_datas = sum(1 for name, _, _ in a.datas if name.replace('\\', '/').endswith('_tcl_data/init.tcl'))
+    print(f"[SPEC POST-REINJECT] _tcl_data entries: {_tcl_in_datas}, init.tcl entries: {_init_in_datas}")
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
