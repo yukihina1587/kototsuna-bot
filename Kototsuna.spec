@@ -29,6 +29,30 @@ elif os.path.isfile(os.path.join(ctk_alt_assets, 'themes', 'blue.json')):
 else:
     print("[SPEC][WARN] CustomTkinter blue.json not found in expected asset paths")
 
+# Tcl/Tkデータをファイル単位で明示収集（_tcl_data/init.tcl を確実に配置）
+import tkinter
+_tcl = tkinter.Tcl()
+_tcl_lib = _tcl.eval('info library')
+_tcl_ver = _tcl.eval('info patchlevel').rsplit('.', 1)[0]
+_tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
+
+def _append_tree(src_root, dst_root):
+    count = 0
+    if not os.path.isdir(src_root):
+        return count
+    for root, dirs, files in os.walk(src_root):
+        rel = os.path.relpath(root, src_root)
+        dst = dst_root if rel == "." else os.path.join(dst_root, rel)
+        for f in files:
+            datas.append((os.path.join(root, f), dst))
+            count += 1
+    return count
+
+tcl_count = _append_tree(_tcl_lib, "_tcl_data")
+tk_count = _append_tree(_tk_lib, "_tk_data")
+print(f"[SPEC] Tcl files: {tcl_count} -> _tcl_data")
+print(f"[SPEC] Tk files:  {tk_count} -> _tk_data")
+
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
