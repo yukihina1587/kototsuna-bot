@@ -1,17 +1,84 @@
 import sys
 import io
 import os
+import tempfile
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
-
-import tkinter as tk
-from dotenv import load_dotenv
 
 # PyInstallerでの相対パス解決用にsrcをパスへ追加
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
+
+def configure_tcl_tk_paths() -> None:
+    """PyInstaller onefile環境でTcl/Tkパスを補正する。"""
+    tcl_candidates = [
+        os.path.join(BASE_DIR, "_tcl_data"),
+        os.path.join(BASE_DIR, "_tcl_data", "tcl8.6"),
+        os.path.join(BASE_DIR, "_internal", "_tcl_data"),
+        os.path.join(BASE_DIR, "_internal", "_tcl_data", "tcl8.6"),
+        os.path.join(BASE_DIR, "tcl", "tcl8.6"),
+    ]
+    tk_candidates = [
+        os.path.join(BASE_DIR, "_tk_data"),
+        os.path.join(BASE_DIR, "_tk_data", "tk8.6"),
+        os.path.join(BASE_DIR, "_internal", "_tk_data"),
+        os.path.join(BASE_DIR, "_internal", "_tk_data", "tk8.6"),
+        os.path.join(BASE_DIR, "tcl", "tk8.6"),
+    ]
+
+    def _pick_with_file(candidates, filename):
+        for path in candidates:
+            if os.path.isfile(os.path.join(path, filename)):
+                return path
+        return ""
+
+    tcl_path = _pick_with_file(tcl_candidates, "init.tcl")
+    tk_path = _pick_with_file(tk_candidates, "tk.tcl")
+
+    if not tcl_path or not tk_path:
+        for root, dirs, files in os.walk(BASE_DIR):
+            if not tcl_path and "init.tcl" in files:
+                tcl_path = root
+            if not tk_path and "tk.tcl" in files:
+                tk_path = root
+            if tcl_path and tk_path:
+                break
+
+    if tcl_path:
+        os.environ["TCL_LIBRARY"] = tcl_path
+    if tk_path:
+        os.environ["TK_LIBRARY"] = tk_path
+
+
+def write_tcl_diagnostic(note: str) -> None:
+    """Tcl/Tk関連の診断情報をTempへ書き出す。"""
+    try:
+        report_path = os.path.join(tempfile.gettempdir(), "kototsuna_tcl_diag.txt")
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(f"note={note}\n")
+            f.write(f"frozen={getattr(sys, 'frozen', False)}\n")
+            f.write(f"base_dir={BASE_DIR}\n")
+            f.write(f"TCL_LIBRARY={os.environ.get('TCL_LIBRARY', '')}\n")
+            f.write(f"TK_LIBRARY={os.environ.get('TK_LIBRARY', '')}\n")
+            f.write("found_init_tcl=\n")
+            for root, dirs, files in os.walk(BASE_DIR):
+                if "init.tcl" in files:
+                    f.write(f"  {os.path.join(root, 'init.tcl')}\n")
+            f.write("found_tk_tcl=\n")
+            for root, dirs, files in os.walk(BASE_DIR):
+                if "tk.tcl" in files:
+                    f.write(f"  {os.path.join(root, 'tk.tcl')}\n")
+    except Exception:
+        pass
+
+
+configure_tcl_tk_paths()
+write_tcl_diagnostic("startup")
+
+import tkinter as tk
+from dotenv import load_dotenv
 
 # ロガーを最初にインポート（他のモジュールより先に初期化）
 from src.logger import logger  # noqa: E402
@@ -111,7 +178,11 @@ if __name__ == '__main__':
         cleanup_old_exe()
 
     # メインウィンドウを作成（非表示）
-    root = ctk.CTk()
+    try:
+        root = ctk.CTk()
+    except Exception:
+        write_tcl_diagnostic("ctk_init_failed")
+        raise
     root.withdraw()  # 最初は非表示
 
     # スプラッシュスクリーンを表示
