@@ -37,11 +37,12 @@ _tcl_lib = _tcl.eval('info library')
 _tcl_ver = _tcl.eval('info patchlevel').rsplit('.', 1)[0]
 _tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
 if os.path.isdir(_tcl_lib):
-    datas += [(_tcl_lib, '_tcl_data')]
-    print(f"[SPEC] Tcl: {_tcl_lib} -> _tcl_data")
+    # Keep both legacy and _internal layouts for onefile extraction differences.
+    datas += [(_tcl_lib, '_tcl_data'), (_tcl_lib, os.path.join('_internal', '_tcl_data'))]
+    print(f"[SPEC] Tcl: {_tcl_lib} -> _tcl_data, _internal/_tcl_data")
 if os.path.isdir(_tk_lib):
-    datas += [(_tk_lib, '_tk_data')]
-    print(f"[SPEC] Tk:  {_tk_lib} -> _tk_data")
+    datas += [(_tk_lib, '_tk_data'), (_tk_lib, os.path.join('_internal', '_tk_data'))]
+    print(f"[SPEC] Tk:  {_tk_lib} -> _tk_data, _internal/_tk_data")
 
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
@@ -82,7 +83,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['hooks/rthook_tk_paths.py'],
     excludes=[
         # 未使用PyQt6モジュールを除外（ビルド警告削減・exe軽量化）
         'PyQt6.QtBluetooth', 'PyQt6.QAxContainer', 'PyQt6.QtDBus',
