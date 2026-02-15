@@ -19,6 +19,42 @@ if os.path.isdir(ctk_assets):
             dst = os.path.join('customtkinter', 'assets', os.path.relpath(root, ctk_assets))
             datas.append((src, dst))
 
+# Tcl/Tkデータを個別ファイルとして明示収集
+# PyInstaller標準フックがCI環境で_tcl_dataへの収集に失敗するケースへの保険
+import tkinter as _tk_mod
+_tcl_interp = _tk_mod.Tcl()
+_tcl_lib = _tcl_interp.eval('info library')
+_tcl_ver = _tcl_interp.eval('info patchlevel').rsplit('.', 1)[0]
+_tk_lib = os.path.join(os.path.dirname(_tcl_lib), f'tk{_tcl_ver}')
+
+_tcl_count = 0
+_init_found = False
+if os.path.isdir(_tcl_lib):
+    for _root, _dirs, _files in os.walk(_tcl_lib):
+        for _f in _files:
+            _src = os.path.join(_root, _f)
+            _rel = os.path.relpath(_root, _tcl_lib)
+            _dst = '_tcl_data' if _rel == '.' else os.path.join('_tcl_data', _rel)
+            datas.append((_src, _dst))
+            _tcl_count += 1
+            if _f == 'init.tcl' and _rel == '.':
+                _init_found = True
+    print(f"[SPEC] Tcl: {_tcl_count} files from {_tcl_lib} -> _tcl_data (init.tcl: {'FOUND' if _init_found else 'MISSING'})")
+
+_tk_count = 0
+if os.path.isdir(_tk_lib):
+    for _root, _dirs, _files in os.walk(_tk_lib):
+        for _f in _files:
+            _src = os.path.join(_root, _f)
+            _rel = os.path.relpath(_root, _tk_lib)
+            _dst = '_tk_data' if _rel == '.' else os.path.join('_tk_data', _rel)
+            datas.append((_src, _dst))
+            _tk_count += 1
+    print(f"[SPEC] Tk:  {_tk_count} files from {_tk_lib} -> _tk_data")
+
+if not _init_found:
+    print("[SPEC] CRITICAL: init.tcl not found! Tcl may not work at runtime.")
+
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
