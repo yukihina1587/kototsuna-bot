@@ -90,6 +90,13 @@ def write_tcl_diagnostic(note: str) -> None:
 configure_tcl_tk_paths()
 write_tcl_diagnostic("startup")
 
+# PyInstaller GUIモード(console=False)ではstdout/stderrがNoneになる
+# customtkinter等がwrite()を試みるとAttributeErrorになるため、devnullにリダイレクト
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
+
 import tkinter as tk
 from dotenv import load_dotenv
 
