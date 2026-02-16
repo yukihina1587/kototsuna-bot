@@ -5,6 +5,19 @@ import tempfile
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
 
+# PyInstaller GUIモードでのクラッシュログ記録（console=Falseではトレースバックが見えないため）
+if getattr(sys, 'frozen', False):
+    def _kototsuna_excepthook(exc_type, exc_value, exc_tb):
+        try:
+            import traceback
+            err_path = os.path.join(tempfile.gettempdir(), 'kototsuna_error.txt')
+            with open(err_path, 'w', encoding='utf-8') as f:
+                traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+    sys.excepthook = _kototsuna_excepthook
+
 # PyInstallerでの相対パス解決用にsrcをパスへ追加
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, "src")
