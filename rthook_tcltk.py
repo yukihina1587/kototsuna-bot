@@ -12,10 +12,11 @@ _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
 
 # ── Phase 0: base_library.zip を安全な場所にコピー ──────
-# Windows Defenderが%TEMP%のbase_library.zipを遅延隔離すると
+# Windows Defenderが_MEIxxxx内のbase_library.zipを遅延隔離すると
 # Pythonのzipimportが機能停止する。AV対象外の%LOCALAPPDATA%にコピーし
-# sys.pathとzipimportキャッシュを差し替えることで回避する。
+# sys.path・path_importer_cache・zipimport内部キャッシュを全て差し替える。
 _base_lib_relocated = False
+_base_lib_diag = []
 
 if _meipass:
     _base_lib_src = os.path.join(_meipass, 'base_library.zip')
@@ -29,22 +30,45 @@ if _meipass:
             _safe_base = os.path.join(_safe_dir, 'base_library.zip')
             shutil.copy2(_base_lib_src, _safe_base)
 
-            # sys.pathの該当エントリを差し替え
-            _norm_old = os.path.normpath(_base_lib_src)
-            for _i, _p in enumerate(sys.path):
-                if os.path.normpath(_p) == _norm_old:
+            # sys.pathの該当エントリを全て差し替え（大文字小文字無視）
+            _replaced_count = 0
+            for _i in range(len(sys.path)):
+                if 'base_library.zip' in sys.path[_i].lower():
+                    _base_lib_diag.append(f"syspath_old[{_i}]={sys.path[_i]}")
                     sys.path[_i] = _safe_base
-                    break
+                    _replaced_count += 1
+            _base_lib_diag.append(f"syspath_replaced={_replaced_count}")
 
-            # zipimportキャッシュをクリアして新パスを使わせる
-            if _norm_old in sys.path_importer_cache:
-                del sys.path_importer_cache[_norm_old]
-            if hasattr(zipimport, '_zip_directory_cache') and _norm_old in zipimport._zip_directory_cache:
-                del zipimport._zip_directory_cache[_norm_old]
+            # sys.path_importer_cacheからbase_library.zip参照を全削除
+            _deleted_pic = 0
+            for _key in list(sys.path_importer_cache.keys()):
+                if 'base_library.zip' in str(_key).lower():
+                    _base_lib_diag.append(f"pic_del={_key}")
+                    del sys.path_importer_cache[_key]
+                    _deleted_pic += 1
+            _base_lib_diag.append(f"pic_deleted={_deleted_pic}")
+
+            # zipimport._zip_directory_cacheからも全削除
+            _deleted_zdc = 0
+            if hasattr(zipimport, '_zip_directory_cache'):
+                for _key in list(zipimport._zip_directory_cache.keys()):
+                    if 'base_library.zip' in str(_key).lower():
+                        _base_lib_diag.append(f"zdc_del={_key}")
+                        del zipimport._zip_directory_cache[_key]
+                        _deleted_zdc += 1
+            _base_lib_diag.append(f"zdc_deleted={_deleted_zdc}")
+
+            # 新パスのzipimporterを事前登録
+            try:
+                _new_importer = zipimport.zipimporter(_safe_base)
+                sys.path_importer_cache[_safe_base] = _new_importer
+                _base_lib_diag.append(f"new_importer=OK")
+            except Exception as _e:
+                _base_lib_diag.append(f"new_importer=FAIL:{_e}")
 
             _base_lib_relocated = True
-        except Exception:
-            pass
+        except Exception as _e:
+            _base_lib_diag.append(f"error={_e}")
 
 # ── Phase 1: customtkinterテーマファイルのプリキャッシュ ──
 # rthook実行直後（隔離前）にテーマJSONを読み込みメモリキャッシュ。
@@ -104,6 +128,16 @@ try:
         _df.write(f"executable={sys.executable}\n")
         if _meipass:
             _df.write(f"base_lib_relocated={_base_lib_relocated}\n")
+            for _d in _base_lib_diag:
+                _df.write(f"  {_d}\n")
+            # 現在のsys.pathでbase_library.zip関連エントリを表示
+            for _i, _p in enumerate(sys.path):
+                if 'base_library' in _p.lower():
+                    _df.write(f"  syspath_now[{_i}]={_p}\n")
+            # 現在のpath_importer_cacheでbase_library.zip関連を表示
+            for _k in sys.path_importer_cache:
+                if 'base_library' in str(_k).lower():
+                    _df.write(f"  pic_now={_k} -> {type(sys.path_importer_cache[_k]).__name__}\n")
             _df.write(f"cached_files_count={len(_cached_files)}\n")
             for _k in _cached_files:
                 _df.write(f"  cached: {_k}\n")
