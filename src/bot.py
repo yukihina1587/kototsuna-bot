@@ -8,6 +8,8 @@ from src.tts import get_tts_instance, is_japanese
 from src.participant_tracker import get_tracker
 from src.comment_data import create_twitch_comment
 from src.config import load_config
+from src.commands import PermissionLevel, CooldownManager, check_permission, substitute_variables
+from src.commands_store import CommandStore
 
 
 class EventSubHandler:
@@ -224,6 +226,11 @@ class TranslateBot(commands.Bot):
         self._max_processed_ids = 1000  # メモリ制限
         # 停止フラグ
         self._stopped = False
+        # コマンド機能
+        self._command_store = CommandStore()
+        self._cooldown_manager = CooldownManager()
+        config = load_config()
+        self._commands_enabled = config.get("commands_enabled", True)
         # EventSub handler（フォロー検知用）
         self._eventsub_handler = None
 
@@ -297,6 +304,12 @@ class TranslateBot(commands.Bot):
         # 配信者の手入力（echo=False, 名前一致）は翻訳対象として処理を継続
         if self.nick and message.author.name.lower() == self.nick.lower():
             logger.debug(f"Processing broadcaster's own message: {message.author.name}")
+
+        # === コマンド処理（翻訳より先に実行）===
+        if self._commands_enabled and message.content.startswith('!'):
+            cmd_handled = await self._handle_command(message)
+            if cmd_handled:
+                return
 
         original_content = message.content
 
@@ -475,6 +488,136 @@ class TranslateBot(commands.Bot):
                 except Exception as e:
                     logger.error(f"TTS speak error: {e}", exc_info=True)
 
+
+    async def _handle_command(self, message) -> bool:
+        """コマンドメッセージを処理する。
+
+        カスタムコマンド → ビルトインコマンドの順で照合する。
+        一致しない場合は False を返し、通常の翻訳フローに戻す。
+        """
+        content = message.content.strip()
+        parts = content.split(maxsplit=1)
+        cmd_name = parts[0][1:].lower()  # "!" を除去
+        args = parts[1] if len(parts) > 1 else ""
+
+        if not cmd_name:
+            return False
+
+        # --- カスタムコマンド ---
+        custom = self._command_store.get(cmd_name)
+        if custom and custom.enabled:
+            # 権限チェック
+            required = PermissionLevel(custom.permission)
+            if not check_permission(message.author, required, self.channel_name):
+                return True  # 権限不足でも消費（翻訳しない）
+
+            # クールダウンチェック
+            user_name = message.author.name.lower()
+            allowed, remaining = self._cooldown_manager.check(
+                cmd_name, user_name, custom.cooldown_global, custom.cooldown_user
+            )
+            if not allowed:
+                return True  # クールダウン中でも消費
+
+            self._cooldown_manager.record(cmd_name, user_name)
+            response = substitute_variables(custom.response, message.author, self.channel_name)
+            await message.channel.send(response + '\u200B')
+            logger.info("カスタムコマンド実行: !%s by %s", cmd_name, user_name)
+            return True
+
+        # --- ビルトインコマンド ---
+        builtin_handlers = {
+            "help": self._cmd_help,
+            "translate": self._cmd_translate,
+            "lang": self._cmd_lang,
+            "tts": self._cmd_tts,
+            "voice": self._cmd_voice,
+        }
+
+        handler = builtin_handlers.get(cmd_name)
+        if handler:
+            try:
+                await handler(message, args)
+            except Exception as e:
+                logger.error("ビルトインコマンドエラー: !%s - %s", cmd_name, e, exc_info=True)
+            return True
+
+        # コマンド不一致 → 通常フローへ
+        return False
+
+    async def _cmd_help(self, message, args: str) -> None:
+        """!help — 使用可能なコマンド一覧を表示"""
+        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!voice"]
+        custom_cmds = [
+            f"!{c.name}" for c in self._command_store.list_all() if c.enabled
+        ]
+        all_cmds = builtin_cmds + custom_cmds
+        response = f"コマンド一覧: {', '.join(all_cmds)}"
+        await message.channel.send(response + '\u200B')
+
+    async def _cmd_translate(self, message, args: str) -> None:
+        """!translate <text> — テキストを翻訳"""
+        if not args:
+            await message.channel.send("使い方: !translate <テキスト>" + '\u200B')
+            return
+        lang_mode = self.get_lang_mode()
+        translated = await translate_text_batched(args, lang_mode, self.deepl_api_key)
+        if translated and translated != args:
+            await message.channel.send(f"[翻訳] {translated}" + '\u200B')
+        else:
+            await message.channel.send("翻訳結果が同じか、翻訳できませんでした" + '\u200B')
+
+    async def _cmd_lang(self, message, args: str) -> None:
+        """!lang — 現在の翻訳モードを表示"""
+        lang_mode = self.get_lang_mode()
+        await message.channel.send(f"現在の翻訳モード: {lang_mode}" + '\u200B')
+
+    async def _cmd_tts(self, message, args: str) -> None:
+        """!tts on/off — TTS有効/無効切替（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        arg = args.strip().lower()
+        if arg == "on":
+            if hasattr(self.gui, 'tts_enabled') and hasattr(self.gui.tts_enabled, 'set'):
+                self.gui.tts_enabled.set(True)
+            await message.channel.send("TTS を有効にしました" + '\u200B')
+        elif arg == "off":
+            if hasattr(self.gui, 'tts_enabled') and hasattr(self.gui.tts_enabled, 'set'):
+                self.gui.tts_enabled.set(False)
+            await message.channel.send("TTS を無効にしました" + '\u200B')
+        else:
+            status = "ON" if self.tts_enabled_getter() else "OFF"
+            await message.channel.send(f"TTS: {status} (使い方: !tts on/off)" + '\u200B')
+
+    async def _cmd_voice(self, message, args: str) -> None:
+        """!voice [name] — VOICEVOXボイス変更/一覧表示（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        if not args.strip():
+            # ボイス一覧を表示
+            try:
+                speakers = self.tts.get_speakers() if hasattr(self.tts, 'get_speakers') else []
+                if speakers:
+                    names = [s.get("name", "?") for s in speakers[:10]]
+                    await message.channel.send(f"利用可能なボイス: {', '.join(names)}" + '\u200B')
+                else:
+                    await message.channel.send("ボイス一覧を取得できませんでした" + '\u200B')
+            except Exception:
+                await message.channel.send("ボイス一覧を取得できませんでした" + '\u200B')
+        else:
+            await message.channel.send(f"ボイス変更は現在GUIから行ってください" + '\u200B')
+
+    @property
+    def command_store(self) -> CommandStore:
+        """GUIからカスタムコマンドストアにアクセスするためのプロパティ"""
+        return self._command_store
+
+    def set_commands_enabled(self, enabled: bool) -> None:
+        """コマンド機能の有効/無効を切り替える"""
+        self._commands_enabled = enabled
+        logger.info("コマンド機能: %s", "有効" if enabled else "無効")
 
     async def event_raw_usernotice(self, channel, tags: dict):
         """サブスクやギフトなどのUSERNOTICEイベントを処理（twitchio 2.x準拠）"""

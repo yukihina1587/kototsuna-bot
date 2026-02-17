@@ -29,6 +29,7 @@
 | `chat_translation_enabled` | チャット翻訳の有効/無効 | `false` |
 | `translation_filters` | 翻訳スキップワード | `[]` |
 | `translation_dictionary` | カスタム辞書 | `[]` |
+| `commands_enabled` | チャットコマンド機能の有効/無効 | `true` |
 | `translation_batch_size` | バッチ翻訳の最大件数 | `5` |
 | `translation_batch_wait_ms` | バッチ翻訳の待機時間（ms） | `100` |
 
@@ -40,6 +41,43 @@
   { "source": "kusa", "target": "草" }
 ]
 ```
+
+## コマンド設定
+
+チャットコマンド機能は `config.json` の `commands_enabled` で有効/無効を切り替えます。
+
+| キー | 説明 | デフォルト |
+|-----|------|-----------|
+| `commands_enabled` | コマンド機能の有効/無効 | `true` |
+
+### カスタムコマンド（custom_commands.json）
+
+カスタムコマンドは `custom_commands.json` に保存されます（`config.json` とは別ファイル）。
+
+```json
+{
+  "version": 1,
+  "commands": [
+    {
+      "name": "discord",
+      "response": "Discordはこちら: https://discord.gg/xxx",
+      "permission": 0,
+      "cooldown_global": 5.0,
+      "cooldown_user": 15.0,
+      "enabled": true
+    }
+  ]
+}
+```
+
+| フィールド | 説明 | デフォルト |
+|-----------|------|-----------|
+| `name` | コマンド名（`!`なし） | — |
+| `response` | 応答テンプレート | — |
+| `permission` | 必要権限（0=全員〜4=配信者） | `0` |
+| `cooldown_global` | グローバルクールダウン（秒） | `5.0` |
+| `cooldown_user` | ユーザー別クールダウン（秒） | `15.0` |
+| `enabled` | 有効/無効 | `true` |
 
 ## VOICEVOX設定
 

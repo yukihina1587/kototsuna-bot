@@ -31,6 +31,7 @@ except Exception as e:
 from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info
 from src.bot import TranslateBot
 from src.config import load_config, save_config, validate_deepl_api_key, validate_twitch_client_id
+from src.commands_store import CommandStore, CustomCommand
 from src.voice_listener import VoiceTranslator
 from src.overlay_server import update_translation, run_server_thread
 from src.logger import logger, set_log_level
@@ -548,6 +549,7 @@ class KototsunaApp:
             ("dictionary", "📖 辞書"),
             ("participants", "👥 参加者"),
             ("resources", "📊 リソース"),
+            ("commands", "💬 コマンド"),
         ]
         for panel_id, label in nav_items:
             btn = ctk.CTkButton(
@@ -795,7 +797,7 @@ class KototsunaApp:
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "resources": "リソース監視"}
+        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "resources": "リソース監視", "commands": "コマンド管理"}
         ctk.CTkLabel(header, text=titles.get(panel_id, ""), font=FONT_LABEL).pack(side="left", padx=12)
         ctk.CTkButton(header, text="✕", command=self._close_right_panel, width=32, height=32, fg_color="transparent", hover_color=BORDER).pack(side="right", padx=4)
 
@@ -809,6 +811,7 @@ class KototsunaApp:
             "dictionary": self._build_dictionary_panel,
             "participants": self._build_participants_panel,
             "resources": self._build_resources_panel,
+            "commands": self._build_commands_panel,
         }
         builder = builders.get(panel_id)
         if builder:
@@ -1090,6 +1093,157 @@ class KototsunaApp:
         ).pack(anchor="w", pady=2)
 
         self._add_panel_divider(parent)
+
+    def _build_commands_panel(self, parent):
+        """コマンド管理パネルのコンテンツ"""
+        try:
+            # =====================================
+            # セクション1: コマンド機能ON/OFF
+            # =====================================
+            self._add_panel_section(parent, "コマンド機能")
+            toggle_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            toggle_frame.pack(fill="x", pady=(0, 8))
+            ctk.CTkLabel(toggle_frame, text="チャットコマンド", font=FONT_LABEL).pack(side="left")
+            self.commands_enabled_var = tk.BooleanVar(value=load_config().get("commands_enabled", True))
+            ctk.CTkSwitch(toggle_frame, text="", variable=self.commands_enabled_var,
+                          command=self._on_commands_toggle).pack(side="right")
+
+            self._add_panel_divider(parent)
+
+            # =====================================
+            # セクション2: カスタムコマンド追加
+            # =====================================
+            self._add_panel_section(parent, "カスタムコマンド追加")
+            ctk.CTkLabel(parent, text="変数: {user} {time} {date} {channel}",
+                         font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 4))
+
+            # コマンド名
+            name_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            name_frame.pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(name_frame, text="!", font=("Segoe UI", 12)).pack(side="left")
+            self.cmd_name_entry = ctk.CTkEntry(name_frame, placeholder_text="コマンド名", height=28)
+            self.cmd_name_entry.pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+            # 応答文
+            self.cmd_response_entry = ctk.CTkEntry(parent, placeholder_text="応答メッセージ", height=28)
+            self.cmd_response_entry.pack(fill="x", pady=(0, 4))
+
+            # 権限とクールダウン
+            opt_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            opt_frame.pack(fill="x", pady=(0, 4))
+            self.cmd_permission_var = tk.StringVar(value="全員")
+            permission_menu = ctk.CTkOptionMenu(opt_frame, variable=self.cmd_permission_var,
+                values=["全員", "サブスク", "VIP", "モデレーター", "配信者"],
+                width=100, height=28)
+            permission_menu.pack(side="left", padx=(0, 4))
+
+            self.cmd_cooldown_entry = ctk.CTkEntry(opt_frame, placeholder_text="CD秒", height=28, width=60)
+            self.cmd_cooldown_entry.pack(side="left", padx=(0, 4))
+            self.cmd_cooldown_entry.insert(0, "5")
+
+            ctk.CTkButton(opt_frame, text="追加", command=self._add_custom_command,
+                          width=60, height=28).pack(side="right")
+
+            self._add_panel_divider(parent)
+
+            # =====================================
+            # セクション3: コマンドリスト
+            # =====================================
+            self._add_panel_section(parent, "登録済みコマンド")
+            self.cmd_list_frame = ctk.CTkScrollableFrame(parent, height=200, fg_color=CARD_BG)
+            self.cmd_list_frame.pack(fill="x", pady=(0, 6))
+            self._refresh_command_list()
+
+        except Exception as e:
+            logger.error(f"コマンドパネル構築エラー: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _on_commands_toggle(self):
+        """コマンド機能のON/OFFを切り替え"""
+        enabled = self.commands_enabled_var.get()
+        config = load_config()
+        config["commands_enabled"] = enabled
+        save_config(config)
+        if hasattr(self, 'bot_instance') and self.bot_instance:
+            self.bot_instance.set_commands_enabled(enabled)
+
+    def _add_custom_command(self):
+        """カスタムコマンドを追加"""
+        name = self.cmd_name_entry.get().strip().lower()
+        response = self.cmd_response_entry.get().strip()
+        if not name or not response:
+            return
+
+        permission_map = {"全員": 0, "サブスク": 1, "VIP": 2, "モデレーター": 3, "配信者": 4}
+        permission = permission_map.get(self.cmd_permission_var.get(), 0)
+
+        try:
+            cooldown = float(self.cmd_cooldown_entry.get().strip() or "5")
+        except ValueError:
+            cooldown = 5.0
+
+        # bot_instanceからストアを取得、なければ直接作成
+        store = None
+        if hasattr(self, 'bot_instance') and self.bot_instance and hasattr(self.bot_instance, 'command_store'):
+            store = self.bot_instance.command_store
+        if store is None:
+            store = CommandStore()
+
+        cmd = CustomCommand(name=name, response=response, permission=permission,
+                            cooldown_global=cooldown, cooldown_user=cooldown * 3)
+        if store.add(cmd):
+            self.cmd_name_entry.delete(0, "end")
+            self.cmd_response_entry.delete(0, "end")
+            self._refresh_command_list()
+        else:
+            self.log_message(f"コマンド !{name} は既に存在します", log_type="system")
+
+    def _remove_custom_command(self, name: str):
+        """カスタムコマンドを削除"""
+        store = None
+        if hasattr(self, 'bot_instance') and self.bot_instance and hasattr(self.bot_instance, 'command_store'):
+            store = self.bot_instance.command_store
+        if store is None:
+            store = CommandStore()
+
+        store.remove(name)
+        self._refresh_command_list()
+
+    def _refresh_command_list(self):
+        """コマンドリストを更新"""
+        if not hasattr(self, 'cmd_list_frame'):
+            return
+
+        for widget in self.cmd_list_frame.winfo_children():
+            widget.destroy()
+
+        store = None
+        if hasattr(self, 'bot_instance') and self.bot_instance and hasattr(self.bot_instance, 'command_store'):
+            store = self.bot_instance.command_store
+        if store is None:
+            store = CommandStore()
+
+        commands = store.list_all()
+        if not commands:
+            ctk.CTkLabel(self.cmd_list_frame, text="コマンドなし",
+                         font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(pady=8)
+            return
+
+        permission_names = {0: "全員", 1: "サブスク", 2: "VIP", 3: "モデレーター", 4: "配信者"}
+        for cmd in commands:
+            row = ctk.CTkFrame(self.cmd_list_frame, fg_color="transparent")
+            row.pack(fill="x", pady=1)
+            perm_label = permission_names.get(cmd.permission, "全員")
+            ctk.CTkLabel(row, text=f"!{cmd.name}", font=("Segoe UI Semibold", 10),
+                         width=80, anchor="w").pack(side="left", padx=(4, 8))
+            ctk.CTkLabel(row, text=cmd.response, font=("Segoe UI", 9),
+                         text_color=TEXT_SUBTLE, anchor="w").pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(row, text=perm_label, font=("Segoe UI", 9),
+                         text_color=TEXT_SUBTLE, width=50).pack(side="left", padx=4)
+            ctk.CTkButton(row, text="✕", width=24, height=24, fg_color="transparent",
+                          hover_color="#EF4444",
+                          command=lambda n=cmd.name: self._remove_custom_command(n)).pack(side="right")
 
     def _build_dictionary_panel(self, parent):
         """辞書パネルのコンテンツ"""

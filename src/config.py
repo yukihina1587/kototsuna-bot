@@ -43,6 +43,8 @@ DEFAULT_CONFIG = {
     "chat_html_path": "",
     "chat_html_newest_first": False,  # True: 上が新しい, False: 下が新しい
     "chat_html_window_geometry": "350x900+50+50",  # HTMLウィンドウのサイズと位置
+    # コマンド機能
+    "commands_enabled": True,
     # TTS設定
     "tts_volume": 80,
     "tts_speed": 1.0,
@@ -144,7 +146,7 @@ def validate_config(config_data):
         changed = True
 
     # ブール系
-    for key in ["chat_html_output", "chat_html_newest_first", "tts_include_name"]:
+    for key in ["chat_html_output", "chat_html_newest_first", "tts_include_name", "commands_enabled"]:
         if not isinstance(validated.get(key), bool):
             validated[key] = bool(validated.get(key))
             changed = True
