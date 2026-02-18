@@ -13,24 +13,48 @@ _builtin_open = builtins.open
 
 # ── Phase 0: base_library.zip を安全な場所にコピー ──────
 # Windows Defenderが_MEIxxxx内のbase_library.zipを遅延隔離すると
-# Pythonのzipimportが機能停止する。AV対象外の%LOCALAPPDATA%にコピーし
-# sys.path・path_importer_cache・zipimport内部キャッシュを全て差し替える。
+# Pythonのzipimportが機能停止する。
+#
+# 対策3層:
+#   A. プリステージング: 前回成功時の安全コピーを即座に使う（AV隔離より先に動ける）
+#   B. 完全パス差し替え: sys.path, cache, 既ロードモジュールの__path__/__spec__を修正
+#   C. meta_pathフォールバック: 安全zipimporterを最優先に登録し、旧パスの失敗を回避
 _base_lib_relocated = False
 _base_lib_diag = []
+_safe_base = None
 
 if _meipass:
+    _safe_dir = os.path.join(
+        os.environ.get('LOCALAPPDATA', os.path.expanduser('~')),
+        'Kototsuna', 'runtime_cache'
+    )
+    _safe_base = os.path.join(_safe_dir, 'base_library.zip')
     _base_lib_src = os.path.join(_meipass, 'base_library.zip')
-    if os.path.isfile(_base_lib_src):
-        try:
-            _safe_dir = os.path.join(
-                os.environ.get('LOCALAPPDATA', os.path.expanduser('~')),
-                'Kototsuna', 'runtime_cache'
-            )
-            os.makedirs(_safe_dir, exist_ok=True)
-            _safe_base = os.path.join(_safe_dir, 'base_library.zip')
-            shutil.copy2(_base_lib_src, _safe_base)
+    _old_base_path = _base_lib_src  # 旧パス（差し替え対象）
 
-            # sys.pathの該当エントリを全て差し替え（大文字小文字無視）
+    try:
+        os.makedirs(_safe_dir, exist_ok=True)
+
+        # --- A. プリステージング: 安全コピーの確保 ---
+        _src_exists = os.path.isfile(_base_lib_src)
+        _safe_exists = os.path.isfile(_safe_base)
+        _base_lib_diag.append(f"src_exists={_src_exists}")
+        _base_lib_diag.append(f"safe_exists={_safe_exists}")
+
+        if _src_exists:
+            # _MEIにファイルがある → 安全な場所にコピー（毎回更新）
+            shutil.copy2(_base_lib_src, _safe_base)
+            _base_lib_diag.append("action=copied_from_mei")
+        elif _safe_exists:
+            # _MEIにファイルがない（AV隔離済み）→ 前回の安全コピーを使用
+            _base_lib_diag.append("action=using_prestaged_copy")
+        else:
+            # 両方ない → 対処不能
+            _base_lib_diag.append("action=NO_SOURCE_AVAILABLE")
+
+        if os.path.isfile(_safe_base):
+            # --- B. 完全パス差し替え ---
+            # B-1. sys.path
             _replaced_count = 0
             for _i in range(len(sys.path)):
                 if 'base_library.zip' in sys.path[_i].lower():
@@ -39,36 +63,108 @@ if _meipass:
                     _replaced_count += 1
             _base_lib_diag.append(f"syspath_replaced={_replaced_count}")
 
-            # sys.path_importer_cacheからbase_library.zip参照を全削除
+            # B-2. sys.path_importer_cache: 旧エントリ削除 + 新エントリ登録
             _deleted_pic = 0
+            _old_subpaths = []
             for _key in list(sys.path_importer_cache.keys()):
                 if 'base_library.zip' in str(_key).lower():
-                    _base_lib_diag.append(f"pic_del={_key}")
+                    _old_subpaths.append(_key)
                     del sys.path_importer_cache[_key]
                     _deleted_pic += 1
             _base_lib_diag.append(f"pic_deleted={_deleted_pic}")
 
-            # zipimport._zip_directory_cacheからも全削除
+            # B-3. zipimport._zip_directory_cache
             _deleted_zdc = 0
             if hasattr(zipimport, '_zip_directory_cache'):
                 for _key in list(zipimport._zip_directory_cache.keys()):
                     if 'base_library.zip' in str(_key).lower():
-                        _base_lib_diag.append(f"zdc_del={_key}")
                         del zipimport._zip_directory_cache[_key]
                         _deleted_zdc += 1
             _base_lib_diag.append(f"zdc_deleted={_deleted_zdc}")
 
-            # 新パスのzipimporterを事前登録
+            # B-4. 新パスのzipimporterを登録（メインパス + 旧サブパスの新パス版）
             try:
                 _new_importer = zipimport.zipimporter(_safe_base)
                 sys.path_importer_cache[_safe_base] = _new_importer
-                _base_lib_diag.append(f"new_importer=OK")
+                _base_lib_diag.append("new_importer=OK")
+                # 旧サブパス（encodings, re等）も新パスで再登録
+                for _old_key in _old_subpaths:
+                    _old_key_str = str(_old_key)
+                    # base_library.zip\encodings → safe_base\encodings
+                    _suffix = ''
+                    _bl_idx = _old_key_str.lower().find('base_library.zip')
+                    if _bl_idx >= 0:
+                        _suffix = _old_key_str[_bl_idx + len('base_library.zip'):]
+                    if _suffix:
+                        _new_subpath = _safe_base + _suffix
+                        try:
+                            _sub_importer = zipimport.zipimporter(_new_subpath)
+                            sys.path_importer_cache[_new_subpath] = _sub_importer
+                        except Exception:
+                            pass
             except Exception as _e:
                 _base_lib_diag.append(f"new_importer=FAIL:{_e}")
 
+            # B-5. 既にロードされたモジュールの__path__と__spec__を修正
+            _fixed_modules = 0
+            _old_lower = _old_base_path.lower()
+            for _mod in sys.modules.values():
+                if _mod is None:
+                    continue
+                try:
+                    # __path__ の修正
+                    if hasattr(_mod, '__path__'):
+                        _new_paths = []
+                        _changed = False
+                        for _p in _mod.__path__:
+                            if _old_lower in _p.lower():
+                                _new_paths.append(_p.replace(_old_base_path, _safe_base))
+                                _changed = True
+                            else:
+                                _new_paths.append(_p)
+                        if _changed:
+                            _mod.__path__ = _new_paths
+                            _fixed_modules += 1
+                    # __spec__ の修正
+                    if hasattr(_mod, '__spec__') and _mod.__spec__:
+                        _spec = _mod.__spec__
+                        if _spec.origin and _old_lower in _spec.origin.lower():
+                            _spec.origin = _spec.origin.replace(_old_base_path, _safe_base)
+                        if _spec.submodule_search_locations:
+                            _spec.submodule_search_locations = [
+                                _p.replace(_old_base_path, _safe_base) if _old_lower in _p.lower() else _p
+                                for _p in _spec.submodule_search_locations
+                            ]
+                except Exception:
+                    pass
+            _base_lib_diag.append(f"modules_fixed={_fixed_modules}")
+
+            # --- C. meta_pathフォールバック: 安全zipimporterを最優先登録 ---
+            # 旧パスのzipimporterが残っていても、このfinderが先にインポートを処理する
+            class _SafeBaseLibFinder:
+                """base_library.zip のインポートを安全コピーからサーブするファインダー"""
+                def __init__(self, safe_zip):
+                    self._importer = zipimport.zipimporter(safe_zip)
+                def find_spec(self, fullname, path, target=None):
+                    try:
+                        return self._importer.find_spec(fullname)
+                    except (ImportError, AttributeError):
+                        return None
+                def find_module(self, fullname, path=None):
+                    try:
+                        if self._importer.find_module(fullname):
+                            return self._importer
+                    except ImportError:
+                        pass
+                    return None
+
+            sys.meta_path.insert(0, _SafeBaseLibFinder(_safe_base))
+            _base_lib_diag.append("meta_path_finder=INSTALLED")
+
             _base_lib_relocated = True
-        except Exception as _e:
-            _base_lib_diag.append(f"error={_e}")
+
+    except Exception as _e:
+        _base_lib_diag.append(f"error={_e}")
 
 # ── Phase 1: customtkinterテーマファイルのプリキャッシュ ──
 # rthook実行直後（隔離前）にテーマJSONを読み込みメモリキャッシュ。
@@ -142,6 +238,10 @@ try:
             for _k in _cached_files:
                 _df.write(f"  cached: {_k}\n")
             _df.write(f"open_patched={'YES' if _cached_files else 'NO'}\n")
+            _df.write(f"safe_base={_safe_base}\n")
+            _df.write(f"safe_base_exists={os.path.isfile(_safe_base) if _safe_base else 'N/A'}\n")
+            _df.write(f"meta_path_count={len(sys.meta_path)}\n")
+            _df.write(f"meta_path[0]={type(sys.meta_path[0]).__name__ if sys.meta_path else 'EMPTY'}\n")
             _df.write(f"init_tcl_exists={os.path.isfile(os.path.join(_meipass, '_tcl_data', 'init.tcl'))}\n")
             _df.write(f"TCL_LIBRARY={os.environ.get('TCL_LIBRARY', '')}\n")
             _df.write(f"TK_LIBRARY={os.environ.get('TK_LIBRARY', '')}\n")
