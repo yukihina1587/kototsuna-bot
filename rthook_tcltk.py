@@ -12,6 +12,53 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
+_RTHOOK_VERSION = "1.3.3"
+
+# ── Phase -1: 堅牢なエラーハンドラ（osモジュールのみ使用） ──────
+# traceback, io 等に依存しない最小限のエラー出力。
+# Phase 0 より前に設置することで、あらゆるクラッシュをキャプチャ可能。
+_err_dir = os.environ.get('TEMP', os.environ.get('TMP', ''))
+if not _err_dir:
+    _err_dir = os.path.dirname(sys.executable) if hasattr(sys, 'executable') else '.'
+_raw_err_path = os.path.join(_err_dir, 'kototsuna_error.txt')
+
+def _raw_excepthook(exc_type, exc_value, exc_tb):
+    """osモジュールのみで動作する堅牢なexcepthook"""
+    try:
+        # まずraw方式で書き込み（絶対に失敗しない方法）
+        _lines = []
+        _lines.append(f"rthook_version={_RTHOOK_VERSION}")
+        _lines.append(f"meipass={_meipass}")
+        _lines.append(f"exc_type={exc_type}")
+        _lines.append(f"exc_value={exc_value}")
+
+        # tracebackをフレームから手動構築（traceback moduleに依存しない）
+        _tb = exc_tb
+        _lines.append("traceback:")
+        while _tb is not None:
+            _frame = _tb.tb_frame
+            _lineno = _tb.tb_lineno
+            _code = _frame.f_code
+            _filename = _code.co_filename
+            _name = _code.co_name
+            _lines.append(f"  File \"{_filename}\", line {_lineno}, in {_name}")
+            _tb = _tb.tb_next
+
+        _text = '\n'.join(_lines) + '\n'
+        # os.open/os.write はCレベル実装のため base_library.zip 不要
+        _fd = os.open(_raw_err_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        os.write(_fd, _text.encode('utf-8', errors='replace'))
+        os.close(_fd)
+    except Exception:
+        pass
+
+    # デフォルトのexcepthookも試行（stderrに出力）
+    try:
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+    except Exception:
+        pass
+
+sys.excepthook = _raw_excepthook
 
 # ── Phase 0: base_library.zip を安全な場所にコピー ──────
 # Windows Defenderが_MEIxxxx内のbase_library.zipを遅延隔離すると
@@ -179,8 +226,14 @@ if _meipass:
 
 # ── Phase 0 完了: 以降は base_library.zip が安全な場所にあるため ──
 # ── zipfile, io 等の標準ライブラリを安全に import できる ──────────
-import io as _io
-import zipfile
+try:
+    import io as _io
+    import zipfile
+    _base_lib_diag.append("deferred_imports=OK")
+except Exception as _e:
+    _base_lib_diag.append(f"deferred_imports=FAIL:{_e}")
+    _io = None
+    zipfile = None
 
 # ── Phase 1: customtkinterテーマファイルのプリキャッシュ ──
 # rthook実行直後（隔離前）にテーマJSONを読み込みメモリキャッシュ。
@@ -200,7 +253,7 @@ if _meipass:
             except Exception:
                 pass
 
-    if _cached_files:
+    if _cached_files and _io is not None:
         def _safe_open(file, mode='r', *args, **kwargs):
             try:
                 return _builtin_open(file, mode, *args, **kwargs)
@@ -213,7 +266,7 @@ if _meipass:
         builtins.open = _safe_open
 
 # ── Phase 2: Tcl/Tk ZIP展開 ─────────────────────────────
-if _meipass:
+if _meipass and zipfile is not None:
     _zip_path = os.path.join(_meipass, 'tcl_tk_data.zip')
     _tcl_dir = os.path.join(_meipass, '_tcl_data')
     _tk_dir = os.path.join(_meipass, '_tk_data')
@@ -231,14 +284,10 @@ if _meipass:
         os.environ['TK_LIBRARY'] = _tk_dir
 
 # ── Phase 3: 診断出力 ───────────────────────────────────
-# tempfile不使用: os.environ.get('TEMP') で代替
-_diag_dir = os.environ.get('TEMP', os.environ.get('TMP', ''))
-if _diag_dir:
-    _diag_path = os.path.join(_diag_dir, 'kototsuna_rthook_diag.txt')
-else:
-    _diag_path = os.path.join(os.path.dirname(sys.executable), 'kototsuna_rthook_diag.txt')
+_diag_path = os.path.join(_err_dir, 'kototsuna_rthook_diag.txt')
 try:
     with _builtin_open(_diag_path, 'w', encoding='utf-8') as _df:
+        _df.write(f"rthook_version={_RTHOOK_VERSION}\n")
         _df.write(f"meipass={_meipass}\n")
         _df.write(f"frozen={getattr(sys, 'frozen', False)}\n")
         _df.write(f"cwd={os.getcwd()}\n")

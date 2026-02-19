@@ -6,16 +6,44 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
 
 # PyInstaller GUIモードでのクラッシュログ記録（console=Falseではトレースバックが見えないため）
+# rthookで設置済みのraw excepthookを上書きし、可能ならtraceback moduleで詳細出力する。
+# 失敗時はraw方式（osモジュールのみ）にフォールバック。
 if getattr(sys, 'frozen', False):
     def _kototsuna_excepthook(exc_type, exc_value, exc_tb):
+        _err_path = os.path.join(
+            os.environ.get('TEMP', os.environ.get('TMP', os.path.dirname(sys.executable))),
+            'kototsuna_error.txt'
+        )
+        _written = False
+        # 方法1: traceback module使用（詳細なトレースバック）
         try:
             import traceback
-            err_path = os.path.join(tempfile.gettempdir(), 'kototsuna_error.txt')
-            with open(err_path, 'w', encoding='utf-8') as f:
+            with open(_err_path, 'w', encoding='utf-8') as f:
                 traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+            _written = True
         except Exception:
             pass
-        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        # 方法2: raw方式フォールバック（osモジュールのみ、base_library.zip不要）
+        if not _written:
+            try:
+                _lines = [f"exc_type={exc_type}", f"exc_value={exc_value}", "traceback:"]
+                _tb = exc_tb
+                while _tb is not None:
+                    _frame = _tb.tb_frame
+                    _code = _frame.f_code
+                    _lines.append(f"  File \"{_code.co_filename}\", line {_tb.tb_lineno}, in {_code.co_name}")
+                    _tb = _tb.tb_next
+                _text = '\n'.join(_lines) + '\n'
+                _fd = os.open(_err_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+                os.write(_fd, _text.encode('utf-8', errors='replace'))
+                os.close(_fd)
+            except Exception:
+                pass
+        # stderrへの出力も試行
+        try:
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+        except Exception:
+            pass
     sys.excepthook = _kototsuna_excepthook
 
 # PyInstallerでの相対パス解決用にsrcをパスへ追加
