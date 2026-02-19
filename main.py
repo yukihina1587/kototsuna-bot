@@ -10,8 +10,18 @@ os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告�
 # 失敗時はraw方式（osモジュールのみ）にフォールバック。
 if getattr(sys, 'frozen', False):
     def _kototsuna_excepthook(exc_type, exc_value, exc_tb):
+        # exeの隣にエラーログを出力（ユーザーが見つけやすい）
+        _exe_dir = os.path.dirname(sys.executable) if hasattr(sys, 'executable') and sys.executable else ''
+        if _exe_dir:
+            try:
+                _test = os.path.join(_exe_dir, '.kototsuna_write_test')
+                _tfd = os.open(_test, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+                os.close(_tfd)
+                os.unlink(_test)
+            except OSError:
+                _exe_dir = ''
         _err_path = os.path.join(
-            os.environ.get('TEMP', os.environ.get('TMP', os.path.dirname(sys.executable))),
+            _exe_dir or os.environ.get('TEMP', os.environ.get('TMP', '.')),
             'kototsuna_error.txt'
         )
         _written = False
@@ -96,7 +106,8 @@ def configure_tcl_tk_paths() -> None:
 def write_tcl_diagnostic(note: str) -> None:
     """Tcl/Tk関連の診断情報をTempへ書き出す。"""
     try:
-        report_path = os.path.join(tempfile.gettempdir(), "kototsuna_tcl_diag.txt")
+        _diag_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else tempfile.gettempdir()
+        report_path = os.path.join(_diag_dir, "kototsuna_tcl_diag.txt")
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(f"note={note}\n")
             f.write(f"frozen={getattr(sys, 'frozen', False)}\n")

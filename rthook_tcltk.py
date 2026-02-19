@@ -12,14 +12,26 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1"
+_RTHOOK_VERSION = "1.3.0v1"
 
 # ── Phase -1: 堅牢なエラーハンドラ（osモジュールのみ使用） ──────
 # traceback, io 等に依存しない最小限のエラー出力。
 # Phase 0 より前に設置することで、あらゆるクラッシュをキャプチャ可能。
-_err_dir = os.environ.get('TEMP', os.environ.get('TMP', ''))
+# エラーログ・診断ログをexeの隣に出力（ユーザーが見つけやすい）
+# 書き込み不可の場合は%TEMP%にフォールバック
+_err_dir = ''
+if hasattr(sys, 'executable') and sys.executable:
+    _candidate = os.path.dirname(sys.executable)
+    try:
+        _test_path = os.path.join(_candidate, '.kototsuna_write_test')
+        _fd = os.open(_test_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        os.close(_fd)
+        os.unlink(_test_path)
+        _err_dir = _candidate
+    except OSError:
+        pass
 if not _err_dir:
-    _err_dir = os.path.dirname(sys.executable) if hasattr(sys, 'executable') else '.'
+    _err_dir = os.environ.get('TEMP', os.environ.get('TMP', '.'))
 _raw_err_path = os.path.join(_err_dir, 'kototsuna_error.txt')
 
 def _raw_excepthook(exc_type, exc_value, exc_tb):
@@ -89,26 +101,24 @@ if _meipass:
         os.makedirs(_safe_dir, exist_ok=True)
 
         # --- A. プリステージング: 安全コピーの確保 ---
-        _src_exists = os.path.isfile(_base_lib_src)
-        _safe_exists = os.path.isfile(_safe_base)
-        _base_lib_diag.append(f"src_exists={_src_exists}")
-        _base_lib_diag.append(f"safe_exists={_safe_exists}")
-
-        if _src_exists:
-            # _MEIにファイルがある → 安全な場所にコピー（毎回更新）
-            # shutil不使用: builtins.open でバイナリコピー
+        # TOCTOU対策: isfile()チェックなしで直接コピーを試行。
+        # AV隔離はisfile()→open()の間に発生しうるため、try/exceptで処理。
+        _copied = False
+        try:
             with _builtin_open(_base_lib_src, 'rb') as _fin:
                 _data = _fin.read()
             with _builtin_open(_safe_base, 'wb') as _fout:
                 _fout.write(_data)
             del _data
+            _copied = True
             _base_lib_diag.append("action=copied_from_mei")
-        elif _safe_exists:
-            # _MEIにファイルがない（AV隔離済み）→ 前回の安全コピーを使用
-            _base_lib_diag.append("action=using_prestaged_copy")
-        else:
-            # 両方ない → 対処不能
-            _base_lib_diag.append("action=NO_SOURCE_AVAILABLE")
+        except (FileNotFoundError, PermissionError, OSError) as _copy_err:
+            _base_lib_diag.append(f"mei_copy_failed={_copy_err}")
+            # _MEIからのコピー失敗 → runtime_cacheの既存キャッシュを使用
+            if os.path.isfile(_safe_base):
+                _base_lib_diag.append("action=using_prestaged_copy")
+            else:
+                _base_lib_diag.append("action=NO_SOURCE_AVAILABLE")
 
         if os.path.isfile(_safe_base):
             # --- B. 完全パス差し替え ---

@@ -358,13 +358,16 @@ def restart_app() -> None:
 
 
 def cleanup_old_exe() -> None:
-    """前回のアップデートで残った.old/.tmpファイルを削除する。"""
+    """前回のアップデートで残った.old/.tmp/_MEI*を削除する。"""
     current_exe = _get_current_exe_path()
     if not current_exe:
         return
 
     exe_dir = os.path.dirname(current_exe)
     cleaned = 0
+
+    # 現在のプロセスの_MEIパス（削除対象から除外）
+    current_meipass = getattr(sys, '_MEIPASS', None)
 
     for filename in os.listdir(exe_dir):
         filepath = os.path.join(exe_dir, filename)
@@ -377,9 +380,20 @@ def cleanup_old_exe() -> None:
                 cleaned += 1
             except OSError as e:
                 logger.warning(f"Failed to clean up {filepath}: {e}")
+        # 古い_MEI*ディレクトリを削除（現在のプロセスのものは除外）
+        elif filename.startswith("_MEI") and os.path.isdir(filepath):
+            if current_meipass and os.path.normcase(filepath) == os.path.normcase(current_meipass):
+                continue
+            try:
+                import shutil
+                shutil.rmtree(filepath, ignore_errors=True)
+                logger.info(f"Cleaned up old MEI dir: {filepath}")
+                cleaned += 1
+            except OSError as e:
+                logger.warning(f"Failed to clean up {filepath}: {e}")
 
     if cleaned:
-        logger.info(f"Cleanup complete: {cleaned} file(s) removed")
+        logger.info(f"Cleanup complete: {cleaned} file(s)/dir(s) removed")
 
 
 def _get_current_exe_path() -> Optional[str]:
