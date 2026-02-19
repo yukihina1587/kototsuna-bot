@@ -1,11 +1,13 @@
 # PyInstaller runtime hook: AV隔離対策 + Tcl/Tk ZIP展開
+#
+# !! 重要: Phase 0 はビルトイン/frozenモジュールのみ使用 !!
+# os, sys, builtins, zipimport は CPython インタプリタに組み込まれており
+# base_library.zip が存在しなくても import できる。
+# zipfile, shutil, tempfile, io 等は base_library.zip 内にあるため、
+# AV隔離時には import 自体が失敗する。Phase 0 完了後に遅延 import する。
 import os
 import sys
-import zipfile
-import shutil
-import tempfile
 import builtins
-import io as _io
 import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
@@ -14,6 +16,10 @@ _builtin_open = builtins.open
 # ── Phase 0: base_library.zip を安全な場所にコピー ──────
 # Windows Defenderが_MEIxxxx内のbase_library.zipを遅延隔離すると
 # Pythonのzipimportが機能停止する。
+#
+# !! このフェーズは os, sys, builtins, zipimport のみ使用 !!
+# shutil.copy2 → builtins.open(rb/wb) で代替
+# tempfile.gettempdir → os.environ.get('TEMP') で代替
 #
 # 対策3層:
 #   A. プリステージング: 前回成功時の安全コピーを即座に使う（AV隔離より先に動ける）
@@ -43,7 +49,12 @@ if _meipass:
 
         if _src_exists:
             # _MEIにファイルがある → 安全な場所にコピー（毎回更新）
-            shutil.copy2(_base_lib_src, _safe_base)
+            # shutil不使用: builtins.open でバイナリコピー
+            with _builtin_open(_base_lib_src, 'rb') as _fin:
+                _data = _fin.read()
+            with _builtin_open(_safe_base, 'wb') as _fout:
+                _fout.write(_data)
+            del _data
             _base_lib_diag.append("action=copied_from_mei")
         elif _safe_exists:
             # _MEIにファイルがない（AV隔離済み）→ 前回の安全コピーを使用
@@ -166,6 +177,11 @@ if _meipass:
     except Exception as _e:
         _base_lib_diag.append(f"error={_e}")
 
+# ── Phase 0 完了: 以降は base_library.zip が安全な場所にあるため ──
+# ── zipfile, io 等の標準ライブラリを安全に import できる ──────────
+import io as _io
+import zipfile
+
 # ── Phase 1: customtkinterテーマファイルのプリキャッシュ ──
 # rthook実行直後（隔離前）にテーマJSONを読み込みメモリキャッシュ。
 # 後続のimportでFileNotFoundErrorが発生した場合、キャッシュから提供する。
@@ -215,7 +231,12 @@ if _meipass:
         os.environ['TK_LIBRARY'] = _tk_dir
 
 # ── Phase 3: 診断出力 ───────────────────────────────────
-_diag_path = os.path.join(tempfile.gettempdir(), 'kototsuna_rthook_diag.txt')
+# tempfile不使用: os.environ.get('TEMP') で代替
+_diag_dir = os.environ.get('TEMP', os.environ.get('TMP', ''))
+if _diag_dir:
+    _diag_path = os.path.join(_diag_dir, 'kototsuna_rthook_diag.txt')
+else:
+    _diag_path = os.path.join(os.path.dirname(sys.executable), 'kototsuna_rthook_diag.txt')
 try:
     with _builtin_open(_diag_path, 'w', encoding='utf-8') as _df:
         _df.write(f"meipass={_meipass}\n")
