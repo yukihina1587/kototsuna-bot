@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc1"
+_RTHOOK_VERSION = "1.3.1-rc2"
 
 # ── Phase -1: 堅牢なエラーハンドラ（osモジュールのみ使用） ──────
 # traceback, io 等に依存しない最小限のエラー出力。
@@ -120,95 +120,102 @@ if _meipass:
             else:
                 _base_lib_diag.append("action=NO_SOURCE_AVAILABLE")
 
+        # --- B/C: パス差し替えはAV隔離時のみ実行 ---
+        # _MEIからのコピーが成功した場合（_copied=True）はバックアップのみ。
+        # sys.pathやモジュール__path__を差し替えると、既ロードモジュールの
+        # 内部状態が壊れる（例: collections.abc.Hashable消失）。
+        # AV隔離でコピー失敗した場合のみフル差し替えを行う。
+        _need_relocation = not _copied
+
         if os.path.isfile(_safe_base):
-            # --- B. 完全パス差し替え ---
-            # B-1. sys.path
-            _replaced_count = 0
-            for _i in range(len(sys.path)):
-                if 'base_library.zip' in sys.path[_i].lower():
-                    _base_lib_diag.append(f"syspath_old[{_i}]={sys.path[_i]}")
-                    sys.path[_i] = _safe_base
-                    _replaced_count += 1
-            _base_lib_diag.append(f"syspath_replaced={_replaced_count}")
+            if _need_relocation:
+                # --- B. 完全パス差し替え（AV隔離時のみ） ---
+                # B-1. sys.path
+                _replaced_count = 0
+                for _i in range(len(sys.path)):
+                    if 'base_library.zip' in sys.path[_i].lower():
+                        _base_lib_diag.append(f"syspath_old[{_i}]={sys.path[_i]}")
+                        sys.path[_i] = _safe_base
+                        _replaced_count += 1
+                _base_lib_diag.append(f"syspath_replaced={_replaced_count}")
 
-            # B-2. sys.path_importer_cache: 旧エントリ削除 + 新エントリ登録
-            _deleted_pic = 0
-            _old_subpaths = []
-            for _key in list(sys.path_importer_cache.keys()):
-                if 'base_library.zip' in str(_key).lower():
-                    _old_subpaths.append(_key)
-                    del sys.path_importer_cache[_key]
-                    _deleted_pic += 1
-            _base_lib_diag.append(f"pic_deleted={_deleted_pic}")
-
-            # B-3. zipimport._zip_directory_cache
-            _deleted_zdc = 0
-            if hasattr(zipimport, '_zip_directory_cache'):
-                for _key in list(zipimport._zip_directory_cache.keys()):
+                # B-2. sys.path_importer_cache: 旧エントリ削除 + 新エントリ登録
+                _deleted_pic = 0
+                _old_subpaths = []
+                for _key in list(sys.path_importer_cache.keys()):
                     if 'base_library.zip' in str(_key).lower():
-                        del zipimport._zip_directory_cache[_key]
-                        _deleted_zdc += 1
-            _base_lib_diag.append(f"zdc_deleted={_deleted_zdc}")
+                        _old_subpaths.append(_key)
+                        del sys.path_importer_cache[_key]
+                        _deleted_pic += 1
+                _base_lib_diag.append(f"pic_deleted={_deleted_pic}")
 
-            # B-4. 新パスのzipimporterを登録（メインパス + 旧サブパスの新パス版）
-            try:
-                _new_importer = zipimport.zipimporter(_safe_base)
-                sys.path_importer_cache[_safe_base] = _new_importer
-                _base_lib_diag.append("new_importer=OK")
-                # 旧サブパス（encodings, re等）も新パスで再登録
-                for _old_key in _old_subpaths:
-                    _old_key_str = str(_old_key)
-                    # base_library.zip\encodings → safe_base\encodings
-                    _suffix = ''
-                    _bl_idx = _old_key_str.lower().find('base_library.zip')
-                    if _bl_idx >= 0:
-                        _suffix = _old_key_str[_bl_idx + len('base_library.zip'):]
-                    if _suffix:
-                        _new_subpath = _safe_base + _suffix
-                        try:
-                            _sub_importer = zipimport.zipimporter(_new_subpath)
-                            sys.path_importer_cache[_new_subpath] = _sub_importer
-                        except Exception:
-                            pass
-            except Exception as _e:
-                _base_lib_diag.append(f"new_importer=FAIL:{_e}")
+                # B-3. zipimport._zip_directory_cache
+                _deleted_zdc = 0
+                if hasattr(zipimport, '_zip_directory_cache'):
+                    for _key in list(zipimport._zip_directory_cache.keys()):
+                        if 'base_library.zip' in str(_key).lower():
+                            del zipimport._zip_directory_cache[_key]
+                            _deleted_zdc += 1
+                _base_lib_diag.append(f"zdc_deleted={_deleted_zdc}")
 
-            # B-5. 既にロードされたモジュールの__path__と__spec__を修正
-            _fixed_modules = 0
-            _old_lower = _old_base_path.lower()
-            for _mod in sys.modules.values():
-                if _mod is None:
-                    continue
+                # B-4. 新パスのzipimporterを登録
                 try:
-                    # __path__ の修正
-                    if hasattr(_mod, '__path__'):
-                        _new_paths = []
-                        _changed = False
-                        for _p in _mod.__path__:
-                            if _old_lower in _p.lower():
-                                _new_paths.append(_p.replace(_old_base_path, _safe_base))
-                                _changed = True
-                            else:
-                                _new_paths.append(_p)
-                        if _changed:
-                            _mod.__path__ = _new_paths
-                            _fixed_modules += 1
-                    # __spec__ の修正
-                    if hasattr(_mod, '__spec__') and _mod.__spec__:
-                        _spec = _mod.__spec__
-                        if _spec.origin and _old_lower in _spec.origin.lower():
-                            _spec.origin = _spec.origin.replace(_old_base_path, _safe_base)
-                        if _spec.submodule_search_locations:
-                            _spec.submodule_search_locations = [
-                                _p.replace(_old_base_path, _safe_base) if _old_lower in _p.lower() else _p
-                                for _p in _spec.submodule_search_locations
-                            ]
-                except Exception:
-                    pass
-            _base_lib_diag.append(f"modules_fixed={_fixed_modules}")
+                    _new_importer = zipimport.zipimporter(_safe_base)
+                    sys.path_importer_cache[_safe_base] = _new_importer
+                    _base_lib_diag.append("new_importer=OK")
+                    for _old_key in _old_subpaths:
+                        _old_key_str = str(_old_key)
+                        _suffix = ''
+                        _bl_idx = _old_key_str.lower().find('base_library.zip')
+                        if _bl_idx >= 0:
+                            _suffix = _old_key_str[_bl_idx + len('base_library.zip'):]
+                        if _suffix:
+                            _new_subpath = _safe_base + _suffix
+                            try:
+                                _sub_importer = zipimport.zipimporter(_new_subpath)
+                                sys.path_importer_cache[_new_subpath] = _sub_importer
+                            except Exception:
+                                pass
+                except Exception as _e:
+                    _base_lib_diag.append(f"new_importer=FAIL:{_e}")
 
-            # --- C. meta_pathフォールバック: 安全zipimporterを最優先登録 ---
-            # 旧パスのzipimporterが残っていても、このfinderが先にインポートを処理する
+                # B-5. 既にロードされたモジュールの__path__と__spec__を修正
+                _fixed_modules = 0
+                _old_lower = _old_base_path.lower()
+                for _mod in sys.modules.values():
+                    if _mod is None:
+                        continue
+                    try:
+                        if hasattr(_mod, '__path__'):
+                            _new_paths = []
+                            _changed = False
+                            for _p in _mod.__path__:
+                                if _old_lower in _p.lower():
+                                    _new_paths.append(_p.replace(_old_base_path, _safe_base))
+                                    _changed = True
+                                else:
+                                    _new_paths.append(_p)
+                            if _changed:
+                                _mod.__path__ = _new_paths
+                                _fixed_modules += 1
+                        if hasattr(_mod, '__spec__') and _mod.__spec__:
+                            _spec = _mod.__spec__
+                            if _spec.origin and _old_lower in _spec.origin.lower():
+                                _spec.origin = _spec.origin.replace(_old_base_path, _safe_base)
+                            if _spec.submodule_search_locations:
+                                _spec.submodule_search_locations = [
+                                    _p.replace(_old_base_path, _safe_base) if _old_lower in _p.lower() else _p
+                                    for _p in _spec.submodule_search_locations
+                                ]
+                    except Exception:
+                        pass
+                _base_lib_diag.append(f"modules_fixed={_fixed_modules}")
+            else:
+                _base_lib_diag.append("relocation=SKIPPED(mei_ok)")
+
+            # --- C. meta_pathフォールバック: 常にインストール ---
+            # _MEI正常時でも、後からAVが隔離する可能性があるため安全網として設置。
+            # find_specは既にsys.modulesにあるモジュールには呼ばれないため無害。
             class _SafeBaseLibFinder:
                 """base_library.zip のインポートを安全コピーからサーブするファインダー"""
                 def __init__(self, safe_zip):
