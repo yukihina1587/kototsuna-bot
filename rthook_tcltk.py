@@ -4,7 +4,7 @@
 # os, sys, builtins, zipimport は CPython インタプリタに組み込まれており
 # base_library.zip が存在しなくても import できる。
 # zipfile, shutil, tempfile, io 等は base_library.zip 内にあるため、
-# AV隔離時には import 自体が失敗する。Phase 0 完了後に遅延 import する。
+# AV隔離時には import 自体が失敗しうる（ハイブリッド戦略で再試行）。
 import os
 import sys
 import builtins
@@ -12,7 +12,42 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc3"
+_RTHOOK_VERSION = "1.3.1-rc4"
+
+# ── Hybrid import strategy (Approach B) ──────────────────
+# 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
+# AV隔離時は import 失敗を許容し、Phase 0 後に再試行する。
+_has_stdlib = False
+_io = None
+zipfile = None
+shutil = None
+tempfile = None
+_stdlib_import_error = None
+try:
+    import shutil
+    import tempfile
+    import io as _io
+    import zipfile
+    _has_stdlib = True
+except Exception as _e:
+    _stdlib_import_error = _e
+
+
+def _prime_collections_abc_binding(diag):
+    """collections.abc の親属性バインディングを明示的に確立する。"""
+    try:
+        __import__('_collections_abc')  # frozen module
+        _collections_mod = __import__('collections', fromlist=['abc'])
+        _abc_mod = __import__('collections.abc', fromlist=['Hashable'])
+        if getattr(_collections_mod, 'abc', None) is not _abc_mod:
+            setattr(_collections_mod, 'abc', _abc_mod)
+        if not hasattr(_abc_mod, 'Hashable'):
+            raise AttributeError('collections.abc.Hashable missing')
+        diag.append("collections_abc=OK")
+        return True
+    except Exception as _e:
+        diag.append(f"collections_abc=FAIL:{_e}")
+        return False
 
 # ── Phase -1: 堅牢なエラーハンドラ（osモジュールのみ使用） ──────
 # traceback, io 等に依存しない最小限のエラー出力。
@@ -80,13 +115,16 @@ sys.excepthook = _raw_excepthook
 # shutil.copy2 → builtins.open(rb/wb) で代替
 # tempfile.gettempdir → os.environ.get('TEMP') で代替
 #
-# 対策3層:
+# 対策2層:
 #   A. プリステージング: 前回成功時の安全コピーを即座に使う（AV隔離より先に動ける）
-#   B. 完全パス差し替え: sys.path, cache, 既ロードモジュールの__path__/__spec__を修正
-#   C. meta_pathフォールバック: 安全zipimporterを最優先に登録し、旧パスの失敗を回避
+#   B. 完全パス差し替え: sys.path と importer cache を安全コピーへ切り替え
 _base_lib_relocated = False
 _base_lib_diag = []
 _safe_base = None
+if _has_stdlib:
+    _base_lib_diag.append("early_stdlib_import=OK")
+elif _stdlib_import_error is not None:
+    _base_lib_diag.append(f"early_stdlib_import=FAIL:{_stdlib_import_error}")
 
 if _meipass:
     _safe_dir = os.path.join(
@@ -120,7 +158,7 @@ if _meipass:
             else:
                 _base_lib_diag.append("action=NO_SOURCE_AVAILABLE")
 
-        # --- B/C: パス差し替えはAV隔離時のみ実行 ---
+        # --- B: パス差し替えはAV隔離時のみ実行 ---
         # _MEIからのコピーが成功した場合（_copied=True）はバックアップのみ。
         # sys.pathやモジュール__path__を差し替えると、既ロードモジュールの
         # 内部状態が壊れる（例: collections.abc.Hashable消失）。
@@ -179,82 +217,37 @@ if _meipass:
                 except Exception as _e:
                     _base_lib_diag.append(f"new_importer=FAIL:{_e}")
 
-                # B-5. 既にロードされたモジュールの__path__と__spec__を修正
-                _fixed_modules = 0
-                _old_lower = _old_base_path.lower()
-                for _mod in sys.modules.values():
-                    if _mod is None:
-                        continue
-                    try:
-                        if hasattr(_mod, '__path__'):
-                            _new_paths = []
-                            _changed = False
-                            for _p in _mod.__path__:
-                                if _old_lower in _p.lower():
-                                    _new_paths.append(_p.replace(_old_base_path, _safe_base))
-                                    _changed = True
-                                else:
-                                    _new_paths.append(_p)
-                            if _changed:
-                                _mod.__path__ = _new_paths
-                                _fixed_modules += 1
-                        if hasattr(_mod, '__spec__') and _mod.__spec__:
-                            _spec = _mod.__spec__
-                            if _spec.origin and _old_lower in _spec.origin.lower():
-                                _spec.origin = _spec.origin.replace(_old_base_path, _safe_base)
-                            if _spec.submodule_search_locations:
-                                _spec.submodule_search_locations = [
-                                    _p.replace(_old_base_path, _safe_base) if _old_lower in _p.lower() else _p
-                                    for _p in _spec.submodule_search_locations
-                                ]
-                    except Exception:
-                        pass
-                _base_lib_diag.append(f"modules_fixed={_fixed_modules}")
+                _base_lib_diag.append("modules_fixed=SKIPPED")
             else:
                 _base_lib_diag.append("relocation=SKIPPED(mei_ok)")
 
-            # --- C. meta_pathフォールバック: AV隔離時のみインストール ---
-            # _SafeBaseLibFinderはPyInstallerの正規importerより先にimportを
-            # 処理してしまい、typingモジュール等の読み込みを破壊する。
-            # _MEI正常時は不要。AV隔離でフル差し替えした場合のみ設置する。
-            if _need_relocation:
-                class _SafeBaseLibFinder:
-                    """base_library.zip のインポートを安全コピーからサーブするファインダー"""
-                    def __init__(self, safe_zip):
-                        self._importer = zipimport.zipimporter(safe_zip)
-                    def find_spec(self, fullname, path, target=None):
-                        try:
-                            return self._importer.find_spec(fullname)
-                        except (ImportError, AttributeError):
-                            return None
-                    def find_module(self, fullname, path=None):
-                        try:
-                            if self._importer.find_module(fullname):
-                                return self._importer
-                        except ImportError:
-                            pass
-                        return None
-
-                sys.meta_path.insert(0, _SafeBaseLibFinder(_safe_base))
-                _base_lib_diag.append("meta_path_finder=INSTALLED")
-            else:
-                _base_lib_diag.append("meta_path_finder=SKIPPED(mei_ok)")
+            _base_lib_diag.append("meta_path_finder=DISABLED")
 
             _base_lib_relocated = True
 
     except Exception as _e:
         _base_lib_diag.append(f"error={_e}")
 
-# ── Phase 0 完了: 以降は base_library.zip が安全な場所にあるため ──
-# ── zipfile, io 等の標準ライブラリを安全に import できる ──────────
-try:
-    import io as _io
-    import zipfile
-    _base_lib_diag.append("deferred_imports=OK")
-except Exception as _e:
-    _base_lib_diag.append(f"deferred_imports=FAIL:{_e}")
-    _io = None
-    zipfile = None
+# ── Phase 0 完了: 以降は safe_base を使って標準ライブラリ再試行可能 ──
+if not _has_stdlib:
+    try:
+        import shutil
+        import tempfile
+        import io as _io
+        import zipfile
+        _has_stdlib = True
+        _base_lib_diag.append("post_phase0_stdlib_import=OK")
+    except Exception as _e:
+        _base_lib_diag.append(f"post_phase0_stdlib_import=FAIL:{_e}")
+        _io = None
+        zipfile = None
+        shutil = None
+        tempfile = None
+else:
+    _base_lib_diag.append("post_phase0_stdlib_import=SKIPPED(already_ok)")
+
+# typing(functools経由)より先に collections.abc 親属性を保証
+_prime_collections_abc_binding(_base_lib_diag)
 
 # ── Phase 1: customtkinterテーマファイルのプリキャッシュ ──
 # rthook実行直後（隔離前）にテーマJSONを読み込みメモリキャッシュ。
