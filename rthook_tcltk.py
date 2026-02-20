@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc2"
+_RTHOOK_VERSION = "1.3.1-rc3"
 
 # ── Phase -1: 堅牢なエラーハンドラ（osモジュールのみ使用） ──────
 # traceback, io 等に依存しない最小限のエラー出力。
@@ -213,28 +213,32 @@ if _meipass:
             else:
                 _base_lib_diag.append("relocation=SKIPPED(mei_ok)")
 
-            # --- C. meta_pathフォールバック: 常にインストール ---
-            # _MEI正常時でも、後からAVが隔離する可能性があるため安全網として設置。
-            # find_specは既にsys.modulesにあるモジュールには呼ばれないため無害。
-            class _SafeBaseLibFinder:
-                """base_library.zip のインポートを安全コピーからサーブするファインダー"""
-                def __init__(self, safe_zip):
-                    self._importer = zipimport.zipimporter(safe_zip)
-                def find_spec(self, fullname, path, target=None):
-                    try:
-                        return self._importer.find_spec(fullname)
-                    except (ImportError, AttributeError):
+            # --- C. meta_pathフォールバック: AV隔離時のみインストール ---
+            # _SafeBaseLibFinderはPyInstallerの正規importerより先にimportを
+            # 処理してしまい、typingモジュール等の読み込みを破壊する。
+            # _MEI正常時は不要。AV隔離でフル差し替えした場合のみ設置する。
+            if _need_relocation:
+                class _SafeBaseLibFinder:
+                    """base_library.zip のインポートを安全コピーからサーブするファインダー"""
+                    def __init__(self, safe_zip):
+                        self._importer = zipimport.zipimporter(safe_zip)
+                    def find_spec(self, fullname, path, target=None):
+                        try:
+                            return self._importer.find_spec(fullname)
+                        except (ImportError, AttributeError):
+                            return None
+                    def find_module(self, fullname, path=None):
+                        try:
+                            if self._importer.find_module(fullname):
+                                return self._importer
+                        except ImportError:
+                            pass
                         return None
-                def find_module(self, fullname, path=None):
-                    try:
-                        if self._importer.find_module(fullname):
-                            return self._importer
-                    except ImportError:
-                        pass
-                    return None
 
-            sys.meta_path.insert(0, _SafeBaseLibFinder(_safe_base))
-            _base_lib_diag.append("meta_path_finder=INSTALLED")
+                sys.meta_path.insert(0, _SafeBaseLibFinder(_safe_base))
+                _base_lib_diag.append("meta_path_finder=INSTALLED")
+            else:
+                _base_lib_diag.append("meta_path_finder=SKIPPED(mei_ok)")
 
             _base_lib_relocated = True
 
