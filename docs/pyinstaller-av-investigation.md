@@ -54,7 +54,9 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc2 | _MEI正常時パス差し替えスキップ | 同上（_SafeBaseLibFinder残存） |
 | v1.3.1-rc3 | _SafeBaseLibFinderもスキップ | 同上（deferred importが根本原因） |
 | v1.3.1-rc4 | ハイブリッドimport + `_prime_collections_abc_binding()` | **collections.abc解決**。AV遅延隔離でbase_library.zip消失（TOCTOU） |
-| v1.3.1-rc5 | sys.pathを常にsafe_baseへ切り替え | テスト中 |
+| v1.3.1-rc5 | sys.pathを常にsafe_baseへ切り替え | staleなimporter cache残存（collections.__path__経由で再生成） |
+| v1.3.1-rc6 | B-5復活（__path__/__spec__書き換え）+ 最終キャッシュ掃除 | **base_library.zip問題完全解決**。別問題（pyaudio._portaudio欠落）発覚 |
+| v1.3.1-rc7 | `pyaudio._portaudio`をhiddenimportsに明示追加 | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -216,11 +218,46 @@ AV隔離時:
   → 後続フック: safe_baseからimport → 成功
 ```
 
+### 5.3 rc6: staleキャッシュ問題の解決
+
+**発生した問題:**
+- rc5の診断で`pic_now`に`_MEI\base_library.zip\collections`と`_MEI\base_library.zip\encodings`が残存
+- `import shutil`時に`collections.__path__`が`_MEI`パスで設定される
+- B-2でキャッシュをクリアしても、`_prime_collections_abc_binding()`が`collections.abc`をimportする際に古い`__path__`経由でstaleなキャッシュが再生成される
+
+**修正内容:**
+- **B-5復活**: `sys.modules`内の全パッケージの`__path__`と`__spec__`を走査し、`_MEI`パスを`safe_base`に書き換え
+- **最終キャッシュ掃除**: `_prime_collections_abc_binding()`完了後に再度`sys.path_importer_cache`からstaleエントリを除去
+
+**結果:**
+- `modules_fixed=3`: 3モジュールの`__path__`を修正
+- `final_cache_cleaned=0`: B-5が完全に機能し、最終掃除で残存エントリなし
+- 全`pic_now`が`safe_base`（`AppData\Local\Kototsuna\runtime_cache`）を指向
+- **base_library.zip / AV隔離 / collections.abc問題チェーンが完全解決**
+
+**教訓:**
+- `sys.path`と`sys.path_importer_cache`の修正だけでは不十分。既にロードされたモジュールの`__path__`属性がキャッシュの再汚染源になる
+- キャッシュクリア→import→再クリアの2段構えが必要
+
+### 5.4 rc7: pyaudio._portaudio欠落（別問題）
+
+**発生した問題:**
+- base_library.zip関連の問題はrc6で完全解決
+- 新たに`ModuleNotFoundError: No module named 'pyaudio._portaudio'`が発生
+- `_portaudio`はCエクステンション（.pyd）で、`collect_all('pyaudio')`で漏れることがある
+
+**修正内容:**
+- `Kototsuna.spec`に`hiddenimports += ['pyaudio._portaudio']`を明示追加
+
+**教訓:**
+- `collect_all()`はPythonモジュールを網羅的に収集するが、Cエクステンション（.pyd/.so）は漏れることがある
+- バンドル対象のネイティブ拡張は`hiddenimports`で明示指定するのが確実
+
 ## 6. 推奨方針
 
-### 短期: Approach B（rc5で実装済み）
+### 短期: Approach B（rc6で完成）
 
-ハイブリッドimport + collections.abc明示バインディング + 常時パス差し替え。
+ハイブリッドimport + collections.abc明示バインディング + 常時パス差し替え + __path__書き換え + 最終キャッシュ掃除。
 通常時・AV隔離時ともに`runtime_cache/base_library.zip`を参照する。
 
 ### 中長期: Approach C（onedirまたはMSIX）
