@@ -61,8 +61,24 @@ datas.append((_tcl_zip_path, '.'))
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+print(f"[SPEC] pyaudio collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={tmp_ret[2]}")
+for _b in tmp_ret[1]:
+    print(f"[SPEC]   binary: {_b}")
 # _portaudioはCエクステンション(.pyd)のためcollect_allで漏れる場合がある
 hiddenimports += ['pyaudio._portaudio']
+# .pydファイルを明示的にバイナリとして追加（collect_all/hiddenimportsで漏れる場合の保険）
+import pyaudio as _pa_mod
+_pa_dir = os.path.dirname(_pa_mod.__file__)
+_portaudio_found = False
+for _f in os.listdir(_pa_dir):
+    if _f.startswith('_portaudio') and (_f.endswith('.pyd') or _f.endswith('.so')):
+        binaries.append((os.path.join(_pa_dir, _f), 'pyaudio'))
+        print(f"[SPEC] Explicitly added pyaudio binary: {_f}")
+        _portaudio_found = True
+        break
+if not _portaudio_found:
+    print(f"[SPEC] WARNING: _portaudio.pyd not found in {_pa_dir}")
+    print(f"[SPEC]   contents: {os.listdir(_pa_dir)}")
 
 # tkinterwebを収集（これが無いとEXE化した際に読み込めない）
 tmp_ret = collect_all('tkinterweb')
