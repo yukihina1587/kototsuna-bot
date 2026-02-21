@@ -56,7 +56,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc4 | ハイブリッドimport + `_prime_collections_abc_binding()` | **collections.abc解決**。AV遅延隔離でbase_library.zip消失（TOCTOU） |
 | v1.3.1-rc5 | sys.pathを常にsafe_baseへ切り替え | staleなimporter cache残存（collections.__path__経由で再生成） |
 | v1.3.1-rc6 | B-5復活（__path__/__spec__書き換え）+ 最終キャッシュ掃除 | **base_library.zip問題完全解決**。別問題（pyaudio._portaudio欠落）発覚 |
-| v1.3.1-rc7 | `pyaudio._portaudio`をhiddenimportsに明示追加 | テスト中 |
+| v1.3.1-rc7 | `pyaudio._portaudio`をhiddenimportsに明示追加 | 効果なし（hiddenimportsだけでは.pydが収集されない） |
+| v1.3.1-rc8 | `.pyd`を明示的にbinariesへ追加 + collect_all診断出力 | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -239,19 +240,28 @@ AV隔離時:
 - `sys.path`と`sys.path_importer_cache`の修正だけでは不十分。既にロードされたモジュールの`__path__`属性がキャッシュの再汚染源になる
 - キャッシュクリア→import→再クリアの2段構えが必要
 
-### 5.4 rc7: pyaudio._portaudio欠落（別問題）
+### 5.4 rc7/rc8: pyaudio._portaudio欠落（別問題）
 
 **発生した問題:**
 - base_library.zip関連の問題はrc6で完全解決
 - 新たに`ModuleNotFoundError: No module named 'pyaudio._portaudio'`が発生
-- `_portaudio`はCエクステンション（.pyd）で、`collect_all('pyaudio')`で漏れることがある
+- `_portaudio`はCエクステンション（`.pyd`）で、`collect_all('pyaudio')`で漏れる場合がある
+- rc6以前のRCではbase_library.zip問題で先にクラッシュしていたため、この問題は潜在していた
 
-**修正内容:**
-- `Kototsuna.spec`に`hiddenimports += ['pyaudio._portaudio']`を明示追加
+**rc7の試み（効果なし）:**
+- `hiddenimports += ['pyaudio._portaudio']`を追加
+- CIビルドログに`_portaudio`関連のWARNINGなし → `hiddenimports`だけではCエクステンション（.pyd）のバンドルに不十分
+
+**rc8の修正内容:**
+- `collect_all('pyaudio')`の返り値（datas/binaries/hiddenimports件数）をビルドログに出力して診断
+- `pyaudio/`ディレクトリから`_portaudio*.pyd`を直接`binaries`リストに明示追加
+- 3段防御: `collect_all` + `hiddenimports` + 明示的`binaries`追加
 
 **教訓:**
 - `collect_all()`はPythonモジュールを網羅的に収集するが、Cエクステンション（.pyd/.so）は漏れることがある
-- バンドル対象のネイティブ拡張は`hiddenimports`で明示指定するのが確実
+- `hiddenimports`はPythonモジュールのimportグラフに基づくため、ネイティブ拡張には効かない場合がある
+- 確実な方法は`binaries`リストに`.pyd`ファイルパスを直接追加すること
+- ビルドログに`collect_all`の返り値を出力することで、何が収集されたか確認できる
 
 ## 6. 推奨方針
 
