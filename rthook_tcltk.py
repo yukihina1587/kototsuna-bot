@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc8"
+_RTHOOK_VERSION = "1.3.1-rc9"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -260,6 +260,38 @@ if _meipass:
     except Exception as _e:
         _base_lib_diag.append(f"error={_e}")
 
+# ── Phase 0.5: C拡張プリキャッシュ（AV隔離前にコピー） ──────
+# _portaudio.pyd等のCエクステンションをruntime_cacheに退避。
+# base_library.zipと同じ戦略: AV隔離より先にコピーし、常にsafe copyを使用。
+# !! builtins.open(rb/wb)のみ使用（stdlib不要） !!
+_pyd_cache_diag = []
+_pa_safe_dir = None
+if _meipass and _safe_dir:
+    _pa_mei_dir = os.path.join(_meipass, 'pyaudio')
+    _pa_safe_dir = os.path.join(_safe_dir, 'pyaudio')
+    if os.path.isdir(_pa_mei_dir):
+        try:
+            os.makedirs(_pa_safe_dir, exist_ok=True)
+        except OSError:
+            pass
+        for _fname in os.listdir(_pa_mei_dir):
+            if _fname.endswith(('.pyd', '.so')):
+                _pyd_src = os.path.join(_pa_mei_dir, _fname)
+                _pyd_dst = os.path.join(_pa_safe_dir, _fname)
+                try:
+                    with _builtin_open(_pyd_src, 'rb') as _fin:
+                        _pyd_data = _fin.read()
+                    with _builtin_open(_pyd_dst, 'wb') as _fout:
+                        _fout.write(_pyd_data)
+                    del _pyd_data
+                    _pyd_cache_diag.append(f"cached:{_fname}")
+                except (FileNotFoundError, PermissionError, OSError) as _pyd_err:
+                    _pyd_cache_diag.append(f"cache_failed:{_fname}={_pyd_err}")
+                    if os.path.isfile(_pyd_dst):
+                        _pyd_cache_diag.append(f"using_existing:{_fname}")
+    else:
+        _pyd_cache_diag.append("pyaudio_dir_not_found")
+
 # ── Phase 0 完了: 以降は safe_base を使って標準ライブラリ再試行可能 ──
 if not _has_stdlib:
     try:
@@ -310,6 +342,34 @@ if _meipass and _safe_base and _base_lib_relocated:
                 del zipimport._zip_directory_cache[_key]
                 _final_cleaned += 1
     _base_lib_diag.append(f"final_cache_cleaned={_final_cleaned}")
+
+# ── Phase 0.5b: C拡張のsafe import finder ──────────────────
+# pyaudio._portaudioをruntime_cacheから読み込むmeta_pathフォールバック。
+# sys.meta_pathの先頭に挿入し、TOCTOU回避（常にsafe copyを使用）。
+_pyd_finder_installed = False
+if _pa_safe_dir and os.path.isdir(_pa_safe_dir):
+    try:
+        import importlib.util
+
+        class _SafePydFinder:
+            """AV隔離時にruntime_cacheからC拡張をロードするfinder"""
+
+            def find_spec(self, fullname, path, target=None):
+                if fullname == 'pyaudio._portaudio':
+                    _safe_pyd = os.path.join(_pa_safe_dir, '_portaudio.pyd')
+                    if not os.path.isfile(_safe_pyd):
+                        _safe_pyd = os.path.join(_pa_safe_dir, '_portaudio.so')
+                    if os.path.isfile(_safe_pyd):
+                        return importlib.util.spec_from_file_location(
+                            fullname, _safe_pyd
+                        )
+                return None
+
+        sys.meta_path.insert(0, _SafePydFinder())
+        _pyd_finder_installed = True
+        _pyd_cache_diag.append("finder=installed")
+    except Exception as _finder_err:
+        _pyd_cache_diag.append(f"finder=FAIL:{_finder_err}")
 
 # ── Phase 1: customtkinterテーマファイルのプリキャッシュ ──
 # rthook実行直後（隔離前）にテーマJSONを読み込みメモリキャッシュ。
@@ -380,6 +440,10 @@ try:
             for _k in sys.path_importer_cache:
                 if 'base_library' in str(_k).lower():
                     _df.write(f"  pic_now={_k} -> {type(sys.path_importer_cache[_k]).__name__}\n")
+            _df.write(f"pyd_cache_count={len(_pyd_cache_diag)}\n")
+            for _d in _pyd_cache_diag:
+                _df.write(f"  {_d}\n")
+            _df.write(f"pyd_finder_installed={_pyd_finder_installed}\n")
             _df.write(f"cached_files_count={len(_cached_files)}\n")
             for _k in _cached_files:
                 _df.write(f"  cached: {_k}\n")

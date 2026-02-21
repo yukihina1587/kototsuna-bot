@@ -57,7 +57,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc5 | sys.pathを常にsafe_baseへ切り替え | staleなimporter cache残存（collections.__path__経由で再生成） |
 | v1.3.1-rc6 | B-5復活（__path__/__spec__書き換え）+ 最終キャッシュ掃除 | **base_library.zip問題完全解決**。別問題（pyaudio._portaudio欠落）発覚 |
 | v1.3.1-rc7 | `pyaudio._portaudio`をhiddenimportsに明示追加 | 効果なし（hiddenimportsだけでは.pydが収集されない） |
-| v1.3.1-rc8 | `.pyd`を明示的にbinariesへ追加 + collect_all診断出力 | テスト中 |
+| v1.3.1-rc8 | `.pyd`を明示的にbinariesへ追加 + collect_all診断出力 | バンドルは成功したがAV隔離で初回起動時に`_portaudio.pyd`消失 |
+| v1.3.1-rc9 | `.pyd`をruntime_cacheにプリキャッシュ + meta_path finderで迂回 | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -257,11 +258,30 @@ AV隔離時:
 - `pyaudio/`ディレクトリから`_portaudio*.pyd`を直接`binaries`リストに明示追加
 - 3段防御: `collect_all` + `hiddenimports` + 明示的`binaries`追加
 
+**rc8の結果:**
+- ビルドは成功し、`_portaudio.pyd`は`_MEI*`に正しくバンドルされた
+- しかし初回起動時にAV（Windows Defender）が`_portaudio.pyd`を隔離 → `ModuleNotFoundError`
+- 二回目起動では`_MEI*`が残存しており、AV解除済みで成功
+- **根本原因はbase_library.zipと同じ: AV遅延隔離によるファイル消失**
+
+### 5.5 rc9: _portaudio.pyd AV隔離対策
+
+**修正内容:**
+- **Phase 0.5**: rthookにCエクステンションのプリキャッシュを追加。`_MEI*/pyaudio/_portaudio.pyd`を`runtime_cache/pyaudio/_portaudio.pyd`にコピー（`builtins.open`のみ使用、stdlib不要）
+- **Phase 0.5b**: `sys.meta_path`の先頭に`_SafePydFinder`を挿入。`pyaudio._portaudio`のimportを常に`runtime_cache`から読み込み
+- base_library.zipと同じ戦略: AV隔離前にコピーし、常にsafe copyを使用（TOCTOU回避）
+
+**技術詳細:**
+- `_SafePydFinder.find_spec()`: `importlib.util.spec_from_file_location()`でCエクステンションのModuleSpecを生成
+- `sys.meta_path[0]`に挿入することで、PyInstallerのFrozenImporterより先に評価
+- DLL依存: PyInstallerが`_MEI*`を`os.add_dll_directory()`で登録済みのため、`runtime_cache`からの`.pyd`ロードでもDLL依存は解決される
+
 **教訓:**
 - `collect_all()`はPythonモジュールを網羅的に収集するが、Cエクステンション（.pyd/.so）は漏れることがある
 - `hiddenimports`はPythonモジュールのimportグラフに基づくため、ネイティブ拡張には効かない場合がある
 - 確実な方法は`binaries`リストに`.pyd`ファイルパスを直接追加すること
-- ビルドログに`collect_all`の返り値を出力することで、何が収集されたか確認できる
+- **バンドルだけでは不十分**: `.pyd`がバンドルに含まれていても、AV隔離で実行時に消失する
+- base_library.zipで確立した「runtime_cacheプリキャッシュ + import迂回」パターンはCエクステンションにも適用可能
 
 ## 6. 推奨方針
 
