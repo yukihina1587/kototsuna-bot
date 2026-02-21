@@ -58,7 +58,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc6 | B-5復活（__path__/__spec__書き換え）+ 最終キャッシュ掃除 | **base_library.zip問題完全解決**。別問題（pyaudio._portaudio欠落）発覚 |
 | v1.3.1-rc7 | `pyaudio._portaudio`をhiddenimportsに明示追加 | 効果なし（hiddenimportsだけでは.pydが収集されない） |
 | v1.3.1-rc8 | `.pyd`を明示的にbinariesへ追加 + collect_all診断出力 | バンドルは成功したがAV隔離で初回起動時に`_portaudio.pyd`消失 |
-| v1.3.1-rc9 | `.pyd`をruntime_cacheにプリキャッシュ + meta_path finderで迂回 | テスト中 |
+| v1.3.1-rc9 | `.pyd`をruntime_cacheにプリキャッシュ + meta_path finderで迂回 | finderが`_portaudio.pyd`をハードコードしていたが実ファイル名は`_portaudio.cp312-win_amd64.pyd` |
+| v1.3.1-rc10 | finderをキャッシュ時に記録した実パスで参照するよう修正 | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -276,12 +277,26 @@ AV隔離時:
 - `sys.meta_path[0]`に挿入することで、PyInstallerのFrozenImporterより先に評価
 - DLL依存: PyInstallerが`_MEI*`を`os.add_dll_directory()`で登録済みのため、`runtime_cache`からの`.pyd`ロードでもDLL依存は解決される
 
+**rc9の結果（失敗）:**
+- プリキャッシュ: `cached:_portaudio.cp312-win_amd64.pyd` → **成功**
+- finder: `finder=installed`, `meta_path[0]=_SafePydFinder` → **インストール成功**
+- しかし`find_spec()`内で`_portaudio.pyd`をハードコード検索していたため、実ファイル名`_portaudio.cp312-win_amd64.pyd`にマッチせずfinderが空振り
+- Python 3.12のCエクステンションは`{name}.cp{ver}-{platform}.pyd`形式のファイル名を使用
+
+### 5.6 rc10: finderファイル名修正
+
+**修正内容:**
+- Phase 0.5でキャッシュ成功時に`_portaudio_safe_path`に実パスを記録
+- Phase 0.5bのfinder内でハードコードファイル名を廃止し、記録済みの実パスを直接参照
+- 診断出力に`portaudio_safe_path`を追加
+
 **教訓:**
 - `collect_all()`はPythonモジュールを網羅的に収集するが、Cエクステンション（.pyd/.so）は漏れることがある
 - `hiddenimports`はPythonモジュールのimportグラフに基づくため、ネイティブ拡張には効かない場合がある
 - 確実な方法は`binaries`リストに`.pyd`ファイルパスを直接追加すること
 - **バンドルだけでは不十分**: `.pyd`がバンドルに含まれていても、AV隔離で実行時に消失する
 - base_library.zipで確立した「runtime_cacheプリキャッシュ + import迂回」パターンはCエクステンションにも適用可能
+- **Cエクステンションのファイル名をハードコードしてはいけない**: Python 3.12では`_portaudio.cp312-win_amd64.pyd`のようにバージョン・プラットフォームタグが付く
 
 ## 6. 推奨方針
 
