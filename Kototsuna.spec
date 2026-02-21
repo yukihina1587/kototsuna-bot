@@ -61,6 +61,8 @@ datas.append((_tcl_zip_path, '.'))
 # pyaudioのC拡張を収集
 tmp_ret = collect_all('pyaudio')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# _portaudioはCエクステンション(.pyd)のためcollect_allで漏れる場合がある
+hiddenimports += ['pyaudio._portaudio']
 
 # tkinterwebを収集（これが無いとEXE化した際に読み込めない）
 tmp_ret = collect_all('tkinterweb')
