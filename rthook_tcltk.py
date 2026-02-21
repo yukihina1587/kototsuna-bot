@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc5"
+_RTHOOK_VERSION = "1.3.1-rc6"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -214,6 +214,47 @@ if _meipass:
             except Exception as _e:
                 _base_lib_diag.append(f"new_importer=FAIL:{_e}")
 
+            # B-5. base_library.zip内パッケージの__path__/__spec__を修正
+            # import shutilがcollections等のパッケージを読み込む際に
+            # __path__が旧_MEIパスで設定される。これを修正しないと
+            # _prime_collections_abc_binding()等が旧パスのcacheを再生成する。
+            _fixed_modules = 0
+            for _mod in sys.modules.values():
+                if _mod is None:
+                    continue
+                try:
+                    if hasattr(_mod, '__path__'):
+                        _new_paths = []
+                        _changed = False
+                        for _p in _mod.__path__:
+                            if _old_base_path.lower() in _p.lower():
+                                _new_paths.append(
+                                    _p.lower().replace(
+                                        _old_base_path.lower(),
+                                        _safe_base
+                                    ) if os.name != 'nt' else
+                                    _p.replace(_old_base_path, _safe_base)
+                                )
+                                _changed = True
+                            else:
+                                _new_paths.append(_p)
+                        if _changed:
+                            _mod.__path__ = _new_paths
+                            _fixed_modules += 1
+                    if hasattr(_mod, '__spec__') and _mod.__spec__:
+                        _spec = _mod.__spec__
+                        if _spec.origin and _old_base_path.lower() in _spec.origin.lower():
+                            _spec.origin = _spec.origin.replace(_old_base_path, _safe_base)
+                        if _spec.submodule_search_locations:
+                            _spec.submodule_search_locations = [
+                                _p.replace(_old_base_path, _safe_base)
+                                if _old_base_path.lower() in _p.lower() else _p
+                                for _p in _spec.submodule_search_locations
+                            ]
+                except Exception:
+                    pass
+            _base_lib_diag.append(f"modules_fixed={_fixed_modules}")
+
             _base_lib_relocated = True
 
     except Exception as _e:
@@ -239,6 +280,36 @@ else:
 
 # typing(functools経由)より先に collections.abc 親属性を保証
 _prime_collections_abc_binding(_base_lib_diag)
+
+# ── 最終キャッシュ掃除 ──
+# _prime_collections_abc_binding()等がcollections.abcをimportする際に
+# 旧_MEIパスのキャッシュエントリが再生成される場合がある。最終掃除で除去。
+if _meipass and _safe_base and _base_lib_relocated:
+    _final_cleaned = 0
+    _old_mei_lower = os.path.join(_meipass, 'base_library.zip').lower()
+    for _key in list(sys.path_importer_cache.keys()):
+        if _old_mei_lower in str(_key).lower():
+            # 旧パスのエントリをsafe_baseの同等エントリに差し替え
+            _suffix = ''
+            _key_str = str(_key)
+            _bl_idx = _key_str.lower().find('base_library.zip')
+            if _bl_idx >= 0:
+                _suffix = _key_str[_bl_idx + len('base_library.zip'):]
+            _new_key = _safe_base + _suffix
+            try:
+                _new_imp = zipimport.zipimporter(_new_key)
+                sys.path_importer_cache[_new_key] = _new_imp
+            except Exception:
+                pass
+            del sys.path_importer_cache[_key]
+            _final_cleaned += 1
+    # zipimport._zip_directory_cacheも再掃除
+    if hasattr(zipimport, '_zip_directory_cache'):
+        for _key in list(zipimport._zip_directory_cache.keys()):
+            if _old_mei_lower in str(_key).lower():
+                del zipimport._zip_directory_cache[_key]
+                _final_cleaned += 1
+    _base_lib_diag.append(f"final_cache_cleaned={_final_cleaned}")
 
 # ── Phase 1: customtkinterテーマファイルのプリキャッシュ ──
 # rthook実行直後（隔離前）にテーマJSONを読み込みメモリキャッシュ。
