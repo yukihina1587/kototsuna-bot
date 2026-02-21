@@ -46,13 +46,15 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.3 | raw excepthook追加 | 起動不能、削除済み |
 | v1.3.1（2回目） | AV隔離対策rthook改善 | 起動不能、削除済み |
 
-### RC期（v1.3.1-rc1〜rc3）
+### RC期（v1.3.1-rc1〜rc5）
 
 | Ver | 修正内容 | 結果 |
 |-----|---------|------|
 | v1.3.1-rc1 | エラーログexe隣出力・TOCTOU修正 | `collections.abc.Hashable`消失 |
 | v1.3.1-rc2 | _MEI正常時パス差し替えスキップ | 同上（_SafeBaseLibFinder残存） |
 | v1.3.1-rc3 | _SafeBaseLibFinderもスキップ | 同上（deferred importが根本原因） |
+| v1.3.1-rc4 | ハイブリッドimport + `_prime_collections_abc_binding()` | **collections.abc解決**。AV遅延隔離でbase_library.zip消失（TOCTOU） |
+| v1.3.1-rc5 | sys.pathを常にsafe_baseへ切り替え | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -174,18 +176,58 @@ def _prime_collections_abc_binding():
 | MSIX パッケージング | 中 | AV問題消滅 | 自己署名証明書でOK |
 | _MEIプレフィックス変更 | 小 | AV誤検出減少 | bootloader改変必要 |
 
-## 5. 推奨方針
+## 5. 実装の経緯と教訓
 
-### 短期（rc4）: Approach B
+### 5.1 rc4: collections.abc問題の解決
 
-ハイブリッドimport戦略を実装。通常時はv1.3.0互換、AV隔離時のみフォールバックし、
-Phase 0後に`collections.abc`の親属性バインディングを明示的に確立する。
+**修正内容:**
+- ハイブリッドimport: `try/except`でshutil/tempfileを早期import（通常時v1.3.0互換）
+- `_prime_collections_abc_binding()`: `_collections_abc`(frozen) → `collections` → `collections.abc`の3段階importで親属性を明示バインド
+- `__spec__/__path__`書き換え削除: モジュール内部状態破壊のリスク排除
+- `_SafeBaseLibFinder`(meta_path)削除: PYZ解決との競合リスク排除
+
+**結果:**
+- `collections_abc=OK` → Hashable問題は完全解決
+- しかし`relocation=SKIPPED(mei_ok)`により、rthook完了後のAV遅延隔離で`base_library.zip`が消失
+- エラー: `pyi_rth_inspect.py` → `inspect.py` → `zipimport`が`_MEI*/base_library.zip`を読めない
+
+**教訓:**
+- AV隔離はrthook実行中だけでなく、完了後にも発生する（TOCTOU問題）
+- `_MEI`が正常かどうかのチェックは時間的に意味がない
+
+### 5.2 rc5: TOCTOU対策（常時パス差し替え）
+
+**修正内容:**
+- `_need_relocation = not _copied`（条件付き）を廃止
+- safe_baseが存在すれば常にsys.path / importer cacheを切り替え
+- `_prime_collections_abc_binding()`がバインディング破壊を防止するため安全
+
+**期待される動作:**
+```
+通常起動:
+  early_stdlib_import=OK → copied_from_mei → sys.path→safe_base
+  → _prime_collections_abc_binding() → collections_abc=OK
+  → 後続フック: safe_baseからimport → 成功
+
+AV隔離時:
+  early_stdlib_import=FAIL → mei_copy_failed → using_prestaged_copy
+  → sys.path→safe_base → post_phase0_stdlib_import=OK
+  → _prime_collections_abc_binding() → collections_abc=OK
+  → 後続フック: safe_baseからimport → 成功
+```
+
+## 6. 推奨方針
+
+### 短期: Approach B（rc5で実装済み）
+
+ハイブリッドimport + collections.abc明示バインディング + 常時パス差し替え。
+通常時・AV隔離時ともに`runtime_cache/base_library.zip`を参照する。
 
 ### 中長期: Approach C（onedirまたはMSIX）
 
 根本原因を排除し、rthookの複雑さを大幅削減。
 
-## 6. 参考URL
+## 7. 参考URL
 
 ### PyInstaller AV関連
 - [Issue #8164 - False positives above v5.13.2](https://github.com/pyinstaller/pyinstaller/issues/8164)
