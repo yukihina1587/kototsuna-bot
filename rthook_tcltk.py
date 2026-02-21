@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc4"
+_RTHOOK_VERSION = "1.3.1-rc5"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -158,70 +158,61 @@ if _meipass:
             else:
                 _base_lib_diag.append("action=NO_SOURCE_AVAILABLE")
 
-        # --- B: パス差し替えはAV隔離時のみ実行 ---
-        # _MEIからのコピーが成功した場合（_copied=True）はバックアップのみ。
-        # sys.pathやモジュール__path__を差し替えると、既ロードモジュールの
-        # 内部状態が壊れる（例: collections.abc.Hashable消失）。
-        # AV隔離でコピー失敗した場合のみフル差し替えを行う。
-        _need_relocation = not _copied
+        # --- B: パス差し替え（常に実行） ---
+        # AV隔離はrthook完了後に発生しうる（TOCTOU問題）ため、
+        # _MEIからのコピー成否に関わらず常にsafe_baseへ切り替える。
+        # collections.abc.Hashableの破壊は_prime_collections_abc_binding()で防止。
 
         if os.path.isfile(_safe_base):
-            if _need_relocation:
-                # --- B. 完全パス差し替え（AV隔離時のみ） ---
-                # B-1. sys.path
-                _replaced_count = 0
-                for _i in range(len(sys.path)):
-                    if 'base_library.zip' in sys.path[_i].lower():
-                        _base_lib_diag.append(f"syspath_old[{_i}]={sys.path[_i]}")
-                        sys.path[_i] = _safe_base
-                        _replaced_count += 1
-                _base_lib_diag.append(f"syspath_replaced={_replaced_count}")
+            # --- B. 完全パス差し替え ---
+            # B-1. sys.path
+            _replaced_count = 0
+            for _i in range(len(sys.path)):
+                if 'base_library.zip' in sys.path[_i].lower():
+                    _base_lib_diag.append(f"syspath_old[{_i}]={sys.path[_i]}")
+                    sys.path[_i] = _safe_base
+                    _replaced_count += 1
+            _base_lib_diag.append(f"syspath_replaced={_replaced_count}")
 
-                # B-2. sys.path_importer_cache: 旧エントリ削除 + 新エントリ登録
-                _deleted_pic = 0
-                _old_subpaths = []
-                for _key in list(sys.path_importer_cache.keys()):
+            # B-2. sys.path_importer_cache: 旧エントリ削除 + 新エントリ登録
+            _deleted_pic = 0
+            _old_subpaths = []
+            for _key in list(sys.path_importer_cache.keys()):
+                if 'base_library.zip' in str(_key).lower():
+                    _old_subpaths.append(_key)
+                    del sys.path_importer_cache[_key]
+                    _deleted_pic += 1
+            _base_lib_diag.append(f"pic_deleted={_deleted_pic}")
+
+            # B-3. zipimport._zip_directory_cache
+            _deleted_zdc = 0
+            if hasattr(zipimport, '_zip_directory_cache'):
+                for _key in list(zipimport._zip_directory_cache.keys()):
                     if 'base_library.zip' in str(_key).lower():
-                        _old_subpaths.append(_key)
-                        del sys.path_importer_cache[_key]
-                        _deleted_pic += 1
-                _base_lib_diag.append(f"pic_deleted={_deleted_pic}")
+                        del zipimport._zip_directory_cache[_key]
+                        _deleted_zdc += 1
+            _base_lib_diag.append(f"zdc_deleted={_deleted_zdc}")
 
-                # B-3. zipimport._zip_directory_cache
-                _deleted_zdc = 0
-                if hasattr(zipimport, '_zip_directory_cache'):
-                    for _key in list(zipimport._zip_directory_cache.keys()):
-                        if 'base_library.zip' in str(_key).lower():
-                            del zipimport._zip_directory_cache[_key]
-                            _deleted_zdc += 1
-                _base_lib_diag.append(f"zdc_deleted={_deleted_zdc}")
-
-                # B-4. 新パスのzipimporterを登録
-                try:
-                    _new_importer = zipimport.zipimporter(_safe_base)
-                    sys.path_importer_cache[_safe_base] = _new_importer
-                    _base_lib_diag.append("new_importer=OK")
-                    for _old_key in _old_subpaths:
-                        _old_key_str = str(_old_key)
-                        _suffix = ''
-                        _bl_idx = _old_key_str.lower().find('base_library.zip')
-                        if _bl_idx >= 0:
-                            _suffix = _old_key_str[_bl_idx + len('base_library.zip'):]
-                        if _suffix:
-                            _new_subpath = _safe_base + _suffix
-                            try:
-                                _sub_importer = zipimport.zipimporter(_new_subpath)
-                                sys.path_importer_cache[_new_subpath] = _sub_importer
-                            except Exception:
-                                pass
-                except Exception as _e:
-                    _base_lib_diag.append(f"new_importer=FAIL:{_e}")
-
-                _base_lib_diag.append("modules_fixed=SKIPPED")
-            else:
-                _base_lib_diag.append("relocation=SKIPPED(mei_ok)")
-
-            _base_lib_diag.append("meta_path_finder=DISABLED")
+            # B-4. 新パスのzipimporterを登録
+            try:
+                _new_importer = zipimport.zipimporter(_safe_base)
+                sys.path_importer_cache[_safe_base] = _new_importer
+                _base_lib_diag.append("new_importer=OK")
+                for _old_key in _old_subpaths:
+                    _old_key_str = str(_old_key)
+                    _suffix = ''
+                    _bl_idx = _old_key_str.lower().find('base_library.zip')
+                    if _bl_idx >= 0:
+                        _suffix = _old_key_str[_bl_idx + len('base_library.zip'):]
+                    if _suffix:
+                        _new_subpath = _safe_base + _suffix
+                        try:
+                            _sub_importer = zipimport.zipimporter(_new_subpath)
+                            sys.path_importer_cache[_new_subpath] = _sub_importer
+                        except Exception:
+                            pass
+            except Exception as _e:
+                _base_lib_diag.append(f"new_importer=FAIL:{_e}")
 
             _base_lib_relocated = True
 
