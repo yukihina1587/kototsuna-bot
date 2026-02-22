@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc11"
+_RTHOOK_VERSION = "1.3.1-rc12"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -260,27 +260,28 @@ if _meipass:
     except Exception as _e:
         _base_lib_diag.append(f"error={_e}")
 
-# ── Phase 0.5: 全Cエクステンションプリキャッシュ（AV隔離前にコピー） ──
-# _MEI内の全.pyd/.soファイルをruntime_cacheに退避。
+# ── Phase 0.5: 全バイナリプリキャッシュ（AV隔離前にコピー） ──
+# _MEI内の全.pyd/.so/.dllファイルをruntime_cacheに退避。
 # base_library.zipと同じ戦略: AV隔離より先にコピーし、常にsafe copyを使用。
-# パッケージ個別対応（whack-a-mole）を避け、汎用的に全Cエクステンションを保護。
+# .pyd/.so → _pyd_safe_map登録（Python importフォールバック用）
+# .dll → ディレクトリ構造ごとコピー（os.add_dll_directoryフォールバック用）
 # !! builtins.open(rb/wb)のみ使用（stdlib不要） !!
 _pyd_cache_diag = []
 _pyd_safe_map = {}  # fullname → safe_path（Phase 0.5bのfinderが使用）
+_dll_cached = 0
 if _meipass and _safe_dir:
     _pyd_cache_root = os.path.join(_safe_dir, 'pyd_cache')
     for _walk_dir, _, _walk_files in os.walk(_meipass):
+        _rel_dir = os.path.relpath(_walk_dir, _meipass)
         for _fname in _walk_files:
-            if not (_fname.endswith('.pyd') or _fname.endswith('.so')):
+            _is_pyd = _fname.endswith('.pyd') or _fname.endswith('.so')
+            _is_dll = _fname.endswith('.dll') and _rel_dir != '.'  # DLLはサブディレクトリのみ
+            if not (_is_pyd or _is_dll):
                 continue
-            _rel_dir = os.path.relpath(_walk_dir, _meipass)
+
             _pyd_src = os.path.join(_walk_dir, _fname)
             _safe_subdir = _pyd_cache_root if _rel_dir == '.' else os.path.join(_pyd_cache_root, _rel_dir)
             _pyd_dst = os.path.join(_safe_subdir, _fname)
-
-            # モジュール名を算出: pyaudio/_portaudio.cp312-win_amd64.pyd → pyaudio._portaudio
-            _mod_base = _fname.split('.')[0]
-            _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
 
             try:
                 os.makedirs(_safe_subdir, exist_ok=True)
@@ -289,12 +290,20 @@ if _meipass and _safe_dir:
                 with _builtin_open(_pyd_dst, 'wb') as _fout:
                     _fout.write(_pyd_data)
                 del _pyd_data
-                _pyd_safe_map[_fullname] = _pyd_dst
-            except (FileNotFoundError, PermissionError, OSError):
-                # コピー失敗 → 既存キャッシュがあればそれを使用
-                if os.path.isfile(_pyd_dst):
+                if _is_pyd:
+                    # モジュール名を算出: pyaudio/_portaudio.cp312-win_amd64.pyd → pyaudio._portaudio
+                    _mod_base = _fname.split('.')[0]
+                    _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
                     _pyd_safe_map[_fullname] = _pyd_dst
-    _pyd_cache_diag.append(f"total_cached={len(_pyd_safe_map)}")
+                else:
+                    _dll_cached += 1
+            except (FileNotFoundError, PermissionError, OSError):
+                if _is_pyd and os.path.isfile(_pyd_dst):
+                    _mod_base = _fname.split('.')[0]
+                    _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
+                    _pyd_safe_map[_fullname] = _pyd_dst
+    _pyd_cache_diag.append(f"pyd_cached={len(_pyd_safe_map)}")
+    _pyd_cache_diag.append(f"dll_cached={_dll_cached}")
 
 # ── Phase 0 完了: 以降は safe_base を使って標準ライブラリ再試行可能 ──
 if not _has_stdlib:
@@ -371,6 +380,34 @@ if _pyd_safe_map:
         _pyd_cache_diag.append("finder=installed")
     except Exception as _finder_err:
         _pyd_cache_diag.append(f"finder=FAIL:{_finder_err}")
+
+# ── Phase 0.5c: os.add_dll_directory パッチ ──────────────────
+# pygameなどのパッケージはos.add_dll_directory(pkg_dir)でDLL検索パスを登録する。
+# AV隔離で_MEI内のパッケージディレクトリが消失するとFileNotFoundErrorになる。
+# runtime_cache/pyd_cache/の同等パスにフォールバックする。
+_dll_dir_patched = False
+if os.name == 'nt' and hasattr(os, 'add_dll_directory') and _meipass and _safe_dir:
+    _orig_add_dll_dir = os.add_dll_directory
+    _pyd_cache_root_ref = os.path.join(_safe_dir, 'pyd_cache')
+
+    def _safe_add_dll_directory(path):
+        try:
+            return _orig_add_dll_dir(path)
+        except (FileNotFoundError, OSError):
+            # _MEI配下のパスならruntime_cacheの同等パスを試行
+            try:
+                _rel = os.path.relpath(path, _meipass)
+                if not _rel.startswith('..'):
+                    _cache_path = os.path.join(_pyd_cache_root_ref, _rel)
+                    if os.path.isdir(_cache_path):
+                        return _orig_add_dll_dir(_cache_path)
+            except (ValueError, OSError):
+                pass
+            raise
+
+    os.add_dll_directory = _safe_add_dll_directory
+    _dll_dir_patched = True
+    _pyd_cache_diag.append("dll_dir_patched=YES")
 
 # ── Phase 1: customtkinterテーマファイルのプリキャッシュ ──
 # rthook実行直後（隔離前）にテーマJSONを読み込みメモリキャッシュ。

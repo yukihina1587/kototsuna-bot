@@ -60,7 +60,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc8 | `.pyd`を明示的にbinariesへ追加 + collect_all診断出力 | バンドルは成功したがAV隔離で初回起動時に`_portaudio.pyd`消失 |
 | v1.3.1-rc9 | `.pyd`をruntime_cacheにプリキャッシュ + meta_path finderで迂回 | finderが`_portaudio.pyd`をハードコードしていたが実ファイル名は`_portaudio.cp312-win_amd64.pyd` |
 | v1.3.1-rc10 | finderをキャッシュ時に記録した実パスで参照するよう修正 | `pyaudio._portaudio`解決。次は`PIL._imaging`が同じ問題で発覚 |
-| v1.3.1-rc11 | 全`.pyd`を汎用的にruntime_cacheへプリキャッシュ + 汎用finder | テスト中 |
+| v1.3.1-rc11 | 全`.pyd`を汎用的にruntime_cacheへプリキャッシュ + 汎用finder | `.pyd` import解決。`pygame`ディレクトリごとAV隔離で`os.add_dll_directory`失敗 |
+| v1.3.1-rc12 | `.dll`もプリキャッシュ + `os.add_dll_directory`パッチ + 古`_MEI`自動削除 | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -316,6 +317,28 @@ AV隔離時:
 - **バンドルだけでは不十分**: `.pyd`がバンドルに含まれていても、AV隔離で実行時に消失する
 - **ファイル名をハードコードしてはいけない**: Python 3.12では`{name}.cp312-win_amd64.pyd`形式
 - base_library.zipで確立した「runtime_cacheプリキャッシュ + import迂回」パターンはCエクステンションにも汎用適用可能
+
+**rc11の結果:**
+- `pyd_safe_map_size=76`（76個の.pydをキャッシュ成功） → `.pyd` importは全て解決
+- 新たに`pygame/__init__.py`がline 38で`os.add_dll_directory(_MEI*/pygame)`を呼び出し、AV隔離でディレクトリごと消失 → `FileNotFoundError: [WinError 2]`
+- `.pyd`のimport問題とは異なる: DLLのロードパス登録の問題
+
+### 5.8 rc12: DLLキャッシュ + os.add_dll_directoryパッチ
+
+**修正内容:**
+- **Phase 0.5拡張**: `.pyd`/`.so`に加え、パッケージサブディレクトリ内の`.dll`ファイルもruntime_cacheにコピー（トップレベルDLLは除外: サイズが大きく隔離リスクが低い）
+- **Phase 0.5c**: `os.add_dll_directory`をモンキーパッチ。`_MEI`パスが`FileNotFoundError`になった場合、`runtime_cache/pyd_cache/`の同等パスにフォールバック
+- **Phase 2.5**: 古い`_MEI*`ディレクトリの自動削除を追加
+
+**技術詳細:**
+- `os.add_dll_directory`はWindows API `AddDllDirectory`のラッパー。ディレクトリが存在しないとWinError 2で失敗
+- `os.path.relpath(path, _meipass)`でMEI相対パスを算出し、`pyd_cache`内の対応ディレクトリを検索
+- DLLサブディレクトリ内のSDL2.dll等も事前コピーされているため、フォールバック先に実体がある
+
+**教訓:**
+- AV隔離は`.pyd`ファイルだけでなく、パッケージディレクトリ全体に及ぶ場合がある
+- `os.add_dll_directory`もAV隔離の影響を受ける — ネイティブDLLのロードパス登録も防御が必要
+- 防御すべき層: (1) base_library.zip (2) .pyd import (3) DLLロードパス — 全層でruntime_cacheフォールバックが必要
 
 ## 6. 推奨方針
 
