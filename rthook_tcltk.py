@@ -420,6 +420,26 @@ if _meipass and zipfile is not None:
     if os.path.isdir(_tk_dir):
         os.environ['TK_LIBRARY'] = _tk_dir
 
+# ── Phase 2.5: 古い_MEIディレクトリの自動削除 ──────────────
+# PyInstaller onefileモードはクラッシュ時に_MEI*を削除しないため残骸が蓄積する。
+# 現在の_MEI以外の古い_MEI*ディレクトリをexe隣から削除。
+_mei_cleaned = 0
+if _meipass and shutil is not None:
+    _mei_parent = os.path.dirname(_meipass)
+    _mei_current = os.path.basename(_meipass)
+    try:
+        for _entry in os.listdir(_mei_parent):
+            if _entry.startswith('_MEI') and _entry != _mei_current:
+                _old_mei = os.path.join(_mei_parent, _entry)
+                if os.path.isdir(_old_mei):
+                    try:
+                        shutil.rmtree(_old_mei)
+                        _mei_cleaned += 1
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+
 # ── Phase 3: 診断出力 ───────────────────────────────────
 _diag_path = os.path.join(_err_dir, 'kototsuna_rthook_diag.txt')
 try:
@@ -446,6 +466,7 @@ try:
                 _df.write(f"  {_d}\n")
             _df.write(f"pyd_finder_installed={_pyd_finder_installed}\n")
             _df.write(f"pyd_safe_map_size={len(_pyd_safe_map)}\n")
+            _df.write(f"mei_cleaned={_mei_cleaned}\n")
             _df.write(f"cached_files_count={len(_cached_files)}\n")
             for _k in _cached_files:
                 _df.write(f"  cached: {_k}\n")
