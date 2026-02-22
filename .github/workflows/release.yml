@@ -28,7 +28,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller Kototsuna.spec
+          pyinstaller --clean Kototsuna.spec
 
       - name: Verify build output
         run: |

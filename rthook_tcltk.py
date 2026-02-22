@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc18"
+_RTHOOK_VERSION = "1.3.1-rc19"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -68,6 +68,13 @@ if hasattr(sys, 'executable') and sys.executable:
 if not _err_dir:
     _err_dir = os.environ.get('TEMP', os.environ.get('TMP', '.'))
 _raw_err_path = os.path.join(_err_dir, 'kototsuna_error.txt')
+
+# 前回のエラーファイルを削除（古いエラーがユーザーを混乱させるのを防止）
+try:
+    if os.path.isfile(_raw_err_path):
+        os.unlink(_raw_err_path)
+except OSError:
+    pass
 
 def _raw_excepthook(exc_type, exc_value, exc_tb):
     """osモジュールのみで動作する堅牢なexcepthook"""
