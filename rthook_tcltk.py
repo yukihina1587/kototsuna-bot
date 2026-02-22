@@ -12,7 +12,29 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc19"
+_RTHOOK_VERSION = "1.3.1-rc20"
+
+# ── bootloaderクリーンアップ警告の抑制 ──────────────────
+# PyInstaller onefileのbootloaderは終了時に_MEIを削除しようとするが、
+# DLLがロック中だと失敗し、console=Falseの場合MessageBoxで警告を表示する。
+# os._exit(0)でbootloaderのクリーンアップ自体をスキップする。
+# _MEI残骸はPhase 2.5で次回起動時に自動削除される。
+# atexit登録はLIFO（後入先出）: 最初に登録→最後に実行→他の全ハンドラ完了後
+import atexit
+
+def _skip_bootloader_cleanup():
+    if getattr(sys, 'frozen', False) and sys.platform == 'win32':
+        try:
+            if sys.stdout:
+                sys.stdout.flush()
+            if sys.stderr:
+                sys.stderr.flush()
+        except Exception:
+            pass
+        os._exit(0)
+
+if _meipass:
+    atexit.register(_skip_bootloader_cleanup)
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
