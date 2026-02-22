@@ -59,7 +59,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc7 | `pyaudio._portaudio`をhiddenimportsに明示追加 | 効果なし（hiddenimportsだけでは.pydが収集されない） |
 | v1.3.1-rc8 | `.pyd`を明示的にbinariesへ追加 + collect_all診断出力 | バンドルは成功したがAV隔離で初回起動時に`_portaudio.pyd`消失 |
 | v1.3.1-rc9 | `.pyd`をruntime_cacheにプリキャッシュ + meta_path finderで迂回 | finderが`_portaudio.pyd`をハードコードしていたが実ファイル名は`_portaudio.cp312-win_amd64.pyd` |
-| v1.3.1-rc10 | finderをキャッシュ時に記録した実パスで参照するよう修正 | テスト中 |
+| v1.3.1-rc10 | finderをキャッシュ時に記録した実パスで参照するよう修正 | `pyaudio._portaudio`解決。次は`PIL._imaging`が同じ問題で発覚 |
+| v1.3.1-rc11 | 全`.pyd`を汎用的にruntime_cacheへプリキャッシュ + 汎用finder | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -290,13 +291,31 @@ AV隔離時:
 - Phase 0.5bのfinder内でハードコードファイル名を廃止し、記録済みの実パスを直接参照
 - 診断出力に`portaudio_safe_path`を追加
 
+**rc10の結果:**
+- `pyaudio._portaudio`は解決（`portaudio_safe_path`が正しく記録され、finderが正常に動作）
+- しかし`PIL._imaging`が同じパターンで発覚: `ImportError: cannot import name '_imaging' from 'PIL'`
+- パッケージ個別対応（whack-a-mole）では追いつかない → 汎用化が必要
+
+### 5.7 rc11: 全Cエクステンション汎用プリキャッシュ
+
+**修正内容:**
+- **Phase 0.5を汎用化**: `_MEI*`内の全`.pyd`/`.so`ファイルを`os.walk`で走査し、`runtime_cache/pyd_cache/`に構造ごとコピー
+- **Phase 0.5bを汎用化**: `_pyd_safe_map`（fullname→safe_path辞書）を参照する汎用`_SafePydFinder`
+- パッケージ個別のハードコード（`pyaudio._portaudio`、`PIL._imaging`等）を一切排除
+
+**技術詳細:**
+- `os.walk(_meipass)`で全サブディレクトリの`.pyd`/`.so`を発見
+- ファイル名からモジュール名を算出: `PIL/_imaging.cp312-win_amd64.pyd` → `PIL._imaging`
+- `_pyd_safe_map = {fullname: safe_path}` に全エントリを登録
+- finderは辞書lookupのみ（O(1)）で高速
+
 **教訓:**
+- AV隔離はどの`.pyd`ファイルにも発生しうる — パッケージ固定の対処は持続不可能
+- `os.walk` + 汎用finderで全Cエクステンションを一括保護するのが正解
 - `collect_all()`はPythonモジュールを網羅的に収集するが、Cエクステンション（.pyd/.so）は漏れることがある
-- `hiddenimports`はPythonモジュールのimportグラフに基づくため、ネイティブ拡張には効かない場合がある
-- 確実な方法は`binaries`リストに`.pyd`ファイルパスを直接追加すること
 - **バンドルだけでは不十分**: `.pyd`がバンドルに含まれていても、AV隔離で実行時に消失する
-- base_library.zipで確立した「runtime_cacheプリキャッシュ + import迂回」パターンはCエクステンションにも適用可能
-- **Cエクステンションのファイル名をハードコードしてはいけない**: Python 3.12では`_portaudio.cp312-win_amd64.pyd`のようにバージョン・プラットフォームタグが付く
+- **ファイル名をハードコードしてはいけない**: Python 3.12では`{name}.cp312-win_amd64.pyd`形式
+- base_library.zipで確立した「runtime_cacheプリキャッシュ + import迂回」パターンはCエクステンションにも汎用適用可能
 
 ## 6. 推奨方針
 

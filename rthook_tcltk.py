@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc10"
+_RTHOOK_VERSION = "1.3.1-rc11"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -260,43 +260,41 @@ if _meipass:
     except Exception as _e:
         _base_lib_diag.append(f"error={_e}")
 
-# ── Phase 0.5: C拡張プリキャッシュ（AV隔離前にコピー） ──────
-# _portaudio.pyd等のCエクステンションをruntime_cacheに退避。
+# ── Phase 0.5: 全Cエクステンションプリキャッシュ（AV隔離前にコピー） ──
+# _MEI内の全.pyd/.soファイルをruntime_cacheに退避。
 # base_library.zipと同じ戦略: AV隔離より先にコピーし、常にsafe copyを使用。
+# パッケージ個別対応（whack-a-mole）を避け、汎用的に全Cエクステンションを保護。
 # !! builtins.open(rb/wb)のみ使用（stdlib不要） !!
 _pyd_cache_diag = []
-_pa_safe_dir = None
-_portaudio_safe_path = None  # Phase 0.5bのfinderが使う実パス
+_pyd_safe_map = {}  # fullname → safe_path（Phase 0.5bのfinderが使用）
 if _meipass and _safe_dir:
-    _pa_mei_dir = os.path.join(_meipass, 'pyaudio')
-    _pa_safe_dir = os.path.join(_safe_dir, 'pyaudio')
-    if os.path.isdir(_pa_mei_dir):
-        try:
-            os.makedirs(_pa_safe_dir, exist_ok=True)
-        except OSError:
-            pass
-        for _fname in os.listdir(_pa_mei_dir):
-            if _fname.endswith(('.pyd', '.so')):
-                _pyd_src = os.path.join(_pa_mei_dir, _fname)
-                _pyd_dst = os.path.join(_pa_safe_dir, _fname)
-                try:
-                    with _builtin_open(_pyd_src, 'rb') as _fin:
-                        _pyd_data = _fin.read()
-                    with _builtin_open(_pyd_dst, 'wb') as _fout:
-                        _fout.write(_pyd_data)
-                    del _pyd_data
-                    _pyd_cache_diag.append(f"cached:{_fname}")
-                    # _portaudioのsafeパスを記録（finderが使用）
-                    if '_portaudio' in _fname:
-                        _portaudio_safe_path = _pyd_dst
-                except (FileNotFoundError, PermissionError, OSError) as _pyd_err:
-                    _pyd_cache_diag.append(f"cache_failed:{_fname}={_pyd_err}")
-                    if os.path.isfile(_pyd_dst):
-                        _pyd_cache_diag.append(f"using_existing:{_fname}")
-                        if '_portaudio' in _fname:
-                            _portaudio_safe_path = _pyd_dst
-    else:
-        _pyd_cache_diag.append("pyaudio_dir_not_found")
+    _pyd_cache_root = os.path.join(_safe_dir, 'pyd_cache')
+    for _walk_dir, _, _walk_files in os.walk(_meipass):
+        for _fname in _walk_files:
+            if not (_fname.endswith('.pyd') or _fname.endswith('.so')):
+                continue
+            _rel_dir = os.path.relpath(_walk_dir, _meipass)
+            _pyd_src = os.path.join(_walk_dir, _fname)
+            _safe_subdir = _pyd_cache_root if _rel_dir == '.' else os.path.join(_pyd_cache_root, _rel_dir)
+            _pyd_dst = os.path.join(_safe_subdir, _fname)
+
+            # モジュール名を算出: pyaudio/_portaudio.cp312-win_amd64.pyd → pyaudio._portaudio
+            _mod_base = _fname.split('.')[0]
+            _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
+
+            try:
+                os.makedirs(_safe_subdir, exist_ok=True)
+                with _builtin_open(_pyd_src, 'rb') as _fin:
+                    _pyd_data = _fin.read()
+                with _builtin_open(_pyd_dst, 'wb') as _fout:
+                    _fout.write(_pyd_data)
+                del _pyd_data
+                _pyd_safe_map[_fullname] = _pyd_dst
+            except (FileNotFoundError, PermissionError, OSError):
+                # コピー失敗 → 既存キャッシュがあればそれを使用
+                if os.path.isfile(_pyd_dst):
+                    _pyd_safe_map[_fullname] = _pyd_dst
+    _pyd_cache_diag.append(f"total_cached={len(_pyd_safe_map)}")
 
 # ── Phase 0 完了: 以降は safe_base を使って標準ライブラリ再試行可能 ──
 if not _has_stdlib:
@@ -349,23 +347,23 @@ if _meipass and _safe_base and _base_lib_relocated:
                 _final_cleaned += 1
     _base_lib_diag.append(f"final_cache_cleaned={_final_cleaned}")
 
-# ── Phase 0.5b: C拡張のsafe import finder ──────────────────
-# pyaudio._portaudioをruntime_cacheから読み込むmeta_pathフォールバック。
+# ── Phase 0.5b: 汎用C拡張safe import finder ──────────────────
+# _pyd_safe_mapに登録された全Cエクステンションをruntime_cacheから読み込む。
 # sys.meta_pathの先頭に挿入し、TOCTOU回避（常にsafe copyを使用）。
 _pyd_finder_installed = False
-if _portaudio_safe_path:
+if _pyd_safe_map:
     try:
         import importlib.util
 
         class _SafePydFinder:
-            """AV隔離時にruntime_cacheからC拡張をロードするfinder"""
+            """AV隔離時にruntime_cacheからC拡張をロードする汎用finder"""
 
             def find_spec(self, fullname, path, target=None):
-                if fullname == 'pyaudio._portaudio' and _portaudio_safe_path:
-                    if os.path.isfile(_portaudio_safe_path):
-                        return importlib.util.spec_from_file_location(
-                            fullname, _portaudio_safe_path
-                        )
+                _safe_path = _pyd_safe_map.get(fullname)
+                if _safe_path and os.path.isfile(_safe_path):
+                    return importlib.util.spec_from_file_location(
+                        fullname, _safe_path
+                    )
                 return None
 
         sys.meta_path.insert(0, _SafePydFinder())
@@ -447,7 +445,7 @@ try:
             for _d in _pyd_cache_diag:
                 _df.write(f"  {_d}\n")
             _df.write(f"pyd_finder_installed={_pyd_finder_installed}\n")
-            _df.write(f"portaudio_safe_path={_portaudio_safe_path}\n")
+            _df.write(f"pyd_safe_map_size={len(_pyd_safe_map)}\n")
             _df.write(f"cached_files_count={len(_cached_files)}\n")
             for _k in _cached_files:
                 _df.write(f"  cached: {_k}\n")
