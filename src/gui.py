@@ -4360,6 +4360,7 @@ window.onload = function() {{
                     self.master.after(0, lambda: messagebox.showinfo(
                         "アップデート確認",
                         f"最新バージョン (v{__version__}) を使用中です。",
+                        parent=self.master,
                     ))
                 return
 
@@ -4375,9 +4376,10 @@ window.onload = function() {{
         except Exception as e:
             logger.error(f"Update check error: {e}", exc_info=True)
             if is_manual:
-                self.master.after(0, lambda: messagebox.showerror(
+                self.master.after(0, lambda e=e: messagebox.showerror(
                     "エラー",
                     f"アップデート確認中にエラーが発生しました:\n{e}",
+                    parent=self.master,
                 ))
 
     def _show_update_dialog(self, release: ReleaseInfo) -> None:

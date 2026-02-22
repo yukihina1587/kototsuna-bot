@@ -25,7 +25,7 @@ GITHUB_API_URL = "https://api.github.com/repos/yukihina1587/kototsuna-bot/releas
 EXE_ASSET_NAME = "Kototsuna.exe"
 
 # タイムアウト設定
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 15
 DOWNLOAD_CHUNK_SIZE = 8192
 
 

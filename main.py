@@ -1,7 +1,6 @@
 import sys
 import io
 import os
-import tempfile
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
 
@@ -103,31 +102,7 @@ def configure_tcl_tk_paths() -> None:
         os.environ["TK_LIBRARY"] = tk_path
 
 
-def write_tcl_diagnostic(note: str) -> None:
-    """Tcl/Tk関連の診断情報をTempへ書き出す。"""
-    try:
-        _diag_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else tempfile.gettempdir()
-        report_path = os.path.join(_diag_dir, "kototsuna_tcl_diag.txt")
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(f"note={note}\n")
-            f.write(f"frozen={getattr(sys, 'frozen', False)}\n")
-            f.write(f"base_dir={BASE_DIR}\n")
-            f.write(f"TCL_LIBRARY={os.environ.get('TCL_LIBRARY', '')}\n")
-            f.write(f"TK_LIBRARY={os.environ.get('TK_LIBRARY', '')}\n")
-            f.write("found_init_tcl=\n")
-            for root, dirs, files in os.walk(BASE_DIR):
-                if "init.tcl" in files:
-                    f.write(f"  {os.path.join(root, 'init.tcl')}\n")
-            f.write("found_tk_tcl=\n")
-            for root, dirs, files in os.walk(BASE_DIR):
-                if "tk.tcl" in files:
-                    f.write(f"  {os.path.join(root, 'tk.tcl')}\n")
-    except Exception:
-        pass
-
-
 configure_tcl_tk_paths()
-write_tcl_diagnostic("startup")
 
 # PyInstaller GUIモード(console=False)ではstdout/stderrがNoneになる
 # customtkinter等がwrite()を試みるとAttributeErrorになるため、devnullにリダイレクト
@@ -245,7 +220,6 @@ if __name__ == '__main__':
     try:
         root = ctk.CTk()
     except Exception:
-        write_tcl_diagnostic("ctk_init_failed")
         raise
     root.withdraw()  # 最初は非表示
 

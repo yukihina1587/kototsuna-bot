@@ -69,7 +69,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc17 | アセットファイルをruntime_cacheにプリキャッシュ + main.py/gui.pyにruntime_cacheフォールバック追加 | 初回起動クラッシュ解決。「Failed to remove temporary directory」警告が残存 |
 | v1.3.1-rc18 | `runtime_tmpdir=None`で親子プロセスモード復帰 + exe隣の旧_MEI残骸クリーンアップ | runtime_tmpdir変更反映せず。「Failed to remove temporary directory」警告が依然表示 |
 | v1.3.1-rc19 | CIに`--clean`追加 + 古いエラーファイル自動削除 | 警告ダイアログ依然表示 |
-| v1.3.1-rc20 | `atexit` + `os._exit(0)`でbootloaderクリーンアップ自体をスキップ | テスト中 |
+| v1.3.1-rc20 | `atexit` + `os._exit(0)`でbootloaderクリーンアップ自体をスキップ | 効果なし。親子プロセスモデルでは`os._exit(0)`は子プロセスのみ終了。親bootloader（Cコード）がクリーンアップ実行しMessageBox表示 |
+| v1.3.1-rc21 | `os._exit(0)`削除 + 診断ファイル整理 + 更新チェッカー修正 | 「Failed to remove temporary directory」警告はPyInstaller既知制限として受容。Phase 2.5で_MEI残骸を次回起動時に清掃 |
 
 ## 3. 根本原因の詳細分析
 
@@ -484,6 +485,65 @@ main.py:
   TCL_LIBRARY → runtime_cache/_tcl_data（保護済み）
   init.tcl → runtime_cacheから読み込み → 成功
 ```
+
+### 5.16 rc17: アセットファイルのruntime_cacheプリキャッシュ
+
+（既存の表に記載済み。詳細は表を参照）
+
+### 5.17 rc18〜rc19: runtime_tmpdir変更とCIクリーンビルド
+
+（既存の表に記載済み。詳細は表を参照）
+
+### 5.18 rc20: atexit + os._exit(0) アプローチの失敗
+
+**修正内容:**
+- `atexit`ハンドラで`os._exit(0)`を呼び出し、bootloaderのクリーンアップ処理（_MEI*ディレクトリ削除）自体をスキップする試み
+
+**rc20の結果（失敗）:**
+- 診断で`runtime_tmpdir=None`が反映されたことを確認: meipathが`%TEMP%\_MEI159762`に移動
+- しかし「Failed to remove temporary directory」警告ダイアログは依然として表示
+- **根本原因判明**: PyInstaller onefileモードの**親子プロセスモデル**が原因
+  - `runtime_tmpdir=None`では、bootloaderが親プロセス（Cコード）と子プロセス（Python）に分かれる
+  - `os._exit(0)`はPythonコードから呼び出されるため、**子プロセスのみ**を終了させる
+  - 親プロセス（Cコードのbootloader）は子プロセス終了後に`_MEI*`ディレクトリの削除を試行
+  - AV（Windows Defender）がファイルハンドルを保持しているため削除失敗 → `MessageBox`で警告表示
+- **結論**: この警告はPythonコードからは抑制不可能（親bootloaderのC実装に起因）
+
+**教訓:**
+- PyInstaller onefileの親子プロセスモデルでは、Pythonレイヤーから親bootloaderの動作を制御できない
+- `os._exit(0)`はプロセス終了を早めるだけで、親のクリーンアップロジックには影響しない
+- bootloaderのMessageBox表示はC言語レベルの実装であり、Pythonフック/atexitでは迂回不可
+
+### 5.19 rc21: クリーンアップと更新チェッカー修正
+
+**修正内容:**
+
+1. **`os._exit(0)` atexitハンドラ削除**
+   - rc20で無効と判明したため削除
+   - 親子プロセスモデルで効果がないだけでなく、正常なPythonシャットダウンシーケンス（`atexit`ハンドラ群、ファイルクローズ等）を阻害するリスクがあった
+
+2. **rthook診断ファイルの出力先変更**
+   - `kototsuna_rthook_diag.txt`の出力先をexeディレクトリから`%LOCALAPPDATA%/Kototsuna/`に変更
+   - デスクトップの散乱を防止（exeをデスクトップに置くユーザーへの配慮）
+
+3. **Tcl/Tk診断ファイルの削除**
+   - `kototsuna_tcl_diag.txt`の出力を廃止
+   - Tcl/Tk関連の問題はrc15〜rc16で解決済みのため、診断ファイルは不要
+
+4. **更新チェッカーの修正**
+   - `messagebox`呼び出しに`parent=self.master`を追加: ダイアログがメインウィンドウの背後に隠れる問題を修正
+   - APIタイムアウトを30秒から15秒に短縮: ネットワーク不調時のUI応答性を改善
+   - エラーダイアログのlambda遅延バインディングを修正: クロージャが最後のループ変数を参照する問題を解消
+
+5. **「Failed to remove temporary directory」警告の受容**
+   - PyInstaller onefileモード + AV環境における既知の制限として受容
+   - `_MEI`残骸はPhase 2.5（次回起動時の古い`_MEI*`自動削除）によって清掃される
+   - ユーザーへの影響は警告ダイアログのみ（機能的な問題なし）
+
+**教訓:**
+- 全ての問題を技術的に解決する必要はない。影響が軽微な場合は既知の制限として受容し、文書化することも有効な戦略
+- 診断ファイルは問題解決後に速やかに整理すべき — 不要な診断出力はユーザー体験を損なう
+- GUIアプリケーションでの`messagebox`は常に`parent`を指定すべき（ウィンドウ管理のベストプラクティス）
 
 ## 6. 推奨方針
 
