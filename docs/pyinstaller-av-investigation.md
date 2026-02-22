@@ -71,6 +71,9 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc19 | CIに`--clean`追加 + 古いエラーファイル自動削除 | 警告ダイアログ依然表示 |
 | v1.3.1-rc20 | `atexit` + `os._exit(0)`でbootloaderクリーンアップ自体をスキップ | 効果なし。親子プロセスモデルでは`os._exit(0)`は子プロセスのみ終了。親bootloader（Cコード）がクリーンアップ実行しMessageBox表示 |
 | v1.3.1-rc21 | `os._exit(0)`削除 + 診断ファイル整理 + 更新チェッカー修正 | 「Failed to remove temporary directory」警告はPyInstaller既知制限として受容。Phase 2.5で_MEI残骸を次回起動時に清掃 |
+| v1.3.1-rc22 | _MEI事前削除 + `os._exit(0)`でbootloader警告防止 | 2段階クリーンアップ戦略: (1) atexitで_MEIファイルを事前削除 (2) os._exit(0)でDLLハンドル即時解放。しかし親bootloaderはMessageBox表示を抑制できず |
+| v1.3.1-rc23 | `console=True` + `hide_console='hide-early'` | **最終解決策**。bootloaderの出力をstderrに切り替え、MessageBox表示を回避。コンソールウィンドウはhide-earlyで即非表示 |
+| **v1.3.1** | rc23を正式リリース | 全問題解決。初回起動・2回目起動ともに安定動作 |
 
 ## 3. 根本原因の詳細分析
 
@@ -544,6 +547,60 @@ main.py:
 - 全ての問題を技術的に解決する必要はない。影響が軽微な場合は既知の制限として受容し、文書化することも有効な戦略
 - 診断ファイルは問題解決後に速やかに整理すべき — 不要な診断出力はユーザー体験を損なう
 - GUIアプリケーションでの`messagebox`は常に`parent`を指定すべき（ウィンドウ管理のベストプラクティス）
+
+### 5.20 rc22: _MEI事前削除 + os._exit(0) 2段階クリーンアップ
+
+**修正内容:**
+- **atexitハンドラ**: アプリケーション終了時にLIFO順序で最後に実行されるatexitハンドラを登録。`_MEI*`ディレクトリ内のファイルを可能な限り事前削除
+- **os._exit(0)**: atexit完了後にos._exit(0)で即時終了し、DLLハンドルを即座に解放
+
+**戦略:**
+```
+Phase 1 (atexit): _MEI内ファイルをshutil.rmtreeで事前削除
+  → ロックされていないファイルを先に削除
+Phase 2 (os._exit): プロセス即時終了でDLLハンドル解放
+  → 親bootloaderが残ファイルを削除しやすくする
+```
+
+**rc22の結果（効果不十分）:**
+- 一部ファイルは事前削除できたが、DLL（python312.dll等）はロック中で削除不可
+- 親bootloaderは依然としてクリーンアップ失敗時にMessageBoxを表示
+- **根本的制限**: `console=False`モードでは、bootloaderのstderr出力がMessageBoxにリダイレクトされる仕様のため、Pythonレベルでの抑制は不可能
+
+### 5.21 rc23: console=True + hide_console='hide-early'（最終解決策）
+
+**修正内容:**
+- `Kototsuna.spec`の`EXE()`設定を変更:
+  - `console=False` → `console=True`
+  - `hide_console='hide-early'` を追加
+
+**技術的背景:**
+- PyInstallerの`console=False`モード: bootloaderがstderrをMessageBoxにリダイレクト。クリーンアップ失敗時に「Failed to remove temporary directory」ダイアログが表示される
+- PyInstallerの`console=True` + `hide_console='hide-early'`モード:
+  - bootloaderの出力はstderrに流れる（MessageBoxではない）
+  - コンソールウィンドウはbootloader初期化直後に非表示化
+  - ユーザーにはコンソールウィンドウが一瞬も見えない（hide-earlyのおかげ）
+
+**結果:**
+- 「Failed to remove temporary directory」警告ダイアログは**完全に消滅**
+- bootloaderのエラーメッセージはstderrに出力されるが、コンソールが非表示のため視認不可
+- アプリケーションの見た目・動作に変化なし（GUIのみ表示）
+
+**教訓:**
+- PyInstallerの`console=False`はGUIアプリの標準設定だが、bootloaderのMessageBox動作を考慮すると`console=True` + `hide_console='hide-early'`の方が適切な場合がある
+- `hide-early`はPyInstaller 6.x以降で利用可能。bootloaderのC実装内でコンソールを即座に非表示にするため、ユーザー体験に影響しない
+- 「警告を抑制できないなら、表示先を変える」というアプローチが有効だった
+
+### 5.22 v1.3.1: 正式リリース
+
+rc23の修正により、v1.3.0からの全ての問題が解決:
+
+1. **初回起動クラッシュ**: runtime_cacheプリキャッシュ + ハイブリッドimport（rc4〜rc6）
+2. **Cエクステンション消失**: 汎用.pydプリキャッシュ + _SafePydFinder（rc9〜rc11）
+3. **DLL依存解決失敗**: 全DLLキャッシュ + DLL検索パス登録（rc12〜rc14）
+4. **Tcl/Tk init.tcl消失**: runtime_cache展開 + pyi_rth__tkinter.py無害化（rc15〜rc16）
+5. **アイコン・画像欠落**: アセットプリキャッシュ + フォールバック（rc17）
+6. **一時ディレクトリ警告**: console=True + hide_console='hide-early'（rc23）
 
 ## 6. 推奨方針
 

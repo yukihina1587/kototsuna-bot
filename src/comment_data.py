@@ -107,7 +107,8 @@ class CommentData:
 
 def create_twitch_comment(username: str, message: str, tags: Dict[str, Any],
                          display_name: Optional[str] = None,
-                         translated: Optional[str] = None) -> CommentData:
+                         translated: Optional[str] = None,
+                         extra_emotes: Optional[list] = None) -> CommentData:
     """
     Twitchのコメントデータを作成
 
@@ -173,10 +174,16 @@ def create_twitch_comment(username: str, message: str, tags: Dict[str, Any],
                         "start": start,
                         "end": end,
                         "name": name,
+                        "source": "twitch",
                     })
                 except (ValueError, IndexError):
                     continue
         # 位置でソート（後ろから置換するため降順）
+        emotes.sort(key=lambda e: e["start"])
+
+    # Merge third-party emotes (BTTV/FFZ/7TV)
+    if extra_emotes:
+        emotes.extend(extra_emotes)
         emotes.sort(key=lambda e: e["start"])
 
     return CommentData(

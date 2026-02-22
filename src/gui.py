@@ -2973,11 +2973,11 @@ class KototsunaApp:
             if start > last_end:
                 text = message[last_end:start]
                 parts.append(text.replace("<", "&lt;").replace(">", "&gt;"))
-            # エモートをimg タグに置換
-            emote_id = str(emote["id"]).replace('"', "")
+            # エモートをimg タグに置換（複数プロバイダー対応）
             emote_name = emote.get("name", "").replace('"', "&quot;")
+            src = self._emote_image_url(emote).replace('"', "&quot;")
             parts.append(
-                f'<img src="https://static-cdn.jtvnw.net/emoticons/v2/{emote_id}/static/light/1.0" '
+                f'<img src="{src}" '
                 f'alt="{emote_name}" title="{emote_name}" '
                 f'style="vertical-align: middle; height: 1.2em;">'
             )
@@ -3424,39 +3424,63 @@ window.onload = function() {{
     # エモート画像キャッシュ
     # =========================================
 
+    @staticmethod
+    def _emote_cache_key(emote: dict) -> str:
+        """Build a unique cache key from emote source and ID."""
+        source = emote.get("source", "twitch")
+        emote_id = str(emote.get("id", ""))
+        return f"{source}:{emote_id}"
+
+    @staticmethod
+    def _emote_image_url(emote: dict) -> str:
+        """Build the CDN image URL for an emote."""
+        if emote.get("url"):
+            return emote["url"]
+        source = emote.get("source", "twitch")
+        emote_id = str(emote.get("id", ""))
+        if source == "bttv":
+            return f"https://cdn.betterttv.net/emote/{emote_id}/2x"
+        elif source == "ffz":
+            return f"https://cdn.frankerfacez.com/emote/{emote_id}/2"
+        elif source == "7tv":
+            return f"https://cdn.7tv.app/emote/{emote_id}/2x.webp"
+        return f"https://static-cdn.jtvnw.net/emoticons/v2/{emote_id}/static/light/1.0"
+
     def _prefetch_emote_images(self, emotes: list) -> None:
         """エモート画像をバックグラウンドでプリフェッチする"""
         for emote in emotes:
-            emote_id = str(emote.get("id", ""))
-            if emote_id and emote_id not in self._emote_pil_cache:
-                self._download_emote_image(emote_id)
+            cache_key = self._emote_cache_key(emote)
+            if cache_key not in self._emote_pil_cache:
+                self._download_emote_image(emote)
 
-    def _download_emote_image(self, emote_id: str) -> None:
-        """Twitch CDNからエモート画像をダウンロードしPILキャッシュに保存する"""
+    def _download_emote_image(self, emote: dict) -> None:
+        """CDNからエモート画像をダウンロードしPILキャッシュに保存する（複数プロバイダー対応）"""
+        cache_key = self._emote_cache_key(emote)
         try:
-            url = f"https://static-cdn.jtvnw.net/emoticons/v2/{emote_id}/static/light/1.0"
+            url = self._emote_image_url(emote)
             resp = requests.get(url, timeout=5)
             resp.raise_for_status()
             img = Image.open(io.BytesIO(resp.content))
             img = img.resize((24, 24), Image.LANCZOS)
-            self._emote_pil_cache[emote_id] = img
+            self._emote_pil_cache[cache_key] = img
         except Exception as e:
-            logger.debug(f"Failed to download emote {emote_id}: {e}")
-            self._emote_pil_cache[emote_id] = None
+            logger.debug(f"Failed to download emote {cache_key}: {e}")
+            self._emote_pil_cache[cache_key] = None
 
-    def _get_emote_tk_image(self, emote_id: str) -> Optional[tk.PhotoImage]:
+    def _get_emote_tk_image(self, emote: dict) -> Optional[tk.PhotoImage]:
         """PILキャッシュからPhotoImageを取得する（メインスレッドで呼ぶこと）"""
-        if emote_id in self._emote_tk_cache:
-            return self._emote_tk_cache[emote_id]
-        pil_img = self._emote_pil_cache.get(emote_id)
+        cache_key = self._emote_cache_key(emote)
+        if cache_key in self._emote_tk_cache:
+            return self._emote_tk_cache[cache_key]
+        pil_img = self._emote_pil_cache.get(cache_key)
         if pil_img is None:
             return None
         try:
             photo = ImageTk.PhotoImage(pil_img)
-            self._emote_tk_cache[emote_id] = photo
+            self._emote_tk_cache[cache_key] = photo
             return photo
         except Exception:
-            self._emote_tk_cache[emote_id] = None
+            self._emote_tk_cache[cache_key] = None
             return None
 
     def _add_comment_tile(self, comment: CommentData):
@@ -3584,7 +3608,7 @@ window.onload = function() {{
                     text_before = comment.message[last_end:start]
                     if text_before:
                         msg_text.insert("end", text_before)
-                    img = self._get_emote_tk_image(str(emote.get("id", "")))
+                    img = self._get_emote_tk_image(emote)
                     if img:
                         msg_text.image_create("end", image=img)
                     else:

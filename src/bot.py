@@ -10,6 +10,7 @@ from src.comment_data import create_twitch_comment
 from src.config import load_config
 from src.commands import PermissionLevel, CooldownManager, check_permission, substitute_variables
 from src.commands_store import CommandStore
+from src.emote_provider import EmoteProvider
 
 
 class EventSubHandler:
@@ -233,6 +234,8 @@ class TranslateBot(commands.Bot):
         self._commands_enabled = config.get("commands_enabled", True)
         # EventSub handler（フォロー検知用）
         self._eventsub_handler = None
+        # Third-party emote provider (BTTV/FFZ/7TV)
+        self._emote_provider = EmoteProvider()
 
     async def event_ready(self):
         # GUI側から run_coroutine_threadsafe で送信できるよう、実際に動いているループを保持
@@ -257,6 +260,15 @@ class TranslateBot(commands.Bot):
                 logger.error(f"Failed to start EventSub handler: {e}", exc_info=True)
         else:
             logger.warning("client_id not provided, follow detection disabled")
+
+        # Load third-party emotes (BTTV/FFZ/7TV)
+        broadcaster_id = None
+        if self._eventsub_handler:
+            broadcaster_id = getattr(self._eventsub_handler, '_broadcaster_id', None)
+        if broadcaster_id:
+            self._emote_provider.set_channel_id(broadcaster_id)
+        await asyncio.to_thread(self._emote_provider.load_emotes)
+        logger.info(f"Third-party emotes loaded: {self._emote_provider.emote_count}")
 
     def _on_follow_event(self, follower_name: str):
         """フォローイベントのコールバック"""
@@ -334,35 +346,36 @@ class TranslateBot(commands.Bot):
             self._notify_special_event(bits_msg, event_type="bits")
 
         content = message.content
-        if message.tags:
-            # Emote ranges are stored in 'emotes' tag as 'id:start-end,start-end/id:start-end'
-            # We want to wrap these ranges in <k>...</k> tags for DeepL xml handling
-            
-            # Create a list of (start, end, type) tuples to handle replacements
-            replacements = []
-            
-            # Handle standard Twitch emotes
-            if message.tags.get('emotes'):
-                emote_str = message.tags['emotes']
-                # format: id:start-end,start-end/id:start-end
-                for emote_group in emote_str.split('/'):
-                    if ':' in emote_group:
-                        _, positions = emote_group.split(':')
-                        for pos in positions.split(','):
-                            start, end = map(int, pos.split('-'))
-                            replacements.append((start, end + 1, 'emote'))
+        replacements = []
 
-            # Sort replacements by start index in reverse order to avoid offsetting indices
+        # Standard Twitch emotes (from IRC tags)
+        if message.tags and message.tags.get('emotes'):
+            emote_str = message.tags['emotes']
+            for emote_group in emote_str.split('/'):
+                if ':' in emote_group:
+                    _, positions = emote_group.split(':')
+                    for pos in positions.split(','):
+                        start, end = map(int, pos.split('-'))
+                        replacements.append((start, end + 1, 'emote'))
+
+        # Third-party emotes (BTTV/FFZ/7TV) - text-based detection
+        twitch_positions = [(s, e) for s, e, _ in replacements]
+        tp_emotes = self._emote_provider.detect_emotes(
+            message.content, twitch_positions
+        )
+        for emote in tp_emotes:
+            replacements.append((emote['start'], emote['end'] + 1, 'emote'))
+
+        # Refresh emote cache in background if stale
+        self._emote_provider.refresh_if_stale()
+
+        # Wrap all emotes in <k> tags for DeepL XML handling
+        if replacements:
             replacements.sort(key=lambda x: x[0], reverse=True)
-            
-            # Apply replacements
             temp_content = list(content)
             for start, end, _ in replacements:
-                # Wrap emote in <k> tag
-                # Need to handle potential overlap or adjacent emotes if any (though twitch usually handles this)
                 original = "".join(temp_content[start:end])
                 temp_content[start:end] = list(f"<k>{original}</k>")
-            
             content = "".join(temp_content)
 
         # チャット発言者を参加者として記録（キーワード検知のみ）
@@ -409,7 +422,8 @@ class TranslateBot(commands.Bot):
                 message=message.content,
                 tags=message.tags,
                 display_name=message.author.display_name if hasattr(message.author, 'display_name') else message.author.name,
-                translated=None
+                translated=None,
+                extra_emotes=tp_emotes,
             )
             self.gui.on_comment_received(comment)
 
@@ -439,7 +453,8 @@ class TranslateBot(commands.Bot):
                 message=message.content,
                 tags=message.tags,
                 display_name=message.author.display_name if hasattr(message.author, 'display_name') else message.author.name,
-                translated=None
+                translated=None,
+                extra_emotes=tp_emotes,
             )
             self.gui.on_comment_received(comment)
             return
@@ -458,7 +473,8 @@ class TranslateBot(commands.Bot):
             message=message.content,
             tags=message.tags,
             display_name=message.author.display_name if hasattr(message.author, 'display_name') else message.author.name,
-            translated=translated if translated and translated != message.content else None
+            translated=translated if translated and translated != message.content else None,
+            extra_emotes=tp_emotes,
         )
 
         # GUIにコメントデータを渡す（全てのコメントをタイル表示）
