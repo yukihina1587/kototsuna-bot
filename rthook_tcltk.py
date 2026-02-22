@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc15"
+_RTHOOK_VERSION = "1.3.1-rc16"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -545,6 +545,36 @@ if _meipass and zipfile is not None:
         os.environ['TK_LIBRARY'] = _tk_dir_safe
     elif os.path.isdir(_tk_dir_mei):
         os.environ['TK_LIBRARY'] = _tk_dir_mei
+
+    # ── Phase 2.1: pyi_rth__tkinter.py 対策 ──────────────────
+    # PyInstallerの組み込みランタイムフック pyi_rth__tkinter.py は:
+    #   1. os.path.isdir(_MEI/_tcl_data) をチェック → なければFileNotFoundError
+    #   2. os.environ['TCL_LIBRARY'] = _MEI/_tcl_data に上書き
+    # AV隔離で_MEI/_tcl_dataが消失すると①でクラッシュし、
+    # 消失しなくても②で我々のruntime_cacheパスが上書きされる。
+    # 両方を防ぐ: isdir偽装 + 環境変数書き込みブロック
+    _orig_isdir = os.path.isdir
+    _fake_tcl_dirs = frozenset([
+        os.path.normpath(os.path.join(_meipass, '_tcl_data')),
+        os.path.normpath(os.path.join(_meipass, '_tk_data')),
+    ])
+
+    def _safe_isdir_for_tcl(path):
+        if os.path.normpath(path) in _fake_tcl_dirs:
+            return True
+        return _orig_isdir(path)
+
+    os.path.isdir = _safe_isdir_for_tcl
+
+    _orig_env_setitem = os.environ.__class__.__setitem__
+    _protected_env_keys = frozenset(['TCL_LIBRARY', 'TK_LIBRARY'])
+
+    def _protected_env_set(self, key, value):
+        if key in _protected_env_keys:
+            return
+        _orig_env_setitem(self, key, value)
+
+    os.environ.__class__.__setitem__ = _protected_env_set
 
 # ── Phase 2.5: 古い_MEIディレクトリの自動削除 ──────────────
 # PyInstaller onefileモードはクラッシュ時に_MEI*を削除しないため残骸が蓄積する。

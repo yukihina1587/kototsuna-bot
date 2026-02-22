@@ -64,7 +64,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc12 | `.dll`もプリキャッシュ + `os.add_dll_directory`パッチ + 古`_MEI`自動削除 | 237 DLLコピーに時間がかかり、その間にAVがtcl_tk_data.zip等を隔離 |
 | v1.3.1-rc13 | 重要データファイルをos.walkループ前に最優先コピー + Phase1/2にruntime_cacheフォールバック | Tcl/Tkデータ解決。`_tkinter.pyd`のDLL依存（tcl86t.dll等）がトップレベルDLL除外により解決不能 |
 | v1.3.1-rc14 | トップレベルDLL含む全DLLキャッシュ + pyd_cache_rootをDLL検索パス登録 + サイズベースのスキップ最適化 | `_tkinter` DLLロード解決。`init.tcl`がAV隔離で消失（TCL_LIBRARYが_MEI指向のため） |
-| v1.3.1-rc15 | tcl_tk_data.zipをruntime_cacheにも展開 + TCL_LIBRARY/TK_LIBRARYをruntime_cache優先に変更 | テスト中 |
+| v1.3.1-rc15 | tcl_tk_data.zipをruntime_cacheにも展開 + TCL_LIBRARY/TK_LIBRARYをruntime_cache優先に変更 | TCL_LIBRARYは正しく設定されたが、PyInstaller組み込み`pyi_rth__tkinter.py`がAV隔離された`_MEI/_tcl_data`チェックでクラッシュ |
+| v1.3.1-rc16 | `os.path.isdir`パッチ（_MEI Tcl/Tkディレクトリ偽装）+ `os.environ`書き込みブロック（TCL_LIBRARY/TK_LIBRARY保護） | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -436,6 +437,48 @@ AV隔離時:
 Phase 2: tcl_tk_data.zip → _MEI*（互換性）+ runtime_cache（安全コピー）
 TCL_LIBRARY → runtime_cache/_tcl_data（AV隔離耐性あり）
 init.tcl → runtime_cacheから読み込み → 成功
+```
+
+### 5.14 rc15の結果: pyi_rth__tkinter.pyクラッシュ
+
+**rc15の結果:**
+- `TCL_LIBRARY=runtime_cache/_tcl_data`（正しく設定されたが...）
+- `init_tcl_exists=True`（rthook完了時点では存在）
+- `pyi_rth__tkinter.py`（PyInstaller組み込みランタイムフック）が`_MEI/_tcl_data`の存在チェックでFileNotFoundError
+
+**原因:**
+- PyInstallerの組み込み`pyi_rth__tkinter.py`は我々のカスタムrthookの**後**に実行される
+- このフックは`os.path.isdir(_MEI/_tcl_data)`をチェックし、なければFileNotFoundErrorを発生
+- AV隔離で`_MEI/_tcl_data`が消失 → クラッシュ
+- さらに、仮にチェックを通過しても`os.environ['TCL_LIBRARY'] = _MEI_path`で我々のruntime_cacheパスを上書きする
+
+**教訓:**
+- PyInstallerの組み込みランタイムフックが我々のカスタムフックと競合する
+- `hooks/hook-_tkinter.py`（分析フック）のオーバーライドはランタイムフックに影響しない
+- ランタイムフックの実行順序: カスタム(`runtime_hooks`) → 組み込み(`rthooks.dat`)
+
+### 5.15 rc16: pyi_rth__tkinter.py無害化
+
+**修正内容:**
+- **Phase 2.1**: `pyi_rth__tkinter.py`の2つの問題を同時に解決
+  - `os.path.isdir`パッチ: `_MEI/_tcl_data`と`_MEI/_tk_data`に対し常にTrueを返す（AV隔離後もクラッシュしない）
+  - `os.environ.__setitem__`パッチ: TCL_LIBRARY/TK_LIBRARYへの書き込みをブロック（runtime_cacheパスの保護）
+
+**技術詳細:**
+- `os.path.isdir`パッチ: `_fake_tcl_dirs`(frozenset)にマッチするパスのみTrue返却、他は元関数に委譲
+- `os.environ.__class__.__setitem__`パッチ: `_protected_env_keys`にマッチするキーのみ書き込みブロック、他は元関数に委譲
+- 両パッチとも極めて限定的なスコープ（各2つのパス/キーのみ）
+
+**期待される動作:**
+```
+Phase 2: tcl_tk_data.zip → runtime_cache + _MEI に展開
+Phase 2.1: os.path.isdir + os.environ パッチ適用
+pyi_rth__tkinter.py:
+  os.path.isdir(_MEI/_tcl_data) → True（パッチ）
+  os.environ['TCL_LIBRARY'] = _MEI_path → ブロック（パッチ）
+main.py:
+  TCL_LIBRARY → runtime_cache/_tcl_data（保護済み）
+  init.tcl → runtime_cacheから読み込み → 成功
 ```
 
 ## 6. 推奨方針
