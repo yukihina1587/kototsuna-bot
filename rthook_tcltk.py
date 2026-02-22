@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc12"
+_RTHOOK_VERSION = "1.3.1-rc13"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -269,7 +269,31 @@ if _meipass:
 _pyd_cache_diag = []
 _pyd_safe_map = {}  # fullname → safe_path（Phase 0.5bのfinderが使用）
 _dll_cached = 0
+_data_cached = 0
 if _meipass and _safe_dir:
+    # ── 重要データファイルを最優先でコピー（os.walkループより前） ──
+    # os.walkによるバイナリコピーは時間がかかるため、その間にAVが
+    # tcl_tk_data.zipやテーマJSONを隔離する。先にこれらを退避する。
+    _critical_files = [
+        'tcl_tk_data.zip',
+        os.path.join('customtkinter', 'assets', 'themes', 'blue.json'),
+        os.path.join('customtkinter', 'assets', 'themes', 'green.json'),
+    ]
+    for _crit_rel in _critical_files:
+        _crit_src = os.path.join(_meipass, _crit_rel)
+        _crit_dst = os.path.join(_safe_dir, _crit_rel)
+        try:
+            os.makedirs(os.path.dirname(_crit_dst), exist_ok=True)
+            with _builtin_open(_crit_src, 'rb') as _fin:
+                _crit_data = _fin.read()
+            with _builtin_open(_crit_dst, 'wb') as _fout:
+                _fout.write(_crit_data)
+            del _crit_data
+            _data_cached += 1
+        except (FileNotFoundError, PermissionError, OSError):
+            pass
+    _pyd_cache_diag.append(f"data_cached={_data_cached}")
+
     _pyd_cache_root = os.path.join(_safe_dir, 'pyd_cache')
     for _walk_dir, _, _walk_files in os.walk(_meipass):
         _rel_dir = os.path.relpath(_walk_dir, _meipass)
@@ -420,12 +444,25 @@ if _meipass:
         os.path.join('customtkinter', 'assets', 'themes', 'green.json'),
     ]:
         _abs = os.path.join(_meipass, _rel)
+        _content = None
+        # _MEIから読み込み試行
         if os.path.isfile(_abs):
             try:
                 with _builtin_open(_abs, 'r', encoding='utf-8') as _f:
-                    _cached_files[os.path.normpath(_abs)] = _f.read()
+                    _content = _f.read()
             except Exception:
                 pass
+        # _MEI失敗時はruntime_cacheからフォールバック
+        if _content is None and _safe_dir:
+            _cache_abs = os.path.join(_safe_dir, _rel)
+            if os.path.isfile(_cache_abs):
+                try:
+                    with _builtin_open(_cache_abs, 'r', encoding='utf-8') as _f:
+                        _content = _f.read()
+                except Exception:
+                    pass
+        if _content is not None:
+            _cached_files[os.path.normpath(_abs)] = _content
 
     if _cached_files and _io is not None:
         def _safe_open(file, mode='r', *args, **kwargs):
@@ -442,6 +479,11 @@ if _meipass:
 # ── Phase 2: Tcl/Tk ZIP展開 ─────────────────────────────
 if _meipass and zipfile is not None:
     _zip_path = os.path.join(_meipass, 'tcl_tk_data.zip')
+    # AV隔離で_MEIのZIPが消失した場合、runtime_cacheのコピーを使用
+    if not os.path.isfile(_zip_path) and _safe_dir:
+        _zip_path_cache = os.path.join(_safe_dir, 'tcl_tk_data.zip')
+        if os.path.isfile(_zip_path_cache):
+            _zip_path = _zip_path_cache
     _tcl_dir = os.path.join(_meipass, '_tcl_data')
     _tk_dir = os.path.join(_meipass, '_tk_data')
 

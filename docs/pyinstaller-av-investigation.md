@@ -61,7 +61,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc9 | `.pyd`をruntime_cacheにプリキャッシュ + meta_path finderで迂回 | finderが`_portaudio.pyd`をハードコードしていたが実ファイル名は`_portaudio.cp312-win_amd64.pyd` |
 | v1.3.1-rc10 | finderをキャッシュ時に記録した実パスで参照するよう修正 | `pyaudio._portaudio`解決。次は`PIL._imaging`が同じ問題で発覚 |
 | v1.3.1-rc11 | 全`.pyd`を汎用的にruntime_cacheへプリキャッシュ + 汎用finder | `.pyd` import解決。`pygame`ディレクトリごとAV隔離で`os.add_dll_directory`失敗 |
-| v1.3.1-rc12 | `.dll`もプリキャッシュ + `os.add_dll_directory`パッチ + 古`_MEI`自動削除 | テスト中 |
+| v1.3.1-rc12 | `.dll`もプリキャッシュ + `os.add_dll_directory`パッチ + 古`_MEI`自動削除 | 237 DLLコピーに時間がかかり、その間にAVがtcl_tk_data.zip等を隔離 |
+| v1.3.1-rc13 | 重要データファイルをos.walkループ前に最優先コピー + Phase1/2にruntime_cacheフォールバック | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -339,6 +340,24 @@ AV隔離時:
 - AV隔離は`.pyd`ファイルだけでなく、パッケージディレクトリ全体に及ぶ場合がある
 - `os.add_dll_directory`もAV隔離の影響を受ける — ネイティブDLLのロードパス登録も防御が必要
 - 防御すべき層: (1) base_library.zip (2) .pyd import (3) DLLロードパス — 全層でruntime_cacheフォールバックが必要
+
+**rc12の結果:**
+- `pyd_cached=76`, `dll_cached=237`, `finder=installed`, `dll_dir_patched=YES` — 防御機構は全て成功
+- しかし237 DLLのコピーに時間がかかり、その間にAVが`tcl_tk_data.zip`とテーマJSONを隔離
+- `cached_files_count=0`（テーマJSON読み込み失敗）、`init_tcl_exists=False`（Tcl/Tk未展開）
+- PyInstallerの`pyi_rth__tkinter.py`が`_tcl_data`ディレクトリ不在で`FileNotFoundError`
+
+### 5.9 rc13: 重要データファイルの最優先コピー
+
+**修正内容:**
+- **Phase 0.5先頭**: `os.walk`ループの前に`tcl_tk_data.zip`、`blue.json`、`green.json`をruntime_cacheに最優先コピー
+- **Phase 1改善**: テーマJSON読み込みに`runtime_cache`フォールバック追加（_MEIから読めない場合はキャッシュから読む）
+- **Phase 2改善**: `tcl_tk_data.zip`が_MEIにない場合、`runtime_cache`のコピーから展開
+
+**教訓:**
+- バイナリコピーの所要時間がAV隔離の時間窓を広げる — コピー順序が重要
+- 重要ファイル（Tcl/Tkデータ、テーマJSON）は最優先でコピーすべき
+- Phase間の時間経過でAV隔離が進行するため、各Phaseがruntime_cacheフォールバックを持つ必要がある
 
 ## 6. 推奨方針
 
