@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc13"
+_RTHOOK_VERSION = "1.3.1-rc14"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -295,17 +295,33 @@ if _meipass and _safe_dir:
     _pyd_cache_diag.append(f"data_cached={_data_cached}")
 
     _pyd_cache_root = os.path.join(_safe_dir, 'pyd_cache')
+    _copy_skipped = 0
     for _walk_dir, _, _walk_files in os.walk(_meipass):
         _rel_dir = os.path.relpath(_walk_dir, _meipass)
         for _fname in _walk_files:
             _is_pyd = _fname.endswith('.pyd') or _fname.endswith('.so')
-            _is_dll = _fname.endswith('.dll') and _rel_dir != '.'  # DLLはサブディレクトリのみ
+            _is_dll = _fname.endswith('.dll')
             if not (_is_pyd or _is_dll):
                 continue
 
             _pyd_src = os.path.join(_walk_dir, _fname)
             _safe_subdir = _pyd_cache_root if _rel_dir == '.' else os.path.join(_pyd_cache_root, _rel_dir)
             _pyd_dst = os.path.join(_safe_subdir, _fname)
+
+            # サイズが同じなら再コピー不要（2回目以降の起動を高速化）
+            try:
+                _src_size = os.path.getsize(_pyd_src)
+                if os.path.isfile(_pyd_dst) and os.path.getsize(_pyd_dst) == _src_size:
+                    if _is_pyd:
+                        _mod_base = _fname.split('.')[0]
+                        _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
+                        _pyd_safe_map[_fullname] = _pyd_dst
+                    else:
+                        _dll_cached += 1
+                    _copy_skipped += 1
+                    continue
+            except OSError:
+                pass
 
             try:
                 os.makedirs(_safe_subdir, exist_ok=True)
@@ -315,7 +331,6 @@ if _meipass and _safe_dir:
                     _fout.write(_pyd_data)
                 del _pyd_data
                 if _is_pyd:
-                    # モジュール名を算出: pyaudio/_portaudio.cp312-win_amd64.pyd → pyaudio._portaudio
                     _mod_base = _fname.split('.')[0]
                     _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
                     _pyd_safe_map[_fullname] = _pyd_dst
@@ -326,8 +341,21 @@ if _meipass and _safe_dir:
                     _mod_base = _fname.split('.')[0]
                     _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
                     _pyd_safe_map[_fullname] = _pyd_dst
+                elif _is_dll and os.path.isfile(_pyd_dst):
+                    _dll_cached += 1
     _pyd_cache_diag.append(f"pyd_cached={len(_pyd_safe_map)}")
     _pyd_cache_diag.append(f"dll_cached={_dll_cached}")
+    _pyd_cache_diag.append(f"copy_skipped={_copy_skipped}")
+
+    # _pyd_cache_rootをDLL検索パスに追加（トップレベルDLLの解決用）
+    # _tkinter.pydがpyd_cache/から読まれる際、tcl86t.dll等の依存DLLも
+    # pyd_cache/にあるためここをDLL検索パスに追加する必要がある
+    if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
+        try:
+            os.add_dll_directory(_pyd_cache_root)
+            _pyd_cache_diag.append("pyd_cache_dll_dir=YES")
+        except OSError:
+            _pyd_cache_diag.append("pyd_cache_dll_dir=FAIL")
 
 # ── Phase 0 完了: 以降は safe_base を使って標準ライブラリ再試行可能 ──
 if not _has_stdlib:

@@ -62,7 +62,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc10 | finderをキャッシュ時に記録した実パスで参照するよう修正 | `pyaudio._portaudio`解決。次は`PIL._imaging`が同じ問題で発覚 |
 | v1.3.1-rc11 | 全`.pyd`を汎用的にruntime_cacheへプリキャッシュ + 汎用finder | `.pyd` import解決。`pygame`ディレクトリごとAV隔離で`os.add_dll_directory`失敗 |
 | v1.3.1-rc12 | `.dll`もプリキャッシュ + `os.add_dll_directory`パッチ + 古`_MEI`自動削除 | 237 DLLコピーに時間がかかり、その間にAVがtcl_tk_data.zip等を隔離 |
-| v1.3.1-rc13 | 重要データファイルをos.walkループ前に最優先コピー + Phase1/2にruntime_cacheフォールバック | テスト中 |
+| v1.3.1-rc13 | 重要データファイルをos.walkループ前に最優先コピー + Phase1/2にruntime_cacheフォールバック | Tcl/Tkデータ解決。`_tkinter.pyd`のDLL依存（tcl86t.dll等）がトップレベルDLL除外により解決不能 |
+| v1.3.1-rc14 | トップレベルDLL含む全DLLキャッシュ + pyd_cache_rootをDLL検索パス登録 + サイズベースのスキップ最適化 | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -358,6 +359,51 @@ AV隔離時:
 - バイナリコピーの所要時間がAV隔離の時間窓を広げる — コピー順序が重要
 - 重要ファイル（Tcl/Tkデータ、テーマJSON）は最優先でコピーすべき
 - Phase間の時間経過でAV隔離が進行するため、各Phaseがruntime_cacheフォールバックを持つ必要がある
+
+### 5.10 rc13の結果: _tkinter DLL依存の解決失敗
+
+**rc13の結果:**
+- `data_cached=3`（tcl_tk_data.zip, blue.json, green.json最優先コピー成功）
+- `pyd_cached=76`, `dll_cached=232`, `finder=installed`, `dll_dir_patched=YES`
+- `init_tcl_exists=True`, `TCL_LIBRARY`/`TK_LIBRARY`設定済み
+- しかし`ImportError: DLL load failed while importing _tkinter: 指定されたモジュールが見つかりません。`
+
+**原因:**
+- `_tkinter.pyd`はCエクステンションとして`pyd_cache/`にキャッシュされ、`_SafePydFinder`で正常にロードされた
+- しかし`_tkinter.pyd`が依存する`tcl86t.dll`、`tk86t.dll`等のDLLが`_MEI*`のトップレベルにある
+- Phase 0.5のos.walkループには`_rel_dir != '.'`制限があり、**トップレベルDLLはコピー対象外**だった
+- AV隔離で`_MEI*`のトップレベルDLLが消失 → `_tkinter.pyd`のDLLロードが失敗
+
+**教訓:**
+- `.pyd`のimport解決とDLL依存解決は別レイヤー。`.pyd`がキャッシュから読めてもDLL依存が解決できなければ失敗する
+- トップレベルDLLは「サイズが大きく隔離リスクが低い」という仮定は誤りだった
+- AV隔離は選択的ではなく、`_MEI*`ディレクトリ全体に及ぶ
+
+### 5.11 rc14: 全DLLキャッシュ + DLL検索パス登録
+
+**修正内容:**
+- **Phase 0.5のDLL制限撤廃**: `_rel_dir != '.'`条件を削除し、トップレベルDLL（`tcl86t.dll`, `tk86t.dll`, `python312.dll`等）もキャッシュ対象に
+- **pyd_cache_rootをDLL検索パスに登録**: `os.add_dll_directory(_pyd_cache_root)`で`pyd_cache/`をWindowsのDLL検索パスに追加。`_tkinter.pyd`の依存DLLが同ディレクトリから解決可能に
+- **サイズベースのスキップ最適化**: `os.path.getsize()`で既存キャッシュとサイズ比較。同一なら再コピーをスキップし、2回目以降の起動を大幅高速化
+- **診断追加**: `copy_skipped`カウンタと`pyd_cache_dll_dir`ステータスを診断出力に追加
+
+**技術詳細:**
+- トップレベルDLLは数十MB（python312.dll: ~6MB, tcl86t.dll: ~2MB等）のため初回起動のコピー時間が増加する
+- しかしサイズチェックにより2回目以降はほぼ全ファイルがスキップされるため、初回のみのコスト
+- `os.add_dll_directory(_pyd_cache_root)`はPhase 0.5cの`os.add_dll_directory`パッチ**前**に実行されるため、オリジナルAPIで登録
+
+**期待される動作:**
+```
+初回起動（AV隔離あり）:
+  Phase 0.5: 全pyd+全dll（トップレベル含む）→ pyd_cache/にコピー
+  pyd_cache_root → os.add_dll_directory()で登録
+  Phase 0.5b: _SafePydFinder → _tkinter.pydをpyd_cache/からロード
+  _tkinter.pyd → tcl86t.dll/tk86t.dllをpyd_cache/から解決 → 成功
+
+2回目以降:
+  Phase 0.5: サイズチェックで大部分スキップ（copy_skipped=300+）
+  以下同様 → 高速起動
+```
 
 ## 6. 推奨方針
 
