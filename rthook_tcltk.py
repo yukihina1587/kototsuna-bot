@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc14"
+_RTHOOK_VERSION = "1.3.1-rc15"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -505,6 +505,8 @@ if _meipass:
         builtins.open = _safe_open
 
 # ── Phase 2: Tcl/Tk ZIP展開 ─────────────────────────────
+# AV隔離対策: _MEI展開後もAVがファイルを隔離するため、runtime_cacheにも展開し
+# TCL_LIBRARY/TK_LIBRARYをruntime_cacheに向ける（TOCTOU回避）
 if _meipass and zipfile is not None:
     _zip_path = os.path.join(_meipass, 'tcl_tk_data.zip')
     # AV隔離で_MEIのZIPが消失した場合、runtime_cacheのコピーを使用
@@ -512,20 +514,37 @@ if _meipass and zipfile is not None:
         _zip_path_cache = os.path.join(_safe_dir, 'tcl_tk_data.zip')
         if os.path.isfile(_zip_path_cache):
             _zip_path = _zip_path_cache
-    _tcl_dir = os.path.join(_meipass, '_tcl_data')
-    _tk_dir = os.path.join(_meipass, '_tk_data')
 
     if os.path.isfile(_zip_path):
+        # _MEIにも展開（PyInstallerの他のrthookとの互換性）
         try:
             with zipfile.ZipFile(_zip_path, 'r') as zf:
                 zf.extractall(_meipass)
         except Exception:
             pass
+        # runtime_cacheにも展開（AV隔離に対する安全コピー）
+        if _safe_dir:
+            try:
+                with zipfile.ZipFile(_zip_path, 'r') as zf:
+                    zf.extractall(_safe_dir)
+            except Exception:
+                pass
 
-    if os.path.isdir(_tcl_dir):
-        os.environ['TCL_LIBRARY'] = _tcl_dir
-    if os.path.isdir(_tk_dir):
-        os.environ['TK_LIBRARY'] = _tk_dir
+    # TCL_LIBRARY/TK_LIBRARYの設定:
+    # runtime_cacheの展開先を優先（AV隔離耐性あり）、なければ_MEIを使用
+    _tcl_dir_safe = os.path.join(_safe_dir, '_tcl_data') if _safe_dir else None
+    _tk_dir_safe = os.path.join(_safe_dir, '_tk_data') if _safe_dir else None
+    _tcl_dir_mei = os.path.join(_meipass, '_tcl_data')
+    _tk_dir_mei = os.path.join(_meipass, '_tk_data')
+
+    if _tcl_dir_safe and os.path.isdir(_tcl_dir_safe):
+        os.environ['TCL_LIBRARY'] = _tcl_dir_safe
+    elif os.path.isdir(_tcl_dir_mei):
+        os.environ['TCL_LIBRARY'] = _tcl_dir_mei
+    if _tk_dir_safe and os.path.isdir(_tk_dir_safe):
+        os.environ['TK_LIBRARY'] = _tk_dir_safe
+    elif os.path.isdir(_tk_dir_mei):
+        os.environ['TK_LIBRARY'] = _tk_dir_mei
 
 # ── Phase 2.5: 古い_MEIディレクトリの自動削除 ──────────────
 # PyInstaller onefileモードはクラッシュ時に_MEI*を削除しないため残骸が蓄積する。

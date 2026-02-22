@@ -63,7 +63,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc11 | 全`.pyd`を汎用的にruntime_cacheへプリキャッシュ + 汎用finder | `.pyd` import解決。`pygame`ディレクトリごとAV隔離で`os.add_dll_directory`失敗 |
 | v1.3.1-rc12 | `.dll`もプリキャッシュ + `os.add_dll_directory`パッチ + 古`_MEI`自動削除 | 237 DLLコピーに時間がかかり、その間にAVがtcl_tk_data.zip等を隔離 |
 | v1.3.1-rc13 | 重要データファイルをos.walkループ前に最優先コピー + Phase1/2にruntime_cacheフォールバック | Tcl/Tkデータ解決。`_tkinter.pyd`のDLL依存（tcl86t.dll等）がトップレベルDLL除外により解決不能 |
-| v1.3.1-rc14 | トップレベルDLL含む全DLLキャッシュ + pyd_cache_rootをDLL検索パス登録 + サイズベースのスキップ最適化 | テスト中 |
+| v1.3.1-rc14 | トップレベルDLL含む全DLLキャッシュ + pyd_cache_rootをDLL検索パス登録 + サイズベースのスキップ最適化 | `_tkinter` DLLロード解決。`init.tcl`がAV隔離で消失（TCL_LIBRARYが_MEI指向のため） |
+| v1.3.1-rc15 | tcl_tk_data.zipをruntime_cacheにも展開 + TCL_LIBRARY/TK_LIBRARYをruntime_cache優先に変更 | テスト中 |
 
 ## 3. 根本原因の詳細分析
 
@@ -403,6 +404,38 @@ AV隔離時:
 2回目以降:
   Phase 0.5: サイズチェックで大部分スキップ（copy_skipped=300+）
   以下同様 → 高速起動
+```
+
+### 5.12 rc14の結果: init.tcl AV隔離
+
+**rc14の結果:**
+- `pyd_cache_dll_dir=YES` → `_tkinter`のDLLロード問題は**解決**
+- `dll_cached=307`（トップレベルDLL含む全DLL）、`copy_skipped=313`（2回目キャッシュ活用）
+- `init_tcl_exists=True`（rthook完了時点ではinit.tclが存在）
+- しかしアプリ起動時（line 241）に`_tkinter.TclError: Can't find a usable init.tcl`
+
+**原因:**
+- Phase 2が`tcl_tk_data.zip`を`_MEI*`に展開し、`TCL_LIBRARY`も`_MEI*/_tcl_data`を指していた
+- rthook完了後〜アプリのCTk初期化までの間にAVが`_MEI*/_tcl_data/init.tcl`を隔離
+- `tcl_diag`でも`found_init_tcl=`（空）を確認
+- rthook時点の`init_tcl_exists=True`はrthook完了時の一瞬のスナップショットに過ぎない
+
+**教訓:**
+- `_MEI*`に展開したファイルはいつでもAVに隔離される可能性がある
+- `TCL_LIBRARY`のような環境変数パスも`runtime_cache`を指すべき
+- 全てのPhaseで一貫して「`_MEI*`は信頼できない」前提で設計すべき
+
+### 5.13 rc15: Tcl/Tkデータのruntime_cache展開
+
+**修正内容:**
+- **Phase 2拡張**: `tcl_tk_data.zip`を`_MEI*`に加えて`runtime_cache`にも展開
+- **TCL_LIBRARY/TK_LIBRARY変更**: `runtime_cache/_tcl_data`/`runtime_cache/_tk_data`を優先参照。存在しない場合のみ`_MEI*`にフォールバック
+
+**期待される動作:**
+```
+Phase 2: tcl_tk_data.zip → _MEI*（互換性）+ runtime_cache（安全コピー）
+TCL_LIBRARY → runtime_cache/_tcl_data（AV隔離耐性あり）
+init.tcl → runtime_cacheから読み込み → 成功
 ```
 
 ## 6. 推奨方針
