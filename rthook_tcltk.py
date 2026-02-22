@@ -12,47 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc22"
-
-# ── bootloaderクリーンアップ補助 ──────────────────────────
-# PyInstaller onefile (parent-child) のbootloaderは終了時に_MEIを削除する。
-# DLLロック等で失敗すると console=False の場合 MessageBox が表示される。
-# 対策: 子プロセスのatexit で _MEI 内を事前削除し、os._exit(0)で
-# DLLハンドルを即座に解放。親プロセスは残りの少数ファイルだけ削除すればよい。
-# atexit LIFO: 最初に登録→最後に実行（他の全ハンドラ完了後）
-import atexit
-
-def _pre_cleanup_and_exit():
-    meipass = getattr(sys, '_MEIPASS', None)
-    if not meipass or sys.platform != 'win32':
-        return
-    # Step 1: _MEI内のファイル/ディレクトリを可能な限り削除
-    try:
-        for _root, _dirs, _files in os.walk(meipass, topdown=False):
-            for _f in _files:
-                try:
-                    os.unlink(os.path.join(_root, _f))
-                except OSError:
-                    pass
-            for _d in _dirs:
-                try:
-                    os.rmdir(os.path.join(_root, _d))
-                except OSError:
-                    pass
-    except Exception:
-        pass
-    # Step 2: os._exit(0)で即座にプロセス終了しDLLハンドルを解放
-    try:
-        if sys.stdout:
-            sys.stdout.flush()
-        if sys.stderr:
-            sys.stderr.flush()
-    except Exception:
-        pass
-    os._exit(0)
-
-if _meipass:
-    atexit.register(_pre_cleanup_and_exit)
+_RTHOOK_VERSION = "1.3.1-rc23"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
