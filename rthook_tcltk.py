@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc17"
+_RTHOOK_VERSION = "1.3.1-rc18"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -580,23 +580,29 @@ if _meipass and zipfile is not None:
 
 # ── Phase 2.5: 古い_MEIディレクトリの自動削除 ──────────────
 # PyInstaller onefileモードはクラッシュ時に_MEI*を削除しないため残骸が蓄積する。
-# 現在の_MEI以外の古い_MEI*ディレクトリをexe隣から削除。
+# 2箇所をチェック:
+#   1. _MEI親ディレクトリ（%TEMP%）: 現在の_MEI以外の古い残骸
+#   2. exe隣（Desktop等）: 旧バージョン(runtime_tmpdir='.')時代の残骸
 _mei_cleaned = 0
 if _meipass and shutil is not None:
-    _mei_parent = os.path.dirname(_meipass)
     _mei_current = os.path.basename(_meipass)
-    try:
-        for _entry in os.listdir(_mei_parent):
-            if _entry.startswith('_MEI') and _entry != _mei_current:
-                _old_mei = os.path.join(_mei_parent, _entry)
-                if os.path.isdir(_old_mei):
-                    try:
-                        shutil.rmtree(_old_mei)
-                        _mei_cleaned += 1
-                    except OSError:
-                        pass
-    except OSError:
-        pass
+    _cleanup_dirs = set()
+    _cleanup_dirs.add(os.path.dirname(_meipass))
+    if hasattr(sys, 'executable') and sys.executable:
+        _cleanup_dirs.add(os.path.dirname(sys.executable))
+    for _cleanup_dir in _cleanup_dirs:
+        try:
+            for _entry in os.listdir(_cleanup_dir):
+                if _entry.startswith('_MEI') and _entry != _mei_current:
+                    _old_mei = os.path.join(_cleanup_dir, _entry)
+                    if os.path.isdir(_old_mei):
+                        try:
+                            shutil.rmtree(_old_mei)
+                            _mei_cleaned += 1
+                        except OSError:
+                            pass
+        except OSError:
+            pass
 
 # ── runtime_cacheパスをアプリに公開 ──────────────────────
 # main.py/gui.pyがAV隔離時にruntime_cacheからアセットを読めるようにする
