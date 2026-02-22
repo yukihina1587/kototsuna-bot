@@ -65,7 +65,8 @@ Kototsuna（PyInstaller onefile, Python 3.12, Windows）が以下の2つの問�
 | v1.3.1-rc13 | 重要データファイルをos.walkループ前に最優先コピー + Phase1/2にruntime_cacheフォールバック | Tcl/Tkデータ解決。`_tkinter.pyd`のDLL依存（tcl86t.dll等）がトップレベルDLL除外により解決不能 |
 | v1.3.1-rc14 | トップレベルDLL含む全DLLキャッシュ + pyd_cache_rootをDLL検索パス登録 + サイズベースのスキップ最適化 | `_tkinter` DLLロード解決。`init.tcl`がAV隔離で消失（TCL_LIBRARYが_MEI指向のため） |
 | v1.3.1-rc15 | tcl_tk_data.zipをruntime_cacheにも展開 + TCL_LIBRARY/TK_LIBRARYをruntime_cache優先に変更 | TCL_LIBRARYは正しく設定されたが、PyInstaller組み込み`pyi_rth__tkinter.py`がAV隔離された`_MEI/_tcl_data`チェックでクラッシュ |
-| v1.3.1-rc16 | `os.path.isdir`パッチ（_MEI Tcl/Tkディレクトリ偽装）+ `os.environ`書き込みブロック（TCL_LIBRARY/TK_LIBRARY保護） | テスト中 |
+| v1.3.1-rc16 | `os.path.isdir`パッチ（_MEI Tcl/Tkディレクトリ偽装）+ `os.environ`書き込みブロック（TCL_LIBRARY/TK_LIBRARY保護） | 起動成功。アイコン・画像がAV隔離で表示されない |
+| v1.3.1-rc17 | アセットファイルをruntime_cacheにプリキャッシュ + main.py/gui.pyにruntime_cacheフォールバック追加 | テスト中 |
 
 ## 3. 根本原因の詳細分析
 

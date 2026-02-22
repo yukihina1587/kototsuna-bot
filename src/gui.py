@@ -2757,6 +2757,11 @@ class KototsunaApp:
             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         icon_path = os.path.join(base_path, "assets", "icon.png")
+        # AV隔離で_MEIのアイコンが消失した場合、runtime_cacheからフォールバック
+        if not os.path.exists(icon_path):
+            _rc = os.environ.get('KOTOTSUNA_RUNTIME_CACHE', '')
+            if _rc:
+                icon_path = os.path.join(_rc, "assets", "icon.png")
         return icon_path
 
     def _setup_window_icon(self):

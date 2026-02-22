@@ -181,6 +181,11 @@ def create_splash_screen():
     try:
         from PIL import Image, ImageTk
         icon_path = os.path.join(BASE_DIR, "assets", "icon.png")
+        # AV隔離で_MEIのアイコンが消失した場合、runtime_cacheからフォールバック
+        if not os.path.exists(icon_path):
+            _rc = os.environ.get('KOTOTSUNA_RUNTIME_CACHE', '')
+            if _rc:
+                icon_path = os.path.join(_rc, "assets", "icon.png")
         if os.path.exists(icon_path):
             # PILで画像を開いてリサイズ
             pil_image = Image.open(icon_path)

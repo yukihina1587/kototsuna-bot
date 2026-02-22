@@ -12,7 +12,7 @@ import zipimport
 
 _meipass = getattr(sys, '_MEIPASS', None)
 _builtin_open = builtins.open
-_RTHOOK_VERSION = "1.3.1-rc16"
+_RTHOOK_VERSION = "1.3.1-rc17"
 
 # ── Hybrid import strategy (Approach B) ──────────────────
 # 通常時はここで標準ライブラリを読み込み、v1.3.0相当の初期化順序を維持する。
@@ -278,6 +278,8 @@ if _meipass and _safe_dir:
         'tcl_tk_data.zip',
         os.path.join('customtkinter', 'assets', 'themes', 'blue.json'),
         os.path.join('customtkinter', 'assets', 'themes', 'green.json'),
+        os.path.join('assets', 'icon.png'),
+        os.path.join('assets', 'icon_fullsize.ico'),
     ]
     for _crit_rel in _critical_files:
         _crit_src = os.path.join(_meipass, _crit_rel)
@@ -595,6 +597,11 @@ if _meipass and shutil is not None:
                         pass
     except OSError:
         pass
+
+# ── runtime_cacheパスをアプリに公開 ──────────────────────
+# main.py/gui.pyがAV隔離時にruntime_cacheからアセットを読めるようにする
+if _meipass and _safe_dir:
+    os.environ['KOTOTSUNA_RUNTIME_CACHE'] = _safe_dir
 
 # ── Phase 3: 診断出力 ───────────────────────────────────
 _diag_path = os.path.join(_err_dir, 'kototsuna_rthook_diag.txt')
