@@ -4,16 +4,6 @@ import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
 
-# コンソールウィンドウを即座に非表示（console=True + hide-early のバックアップ）
-if sys.platform == "win32" and getattr(sys, 'frozen', False):
-    try:
-        import ctypes
-        _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if _hwnd:
-            ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
-    except Exception:
-        pass
-
 # PyInstaller GUIモードでのクラッシュログ記録（console=Falseではトレースバックが見えないため）
 # rthookで設置済みのraw excepthookを上書きし、可能ならtraceback moduleで詳細出力する。
 # 失敗時はraw方式（osモジュールのみ）にフォールバック。
@@ -64,6 +54,17 @@ if getattr(sys, 'frozen', False):
         except Exception:
             pass
     sys.excepthook = _kototsuna_excepthook
+
+# コンソールウィンドウを非表示（console=True + hide-early のバックアップ）
+# excepthook設定後に配置: クラッシュ時にkototsuna_error.txtが生成されるようにする
+if sys.platform == "win32" and getattr(sys, 'frozen', False):
+    try:
+        import ctypes
+        _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if _hwnd:
+            ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
 
 # PyInstallerでの相対パス解決用にsrcをパスへ追加
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(__file__)))
