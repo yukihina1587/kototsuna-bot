@@ -3673,9 +3673,17 @@ window.onload = function() {{
             comment: CommentDataオブジェクト
         """
         def _update_ui():
-            # 拡張フォーマットでログに表示
+            # 拡張フォーマットでログに表示（タイムスタンプはlog_messageが付与）
             badge_str = f"{comment.badge_text} " if comment.badge_text else ""
-            msg = f"[{comment.formatted_timestamp}] [{comment.platform_name}] {badge_str}{comment.display_username}: {comment.message}"
+            # テキストログ用: エモートを :name: 形式で表示
+            display_msg = comment.message
+            if comment.emotes:
+                for emote in sorted(comment.emotes, key=lambda e: e["start"], reverse=True):
+                    start = emote.get("start", 0)
+                    end = emote.get("end", 0) + 1
+                    name = emote.get("name", display_msg[start:end])
+                    display_msg = display_msg[:start] + f":{name}:" + display_msg[end:]
+            msg = f"[{comment.platform_name}] {badge_str}{comment.display_username}: {display_msg}"
             if comment.translated:
                 msg += f"\n    ➡ {comment.translated}"
 
