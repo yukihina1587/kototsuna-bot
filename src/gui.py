@@ -3328,9 +3328,12 @@ window.onload = function() {{
             self.chat_html_window.after(1200, refresh)
             self.log_message("📄 チャットHTMLビューを開きました (tkinterweb)")
 
-        except ImportError:
-            # tkinterwebがない場合、シンプルなTextウィジェットで表示
-            logger.info("tkinterweb not available, using simple text display")
+        except Exception:
+            # tkinterwebが利用不可の場合、シンプルなTextウィジェットで表示
+            logger.info("tkinterweb not available or failed, using simple text display")
+            # 失敗したウィジェットの残骸をクリーンアップ
+            for child in self.chat_html_window.winfo_children():
+                child.destroy()
 
             # スクロール可能なテキストウィジェット
             scrollbar = tk.Scrollbar(self.chat_html_window)
