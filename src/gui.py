@@ -2710,7 +2710,8 @@ class KototsunaApp:
                 "name": comment_data.display_username if comment_data else "System",
                 "message": comment_data.message if comment_data else msg,
                 "translated": getattr(comment_data, "translated", None),
-                "time": timestamp
+                "time": timestamp,
+                "emotes": comment_data.emotes if comment_data and comment_data.emotes else [],
             }
             self.chat_history.append(entry)
             if self.chat_html_output.get():
@@ -2735,16 +2736,6 @@ class KototsunaApp:
             )
         except Exception as e:
             logger.debug(f"Failed to apply log style: {e}")
-
-    def _append_chat_history(self, comment: CommentData):
-        entry = {
-            "name": comment.display_username,
-            "message": comment.message,
-            "translated": comment.translated,
-            "time": comment.formatted_timestamp,
-            "emotes": comment.emotes if comment.emotes else [],
-        }
-        self.chat_history.append(entry)
 
     def _get_icon_path(self) -> str:
         """アイコンファイルのパスを取得（PyInstallerビルド対応）"""

@@ -4,6 +4,16 @@ import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ['QT_LOGGING_RULES'] = '*.debug=false;qt.qpa.*=false'  # Qt DPI警告を抑制
 
+# コンソールウィンドウを即座に非表示（console=True + hide-early のバックアップ）
+if sys.platform == "win32" and getattr(sys, 'frozen', False):
+    try:
+        import ctypes
+        _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if _hwnd:
+            ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
 # PyInstaller GUIモードでのクラッシュログ記録（console=Falseではトレースバックが見えないため）
 # rthookで設置済みのraw excepthookを上書きし、可能ならtraceback moduleで詳細出力する。
 # 失敗時はraw方式（osモジュールのみ）にフォールバック。
@@ -242,6 +252,6 @@ if __name__ == '__main__':
             splash.destroy()
             root.destroy()
 
-    # 少し遅延してメインアプリを初期化（スプラッシュが表示されるように）
-    root.after(500, init_app)
+    # スプラッシュ描画後にメインアプリを初期化
+    root.after(100, init_app)
     root.mainloop()
