@@ -223,9 +223,7 @@ class KototsunaApp:
         self.chat_html_path = tk.StringVar(value=self._default_chat_html_path(self.config.get("chat_html_path", "")))
         self.chat_html_newest_first = tk.BooleanVar(value=self.config.get("chat_html_newest_first", False))
         # HTML表示ウィンドウの管理
-        self.chat_html_window = None  # Tkinterウィンドウ（フォールバック用）
-        self.qt_html_window = None  # PyQt6ウィンドウ（Chromiumベース）
-        self.qt_app = None  # PyQt6アプリケーションインスタンス
+        self.chat_html_window = None  # Tkinterプレビューウィンドウ
         # アップデート設定
         self.auto_update_check = tk.BooleanVar(value=self.config.get("auto_update_check", True))
         self.include_prerelease = tk.BooleanVar(value=self.config.get("include_prerelease", False))
@@ -3080,23 +3078,6 @@ window.onload = function() {{
 </script>
 </head><body>{body}</body></html>"""
 
-    def _on_qt_window_closed(self):
-        """PyQt6ウィンドウが×で閉じられた時の処理"""
-        # ウィンドウを破棄
-        if self.qt_html_window:
-            try:
-                self.qt_html_window.close()
-            except:
-                pass
-            self.qt_html_window = None
-
-        # トグルスイッチをOFFにする
-        if self.chat_html_output.get():
-            self.chat_html_output.set(False)
-            self._auto_save_settings()
-
-        self.log_message("📄 チャットHTMLビューを閉じました")
-
     def _on_tkinter_window_closed(self):
         """Tkinterウィンドウが×で閉じられた時の処理"""
         # ウィンドウジオメトリを保存
@@ -3125,14 +3106,6 @@ window.onload = function() {{
     def _on_chat_html_window_close(self):
         """チャットHTMLウィンドウが閉じられた時の処理（プログラムから呼ばれる）"""
         self._save_html_window_geometry()
-        # PyQt6ウィンドウを破棄
-        if self.qt_html_window:
-            try:
-                self.qt_html_window.close()
-            except:
-                pass
-            self.qt_html_window = None
-
         # Tkinterウィンドウを破棄
         if hasattr(self, 'chat_html_window') and self.chat_html_window:
             try:
@@ -3171,126 +3144,15 @@ window.onload = function() {{
             return
 
         # 既存のウィンドウがあれば閉じる
-        if self.qt_html_window is not None:
-            try:
-                self.qt_html_window.close()
-                self.qt_html_window = None
-            except:
-                pass
-
         if hasattr(self, 'chat_html_window') and self.chat_html_window and self.chat_html_window.winfo_exists():
             self.chat_html_window.destroy()
             self.chat_html_window = None
 
-        # PyQt6ウィンドウで開く（完全なChromiumブラウザエンジン）
-        try:
-            self._open_chat_html_window_pyqt(path)
-        except ImportError:
-            logger.info("PyQt6 not available, falling back to tkinterweb")
-            self._open_chat_html_window_tkinter(path)
-        except Exception as e:
-            logger.error(f"Failed to open with PyQt6: {e}", exc_info=True)
-            self._open_chat_html_window_tkinter(path)
-
-    def _open_chat_html_window_pyqt(self, path):
-        """PyQt6のQWebEngineViewを使用してHTMLを表示（完全なChromiumブラウザエンジン）"""
-        # ファイルの存在を再確認
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"HTML file not found: {path}")
-
-        from PyQt6.QtWidgets import QApplication, QMainWindow
-        from PyQt6.QtWebEngineWidgets import QWebEngineView
-        from PyQt6.QtCore import QUrl, QTimer
-        from PyQt6.QtGui import QIcon
-        import sys
-
-        # QApplicationインスタンスを取得または作成
-        if not QApplication.instance():
-            self.qt_app = QApplication(sys.argv)
-        else:
-            self.qt_app = QApplication.instance()
-
-        # HTMLビューウィンドウクラス
-        class HtmlViewerWindow(QMainWindow):
-            def __init__(self, html_path, parent_gui):
-                super().__init__()
-                self.html_path = html_path
-                self.parent_gui = parent_gui
-                self.setWindowTitle("チャット - 配信用")
-                # ジオメトリはshow()後に適用（コンストラクタ内だとQtにリセットされる）
-                self._saved_geom = parent_gui.config.get("chat_html_window_geometry", "350x900+50+50")
-                self.resize(350, 900)  # 初期サイズ（show後に上書き）
-
-                # 通常のウィンドウとして表示（最前面固定なし）
-
-                # WebEngineViewを作成
-                self.browser = QWebEngineView()
-                self.setCentralWidget(self.browser)
-
-                # HTMLを読み込む（初回のみ、以降はJavaScriptで自動更新）
-                abs_path = os.path.abspath(self.html_path)
-                file_url = QUrl.fromLocalFile(abs_path)
-
-                # デバッグ用：URLをログ出力
-                logger.debug(f"Loading HTML from: {abs_path}")
-                logger.debug(f"File URL: {file_url.toString()}")
-
-                self.browser.setUrl(file_url)
-
-            def apply_saved_geometry(self):
-                """保存済みジオメトリをshow()後に適用する"""
-                import re as _re
-                try:
-                    m = _re.match(r'(\d+)x(\d+)[+\-](-?\d+)[+\-](-?\d+)', self._saved_geom)
-                    if m:
-                        w, h, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-                        self.resize(w, h)
-                        self.move(x, y)
-                except Exception:
-                    pass
-
-            def closeEvent(self, event):
-                """ウィンドウが閉じられたときの処理"""
-                # ウィンドウジオメトリを保存
-                if self.parent_gui:
-                    geom = self.geometry()
-                    geom_str = f"{geom.width()}x{geom.height()}+{geom.x()}+{geom.y()}"
-                    self.parent_gui.config["chat_html_window_geometry"] = geom_str
-                    save_config(self.parent_gui.config)
-                # 親GUIのトグルスイッチをOFFにする
-                if self.parent_gui and self.parent_gui.chat_html_output.get():
-                    self.parent_gui.master.after(0, self.parent_gui._on_qt_window_closed)
-                event.accept()
-
-        # Qt WindowFlagsをインポート
-        from PyQt6.QtCore import Qt
-
-        # ウィンドウを作成
-        self.qt_html_window = HtmlViewerWindow(path, self)
-        self.qt_html_window.show()
-        self.qt_html_window.apply_saved_geometry()
-
-        # Qt のイベントループを処理（安全なラッパー）
-        def process_qt_events():
-            """Qtのイベントを定期的に処理"""
-            try:
-                if self.qt_app and self.qt_html_window and self.qt_html_window.isVisible():
-                    self.qt_app.processEvents()
-                    # 100msごとに再度呼び出す
-                    self.master.after(100, process_qt_events)
-            except RuntimeError:
-                # Qt object has been deleted
-                logger.debug("Qt window closed, stopping event processing")
-            except Exception as e:
-                logger.warning(f"Qt event processing error: {e}")
-
-        # イベント処理を開始
-        self.master.after(100, process_qt_events)
-
-        self.log_message(f"📄 チャットHTMLビューを開きました (Chromiumエンジン) - {path}")
+        # 簡易テキストプレビューウィンドウで開く
+        self._open_chat_html_window_tkinter(path)
 
     def _open_chat_html_window_tkinter(self, path):
-        """Tkinterベースのフォールバック表示（tkinterweb or シンプルテキスト）"""
+        """簡易テキストプレビューウィンドウで表示"""
         # 新しいウィンドウを作成
         self.chat_html_window = tk.Toplevel(self.master)
         self.chat_html_window.title("チャット - 配信用")
@@ -3298,102 +3160,63 @@ window.onload = function() {{
         self.chat_html_window.geometry(saved_geom)
         self.chat_html_window.configure(bg="#1a1a1a")
 
-        # 通常のウィンドウとして表示（最前面固定なし）
-
         # 閉じるボタンの動作を設定（×ボタンで閉じたときにトグルもOFFにする）
         self.chat_html_window.protocol("WM_DELETE_WINDOW", self._on_tkinter_window_closed)
 
-        try:
-            # tkinterwebを試す
-            from tkinterweb import HtmlFrame
-            frame = HtmlFrame(self.chat_html_window, messages_enabled=False)
-            frame.pack(fill="both", expand=True)
+        # スクロール可能なテキストウィジェット
+        scrollbar = tk.Scrollbar(self.chat_html_window)
+        scrollbar.pack(side="right", fill="y")
 
-            # HTMLを読み込む
-            def load_html():
-                try:
-                    if os.path.exists(path):
-                        frame.load_file(path)
-                except Exception as e:
-                    logger.debug(f"Error loading HTML in tkinterweb: {e}")
+        text_widget = tk.Text(
+            self.chat_html_window,
+            bg="#1a1a1a",
+            fg="#e0e0e0",
+            font=("Segoe UI", 11),
+            wrap="word",
+            yscrollcommand=scrollbar.set,
+            relief="flat",
+            padx=10,
+            pady=10
+        )
+        text_widget.pack(fill="both", expand=True)
+        scrollbar.config(command=text_widget.yview)
 
-            load_html()
+        # HTMLファイルを読み込んで簡易表示
+        def load_and_display():
+            try:
+                if os.path.exists(path):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        content = f.read()
 
-            # 1.2秒ごとに更新
-            def refresh():
-                if self.chat_html_window and self.chat_html_window.winfo_exists():
-                    load_html()
-                    self.chat_html_window.after(1200, refresh)
+                    # HTMLタグを除去してテキストのみ表示（簡易版）
+                    import re
+                    content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL)
+                    content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL)
+                    content = re.sub(r'<[^>]+>', '', content)
+                    content = content.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
 
-            self.chat_html_window.after(1200, refresh)
-            self.log_message("📄 チャットHTMLビューを開きました (tkinterweb)")
+                    text_widget.config(state="normal")
+                    text_widget.delete("1.0", "end")
 
-        except Exception:
-            # tkinterwebが利用不可の場合、シンプルなTextウィジェットで表示
-            logger.info("tkinterweb not available or failed, using simple text display")
-            # 失敗したウィジェットの残骸をクリーンアップ
-            for child in self.chat_html_window.winfo_children():
-                child.destroy()
+                    note = "【⚠ 簡易プレビューモード】\nここにはデザイン（CSS）は適用されません。\nOBSブラウザソースでHTMLファイルを読み込むと完全な表示になります。\n\n" + ("-"*50) + "\n\n"
 
-            # スクロール可能なテキストウィジェット
-            scrollbar = tk.Scrollbar(self.chat_html_window)
-            scrollbar.pack(side="right", fill="y")
+                    text_widget.insert("1.0", note + content)
+                    text_widget.config(state="disabled")
 
-            text_widget = tk.Text(
-                self.chat_html_window,
-                bg="#1a1a1a",
-                fg="#e0e0e0",
-                font=("Segoe UI", 11),
-                wrap="word",
-                yscrollcommand=scrollbar.set,
-                relief="flat",
-                padx=10,
-                pady=10
-            )
-            text_widget.pack(fill="both", expand=True)
-            scrollbar.config(command=text_widget.yview)
+                    text_widget.see("end")
+            except Exception as e:
+                logger.error(f"Error loading HTML: {e}")
 
-            # HTMLファイルを読み込んで簡易表示
-            def load_and_display():
-                try:
-                    if os.path.exists(path):
-                        with open(path, 'r', encoding='utf-8') as f:
-                            content = f.read()
+        load_and_display()
 
-                        # HTMLタグを除去してテキストのみ表示（簡易版）
-                        import re
-                        # スタイルとスクリプトタグを削除
-                        content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL)
-                        content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL)
-                        # HTMLタグを削除
-                        content = re.sub(r'<[^>]+>', '', content)
-                        # HTML エンティティをデコード
-                        content = content.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+        # 1.2秒ごとに更新
+        def refresh_text():
+            if self.chat_html_window and self.chat_html_window.winfo_exists():
+                load_and_display()
+                self.chat_html_window.after(1200, refresh_text)
 
-                        text_widget.config(state="normal")
-                        text_widget.delete("1.0", "end")
-                        
-                        # 注釈を追加
-                        note = "【⚠ 簡易プレビューモード】\nここにはデザイン（CSS）は適用されません。\n正しい表示を確認するには、HTMLファイルをブラウザで直接開いてください。\n\n" + ("-"*50) + "\n\n"
-                        
-                        text_widget.insert("1.0", note + content)
-                        text_widget.config(state="disabled")
-
-                        # 自動スクロール
-                        text_widget.see("end")
-                except Exception as e:
-                    logger.error(f"Error loading HTML: {e}")
-
-            load_and_display()
-
-            # 1.2秒ごとに更新
-            def refresh_text():
-                if self.chat_html_window and self.chat_html_window.winfo_exists():
-                    load_and_display()
-                    self.chat_html_window.after(1200, refresh_text)
-
-            self.chat_html_window.after(1200, refresh_text)
-            self.log_message("📄 チャットHTMLビューを開きました (シンプル表示)")
+        self.chat_html_window.after(1200, refresh_text)
+        self.log_message("📄 チャットHTMLビューを開きました (簡易プレビュー)")
 
         except Exception as e:
             logger.error(f"Failed to open chat HTML window: {e}", exc_info=True)
@@ -4543,15 +4366,6 @@ window.onload = function() {{
 
     def _save_html_window_geometry(self):
         """HTMLウィンドウのジオメトリをconfigに保存する"""
-        try:
-            if self.qt_html_window:
-                geom = self.qt_html_window.geometry()
-                geom_str = f"{geom.width()}x{geom.height()}+{geom.x()}+{geom.y()}"
-                self.config["chat_html_window_geometry"] = geom_str
-                save_config(self.config)
-                return
-        except Exception:
-            pass
         try:
             if hasattr(self, 'chat_html_window') and self.chat_html_window and self.chat_html_window.winfo_exists():
                 self.config["chat_html_window_geometry"] = self.chat_html_window.geometry()

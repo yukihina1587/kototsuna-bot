@@ -80,24 +80,6 @@ if not _portaudio_found:
     print(f"[SPEC] WARNING: _portaudio.pyd not found in {_pa_dir}")
     print(f"[SPEC]   contents: {os.listdir(_pa_dir)}")
 
-# tkinterwebを収集（これが無いとEXE化した際に読み込めない）
-tmp_ret = collect_all('tkinterweb')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-
-# PyQt6: 必要なモジュールのみ明示指定（全モジュール収集による警告・肥大化を防止）
-hiddenimports += [
-    'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets',
-    'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebEngineCore',
-    'PyQt6.QtNetwork', 'PyQt6.QtWebChannel', 'PyQt6.QtPrintSupport',
-]
-# PyQt6のデータファイルとバイナリはパッケージから収集（WebEngineリソース等）
-try:
-    tmp_ret = collect_all('PyQt6')
-    datas += tmp_ret[0]; binaries += tmp_ret[1]
-    # hiddenimportsはcollect_allから取らない（不要な全モジュールが入るため）
-except Exception as e:
-    print(f"Warning: Could not collect PyQt6: {e}")
-
 # srcパッケージ内の全サブモジュールを収集
 hiddenimports += collect_submodules('src')
 
@@ -116,20 +98,7 @@ a = Analysis(
     hookspath=['hooks'],  # 標準hook-_tkinter.pyをオーバーライド（Tcl/Tkデータ干渉防止）
     hooksconfig={},
     runtime_hooks=['rthook_tcltk.py'],  # ZIP展開フック（標準rthookより先に実行）
-    excludes=[
-        # 未使用PyQt6モジュールを除外（ビルド警告削減・exe軽量化）
-        'PyQt6.QtBluetooth', 'PyQt6.QAxContainer', 'PyQt6.QtDBus',
-        'PyQt6.QtDesigner', 'PyQt6.QtHelp', 'PyQt6.QtMultimedia',
-        'PyQt6.QtMultimediaWidgets', 'PyQt6.QtNfc', 'PyQt6.QtOpenGL',
-        'PyQt6.QtOpenGLWidgets', 'PyQt6.QtPdf', 'PyQt6.QtPdfWidgets',
-        'PyQt6.QtPositioning', 'PyQt6.QtQml', 'PyQt6.QtQuick',
-        'PyQt6.QtQuick3D', 'PyQt6.QtQuickWidgets', 'PyQt6.QtRemoteObjects',
-        'PyQt6.QtSensors', 'PyQt6.QtSerialPort', 'PyQt6.QtSpatialAudio',
-        'PyQt6.QtSql', 'PyQt6.QtStateMachine', 'PyQt6.QtSvg',
-        'PyQt6.QtSvgWidgets', 'PyQt6.QtTest', 'PyQt6.QtTextToSpeech',
-        'PyQt6.QtWebEngineQuick', 'PyQt6.QtWebSockets', 'PyQt6.QtXml',
-        'PyQt6.lupdate',
-    ],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )
