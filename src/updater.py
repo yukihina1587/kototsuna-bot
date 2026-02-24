@@ -360,8 +360,13 @@ def restart_app() -> None:
                 if isinstance(env[key], str) and old_meipass in env[key]:
                     logger.debug(f"Removing stale env var: {key}={env[key]}")
                     del env[key]
-        subprocess.Popen([current_exe, "--cleanup"], env=env)
-        os._exit(0)  # sys.exit(0)はtkinter mainloopに捕捉されるため強制終了
+        # 親プロセスから独立した新プロセスとして起動
+        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+        subprocess.Popen([current_exe, "--cleanup"], env=env, creationflags=creation_flags)
+        # 新プロセスが確立するまで待機してから終了
+        import time
+        time.sleep(1)
+        os._exit(0)
     except OSError as e:
         logger.error(f"Failed to restart: {e}")
 
