@@ -219,11 +219,8 @@ class KototsunaApp:
         self.comment_font = tk.StringVar(value=self.config.get("comment_log_font", "Consolas 11"))
         self.comment_bubble_style = tk.StringVar(value=self.config.get("comment_bubble_style", "classic"))
         # チャットHTML出力
-        self.chat_html_output = tk.BooleanVar(value=self.config.get("chat_html_output", False))
         self.chat_html_path = tk.StringVar(value=self._default_chat_html_path(self.config.get("chat_html_path", "")))
         self.chat_html_newest_first = tk.BooleanVar(value=self.config.get("chat_html_newest_first", False))
-        # HTML表示ウィンドウの管理
-        self.chat_html_window = None  # Tkinterプレビューウィンドウ
         # アップデート設定
         self.auto_update_check = tk.BooleanVar(value=self.config.get("auto_update_check", True))
         self.include_prerelease = tk.BooleanVar(value=self.config.get("include_prerelease", False))
@@ -288,9 +285,8 @@ class KototsunaApp:
         # ウィンドウアイコンを設定（ウィジェット構築後）
         self._setup_window_icon()
 
-        # 起動時にHTML出力がONの場合、ウィンドウを開く
-        if self.chat_html_output.get():
-            self.master.after(500, self._open_chat_html_window)
+        # BOT起動前にHTML出力パスを設定（/chatエンドポイント用）
+        self.master.after(500, self._init_chat_html)
 
         # 起動時はBOTボタンを無効化（認証前）
         self.master.after(100, lambda: self._update_auth_button_states(authenticated=False))
@@ -298,6 +294,14 @@ class KototsunaApp:
         self.master.after(1000, self._check_saved_token)
         # 起動時にアップデートを確認
         self.master.after(3000, self._check_for_updates_on_startup)
+
+    def _init_chat_html(self):
+        """起動時にチャットHTML出力パスを設定する"""
+        try:
+            path = self.chat_html_path.get().strip() or self._default_chat_html_path("")
+            self._export_chat_html(force=True)
+        except Exception as e:
+            logger.error(f"Failed to initialize chat HTML: {e}", exc_info=True)
 
     def _apply_theme_colors(self, theme_name):
         """
@@ -578,11 +582,6 @@ class KototsunaApp:
             scroll, text="🗑 ログクリア", command=self.clear_log,
             fg_color="#6B7280", hover_color="#4B5563", height=32
         ).pack(fill="x", pady=2)
-
-        ctk.CTkSwitch(
-            scroll, text="💾 HTML出力", variable=self.chat_html_output,
-            command=self.toggle_chat_html_output, font=FONT_BODY
-        ).pack(fill="x", pady=4)
 
     def _add_sidebar_section(self, parent, text):
         """サイドバーセクションラベルを追加"""
@@ -1893,15 +1892,6 @@ class KototsunaApp:
             width=120
         ).pack(side="left", padx=5)
 
-        # HTML出力トグル
-        ctk.CTkSwitch(
-            log_btn_frame,
-            text="💾 チャットをHTML出力",
-            variable=self.chat_html_output,
-            command=self.toggle_chat_html_output,
-            font=FONT_BODY
-        ).pack(side="left", padx=8)
-
         # === 右側: 上下2分割のPanedWindow（垂直方向） ===
         right_paned = tk.PanedWindow(
             main_paned,
@@ -2546,7 +2536,6 @@ class KototsunaApp:
             self.comment_fg,
             self.comment_font,
             self.comment_bubble_style,
-            self.chat_html_output,
             self.chat_html_path,
             self.chat_html_newest_first,
             self.tts_volume_var,
@@ -2586,7 +2575,6 @@ class KototsunaApp:
             self.config["comment_log_fg"] = self.comment_fg.get().strip()
             self.config["comment_log_font"] = self.comment_font.get().strip()
             self.config["comment_bubble_style"] = self.comment_bubble_style.get()
-            self.config["chat_html_output"] = self.chat_html_output.get()
             self.config["chat_html_path"] = self.chat_html_path.get().strip()
             self.config["chat_html_newest_first"] = self.chat_html_newest_first.get()
             self.config["tts_volume"] = int(self.tts_volume_var.get())
@@ -2712,8 +2700,7 @@ class KototsunaApp:
                 "emotes": comment_data.emotes if comment_data and comment_data.emotes else [],
             }
             self.chat_history.append(entry)
-            if self.chat_html_output.get():
-                self._export_chat_html()
+            self._export_chat_html()
 
     def _apply_log_style(self, textbox):
         try:
@@ -2820,11 +2807,8 @@ class KototsunaApp:
         チャットHTMLをファイルに書き出す
 
         Args:
-            force: Trueの場合、トグルの状態に関わらず強制的にエクスポート
+            force: Trueの場合、チャット履歴が空でもエクスポートする
         """
-        if not force and not self.chat_html_output.get():
-            return
-
         path = self.chat_html_path.get().strip() or self._default_chat_html_path("")
         try:
             # ディレクトリを作成（存在しない場合）
@@ -3077,154 +3061,6 @@ window.onload = function() {{
 {js_code}
 </script>
 </head><body>{body}</body></html>"""
-
-    def _on_tkinter_window_closed(self):
-        """Tkinterウィンドウが×で閉じられた時の処理"""
-        # ウィンドウジオメトリを保存
-        if hasattr(self, 'chat_html_window') and self.chat_html_window:
-            try:
-                geom = self.chat_html_window.geometry()
-                self.config["chat_html_window_geometry"] = geom
-                save_config(self.config)
-            except Exception:
-                pass
-        # ウィンドウを破棄
-        if hasattr(self, 'chat_html_window') and self.chat_html_window:
-            try:
-                self.chat_html_window.destroy()
-            except:
-                pass
-            self.chat_html_window = None
-
-        # トグルスイッチをOFFにする
-        if self.chat_html_output.get():
-            self.chat_html_output.set(False)
-            self._auto_save_settings()
-
-        self.log_message("📄 チャットHTMLビューを閉じました")
-
-    def _on_chat_html_window_close(self):
-        """チャットHTMLウィンドウが閉じられた時の処理（プログラムから呼ばれる）"""
-        self._save_html_window_geometry()
-        # Tkinterウィンドウを破棄
-        if hasattr(self, 'chat_html_window') and self.chat_html_window:
-            try:
-                if self.chat_html_window.winfo_exists():
-                    self.chat_html_window.destroy()
-            except:
-                pass
-            self.chat_html_window = None
-
-    def toggle_chat_html_output(self):
-        """HTML出力スイッチ用"""
-        self._auto_save_settings()
-        if self.chat_html_output.get():
-            # ウィンドウを開く（内部でHTMLファイルを強制生成）
-            self._open_chat_html_window()
-        else:
-            # スイッチオフ時はウィンドウを閉じる
-            self._on_chat_html_window_close()
-
-    def _open_chat_html_window(self):
-        """チャットHTMLを専用ウィンドウで開く（配信用縦長サイズ）"""
-        path = self.chat_html_path.get().strip() or self._default_chat_html_path("")
-
-        # HTMLファイルを強制的に生成（ファイルが存在しない場合や空のチャット履歴でも）
-        try:
-            self._export_chat_html(force=True)
-        except Exception as e:
-            logger.error(f"Failed to export HTML before opening window: {e}", exc_info=True)
-            self.log_message(f"❌ HTMLファイルの作成に失敗しました: {e}")
-            return
-
-        # ファイルが確実に存在することを確認
-        if not os.path.exists(path):
-            logger.error(f"HTML file does not exist after export: {path}")
-            self.log_message(f"❌ HTMLファイルが見つかりません: {path}")
-            return
-
-        # 既存のウィンドウがあれば閉じる
-        if hasattr(self, 'chat_html_window') and self.chat_html_window and self.chat_html_window.winfo_exists():
-            self.chat_html_window.destroy()
-            self.chat_html_window = None
-
-        # 簡易テキストプレビューウィンドウで開く
-        self._open_chat_html_window_tkinter(path)
-
-    def _open_chat_html_window_tkinter(self, path):
-        """簡易テキストプレビューウィンドウで表示"""
-        try:
-            # 新しいウィンドウを作成
-            self.chat_html_window = tk.Toplevel(self.master)
-            self.chat_html_window.title("チャット - 配信用")
-            saved_geom = self.config.get("chat_html_window_geometry", "350x900+50+50")
-            self.chat_html_window.geometry(saved_geom)
-            self.chat_html_window.configure(bg="#1a1a1a")
-
-            # 閉じるボタンの動作を設定（×ボタンで閉じたときにトグルもOFFにする）
-            self.chat_html_window.protocol("WM_DELETE_WINDOW", self._on_tkinter_window_closed)
-
-            # スクロール可能なテキストウィジェット
-            scrollbar = tk.Scrollbar(self.chat_html_window)
-            scrollbar.pack(side="right", fill="y")
-
-            text_widget = tk.Text(
-                self.chat_html_window,
-                bg="#1a1a1a",
-                fg="#e0e0e0",
-                font=("Segoe UI", 11),
-                wrap="word",
-                yscrollcommand=scrollbar.set,
-                relief="flat",
-                padx=10,
-                pady=10
-            )
-            text_widget.pack(fill="both", expand=True)
-            scrollbar.config(command=text_widget.yview)
-
-            # HTMLファイルを読み込んで簡易表示
-            def load_and_display():
-                try:
-                    if os.path.exists(path):
-                        with open(path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-
-                        # HTMLタグを除去してテキストのみ表示（簡易版）
-                        import re
-                        content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL)
-                        content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL)
-                        content = re.sub(r'<[^>]+>', '', content)
-                        content = content.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
-
-                        text_widget.config(state="normal")
-                        text_widget.delete("1.0", "end")
-
-                        note = "【⚠ 簡易プレビューモード】\nここにはデザイン（CSS）は適用されません。\nOBSブラウザソースでHTMLファイルを読み込むと完全な表示になります。\n\n" + ("-"*50) + "\n\n"
-
-                        text_widget.insert("1.0", note + content)
-                        text_widget.config(state="disabled")
-
-                        text_widget.see("end")
-                except Exception as e:
-                    logger.error(f"Error loading HTML: {e}")
-
-            load_and_display()
-
-            # 1.2秒ごとに更新
-            def refresh_text():
-                if self.chat_html_window and self.chat_html_window.winfo_exists():
-                    load_and_display()
-                    self.chat_html_window.after(1200, refresh_text)
-
-            self.chat_html_window.after(1200, refresh_text)
-            self.log_message("📄 チャットHTMLビューを開きました (簡易プレビュー)")
-
-        except Exception as e:
-            logger.error(f"Failed to open chat HTML window: {e}", exc_info=True)
-            if hasattr(self, 'chat_html_window') and self.chat_html_window:
-                self.chat_html_window.destroy()
-            self.log_message(f"❌ チャットHTMLビューの表示に失敗しました: {e}")
-
 
 
     # =========================================
@@ -4354,21 +4190,9 @@ window.onload = function() {{
             f"アップデートに失敗しました:\n{message}",
         )
 
-    def _save_html_window_geometry(self):
-        """HTMLウィンドウのジオメトリをconfigに保存する"""
-        try:
-            if hasattr(self, 'chat_html_window') and self.chat_html_window and self.chat_html_window.winfo_exists():
-                self.config["chat_html_window_geometry"] = self.chat_html_window.geometry()
-                save_config(self.config)
-        except Exception:
-            pass
-
     def cleanup_resources(self):
         """アプリケーション終了時に全てのリソースを解放"""
         logger.info("Starting cleanup_resources...")
-
-        # HTMLウィンドウのサイズを保存
-        self._save_html_window_geometry()
 
         try:
             # リソース監視を停止
