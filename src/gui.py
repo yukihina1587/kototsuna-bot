@@ -3153,84 +3153,74 @@ window.onload = function() {{
 
     def _open_chat_html_window_tkinter(self, path):
         """簡易テキストプレビューウィンドウで表示"""
-        # 新しいウィンドウを作成
-        self.chat_html_window = tk.Toplevel(self.master)
-        self.chat_html_window.title("チャット - 配信用")
-        saved_geom = self.config.get("chat_html_window_geometry", "350x900+50+50")
-        self.chat_html_window.geometry(saved_geom)
-        self.chat_html_window.configure(bg="#1a1a1a")
+        try:
+            # 新しいウィンドウを作成
+            self.chat_html_window = tk.Toplevel(self.master)
+            self.chat_html_window.title("チャット - 配信用")
+            saved_geom = self.config.get("chat_html_window_geometry", "350x900+50+50")
+            self.chat_html_window.geometry(saved_geom)
+            self.chat_html_window.configure(bg="#1a1a1a")
 
-        # 閉じるボタンの動作を設定（×ボタンで閉じたときにトグルもOFFにする）
-        self.chat_html_window.protocol("WM_DELETE_WINDOW", self._on_tkinter_window_closed)
+            # 閉じるボタンの動作を設定（×ボタンで閉じたときにトグルもOFFにする）
+            self.chat_html_window.protocol("WM_DELETE_WINDOW", self._on_tkinter_window_closed)
 
-        # スクロール可能なテキストウィジェット
-        scrollbar = tk.Scrollbar(self.chat_html_window)
-        scrollbar.pack(side="right", fill="y")
+            # スクロール可能なテキストウィジェット
+            scrollbar = tk.Scrollbar(self.chat_html_window)
+            scrollbar.pack(side="right", fill="y")
 
-        text_widget = tk.Text(
-            self.chat_html_window,
-            bg="#1a1a1a",
-            fg="#e0e0e0",
-            font=("Segoe UI", 11),
-            wrap="word",
-            yscrollcommand=scrollbar.set,
-            relief="flat",
-            padx=10,
-            pady=10
-        )
-        text_widget.pack(fill="both", expand=True)
-        scrollbar.config(command=text_widget.yview)
+            text_widget = tk.Text(
+                self.chat_html_window,
+                bg="#1a1a1a",
+                fg="#e0e0e0",
+                font=("Segoe UI", 11),
+                wrap="word",
+                yscrollcommand=scrollbar.set,
+                relief="flat",
+                padx=10,
+                pady=10
+            )
+            text_widget.pack(fill="both", expand=True)
+            scrollbar.config(command=text_widget.yview)
 
-        # HTMLファイルを読み込んで簡易表示
-        def load_and_display():
-            try:
-                if os.path.exists(path):
-                    with open(path, 'r', encoding='utf-8') as f:
-                        content = f.read()
+            # HTMLファイルを読み込んで簡易表示
+            def load_and_display():
+                try:
+                    if os.path.exists(path):
+                        with open(path, 'r', encoding='utf-8') as f:
+                            content = f.read()
 
-                    # HTMLタグを除去してテキストのみ表示（簡易版）
-                    import re
-                    content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL)
-                    content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL)
-                    content = re.sub(r'<[^>]+>', '', content)
-                    content = content.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+                        # HTMLタグを除去してテキストのみ表示（簡易版）
+                        import re
+                        content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL)
+                        content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.DOTALL)
+                        content = re.sub(r'<[^>]+>', '', content)
+                        content = content.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
 
-                    text_widget.config(state="normal")
-                    text_widget.delete("1.0", "end")
+                        text_widget.config(state="normal")
+                        text_widget.delete("1.0", "end")
 
-                    note = "【⚠ 簡易プレビューモード】\nここにはデザイン（CSS）は適用されません。\nOBSブラウザソースでHTMLファイルを読み込むと完全な表示になります。\n\n" + ("-"*50) + "\n\n"
+                        note = "【⚠ 簡易プレビューモード】\nここにはデザイン（CSS）は適用されません。\nOBSブラウザソースでHTMLファイルを読み込むと完全な表示になります。\n\n" + ("-"*50) + "\n\n"
 
-                    text_widget.insert("1.0", note + content)
-                    text_widget.config(state="disabled")
+                        text_widget.insert("1.0", note + content)
+                        text_widget.config(state="disabled")
 
-                    text_widget.see("end")
-            except Exception as e:
-                logger.error(f"Error loading HTML: {e}")
+                        text_widget.see("end")
+                except Exception as e:
+                    logger.error(f"Error loading HTML: {e}")
 
-        load_and_display()
+            load_and_display()
 
-        # 1.2秒ごとに更新
-        def refresh_text():
-            if self.chat_html_window and self.chat_html_window.winfo_exists():
-                load_and_display()
-                self.chat_html_window.after(1200, refresh_text)
+            # 1.2秒ごとに更新
+            def refresh_text():
+                if self.chat_html_window and self.chat_html_window.winfo_exists():
+                    load_and_display()
+                    self.chat_html_window.after(1200, refresh_text)
 
-        self.chat_html_window.after(1200, refresh_text)
-        self.log_message("📄 チャットHTMLビューを開きました (簡易プレビュー)")
+            self.chat_html_window.after(1200, refresh_text)
+            self.log_message("📄 チャットHTMLビューを開きました (簡易プレビュー)")
 
         except Exception as e:
             logger.error(f"Failed to open chat HTML window: {e}", exc_info=True)
-            
-            # エラー詳細をログファイルに出力（デバッグ用）
-            try:
-                import traceback
-                with open("html_preview_error.log", "w", encoding="utf-8") as f:
-                    f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-                    f.write(f"Error: {e}\n\n")
-                    traceback.print_exc(file=f)
-            except Exception:
-                pass
-
             if hasattr(self, 'chat_html_window') and self.chat_html_window:
                 self.chat_html_window.destroy()
             self.log_message(f"❌ チャットHTMLビューの表示に失敗しました: {e}")
