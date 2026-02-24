@@ -54,6 +54,16 @@ if getattr(sys, 'frozen', False):
             pass
     sys.excepthook = _kototsuna_excepthook
 
+# コンソールウィンドウを非表示（console=True + hide-early のバックアップ）
+if sys.platform == "win32" and getattr(sys, 'frozen', False):
+    try:
+        import ctypes
+        _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if _hwnd:
+            ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
 # PyInstallerでの相対パス解決用にsrcをパスへ追加
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, "src")
