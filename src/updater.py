@@ -361,7 +361,7 @@ def restart_app() -> None:
                     logger.debug(f"Removing stale env var: {key}={env[key]}")
                     del env[key]
         subprocess.Popen([current_exe, "--cleanup"], env=env)
-        sys.exit(0)
+        os._exit(0)  # sys.exit(0)はtkinter mainloopに捕捉されるため強制終了
     except OSError as e:
         logger.error(f"Failed to restart: {e}")
 
