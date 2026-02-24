@@ -3718,6 +3718,7 @@ window.onload = function() {{
         self.log_message("🔍 保存されたトークンをチェックしています...")
 
         # トークンの有効性をチェック（ユーザー情報も取得）
+        # 戻り値: dict=有効, None=無効(API確認済み), False=ネットワークエラー
         user_info = validate_token_with_info(saved_token)
         if user_info:
             self.token = saved_token
@@ -3732,14 +3733,20 @@ window.onload = function() {{
                 self.log_message("✅ 保存されたトークンが有効です。自動ログインしました。")
             self._set_status("保存されたトークンで自動ログイン完了", "success")
             self._update_auth_button_states(authenticated=True)
-        else:
-            logger.warning("Saved token is invalid.")
+        elif user_info is None:
+            # APIが明示的に「無効」と応答 → トークンを削除
+            logger.warning("Saved token is invalid (API confirmed).")
             self.log_message("⚠ 保存されたトークンが無効です。再認証が必要です。")
-            # 無効なトークンを削除
             self.config["twitch_access_token"] = ""
             self.auth_username.set("")
             self._update_auth_button_states(authenticated=False)
             save_config(self.config)
+        else:
+            # ネットワーク/TLSエラー → トークンは保持して再試行可能に
+            logger.warning("Could not verify token due to network error. Token preserved.")
+            self.log_message("⚠ ネットワークエラーでトークンを検証できませんでした。トークンは保持しています。")
+            self.token = saved_token
+            self._update_auth_button_states(authenticated=True)
 
     def run_auth_flow(self, client_id):
         url = build_auth_url(client_id)

@@ -129,7 +129,9 @@ def validate_token_with_info(access_token, max_retries=2):
     ネットワークエラー時は自動リトライ
 
     Returns:
-        dict or None: 有効な場合はユーザー情報（login, user_id等）、無効な場合はNone
+        dict: 有効な場合はユーザー情報（login, user_id等）
+        None: トークンが無効（API応答で確認済み）
+        False: ネットワーク/TLSエラーで検証不能（トークン自体は無効とは限らない）
     """
     token = access_token
     if token.startswith("oauth:"):
@@ -161,12 +163,12 @@ def validate_token_with_info(access_token, max_retries=2):
             if attempt < max_retries:
                 time.sleep(1)
                 continue
-            return None
+            return False
         except Exception as e:
             logger.error(f"Failed to validate token: {e}")
             if attempt < max_retries:
                 time.sleep(1)
                 continue
-            return None
+            return False
 
-    return None
+    return False
