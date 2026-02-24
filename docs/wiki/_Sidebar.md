@@ -6,6 +6,7 @@
 
 ### 機能
 - [機能一覧](Features)
+- [OBS連携](OBS-Setup)
 - [設定](Configuration)
 - [パフォーマンス](Performance)
 

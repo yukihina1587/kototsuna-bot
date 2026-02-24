@@ -306,8 +306,25 @@ class KototsunaApp:
                 f"OBS Browser Source URL: http://localhost:{port}/chat",
                 log_type="info"
             )
+            # サイドバーのURLラベルを実際のポートで更新
+            if hasattr(self, 'obs_url_label'):
+                self.obs_url_label.configure(text=f"http://localhost:{port}/chat")
         except Exception as e:
             logger.error(f"Failed to initialize chat HTML: {e}", exc_info=True)
+
+    def _copy_obs_url(self):
+        """OBS Browser Source URLをクリップボードにコピー"""
+        from src.overlay_server import get_overlay_port
+        port = get_overlay_port()
+        url = f"http://localhost:{port}/chat"
+        self.master.clipboard_clear()
+        self.master.clipboard_append(url)
+        self.log_message("OBS URLをクリップボードにコピーしました", log_type="info")
+
+    def _open_obs_setup_wiki(self):
+        """OBS設定方法のWikiページをブラウザで開く"""
+        import webbrowser
+        webbrowser.open("https://github.com/yukihina1587/kototsuna-bot/wiki/OBS-Setup")
 
     def _apply_theme_colors(self, theme_name):
         """
@@ -586,6 +603,31 @@ class KototsunaApp:
 
         ctk.CTkButton(
             scroll, text="🗑 ログクリア", command=self.clear_log,
+            fg_color="#6B7280", hover_color="#4B5563", height=32
+        ).pack(fill="x", pady=2)
+
+        # 区切り線
+        ctk.CTkFrame(scroll, height=1, fg_color=BORDER).pack(fill="x", pady=12)
+
+        # === OBS連携 ===
+        self._add_sidebar_section(scroll, "OBS連携")
+
+        self.obs_url_label = ctk.CTkLabel(
+            scroll,
+            text="http://localhost:8080/chat",
+            font=("Consolas", 10),
+            text_color="#9BAEC6",
+            anchor="w"
+        )
+        self.obs_url_label.pack(fill="x", pady=(0, 4))
+
+        ctk.CTkButton(
+            scroll, text="📋 URLコピー", command=self._copy_obs_url,
+            fg_color="#10B981", hover_color="#059669", height=32
+        ).pack(fill="x", pady=2)
+
+        ctk.CTkButton(
+            scroll, text="❓ 設定方法", command=self._open_obs_setup_wiki,
             fg_color="#6B7280", hover_color="#4B5563", height=32
         ).pack(fill="x", pady=2)
 
