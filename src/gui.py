@@ -3686,33 +3686,12 @@ window.onload = function() {{
     def run_auth_flow(self, client_id):
         url = build_auth_url(client_id)
 
-        self.log_message("🔗 認証ページを開きます (Chrome シークレットモード推奨)")
+        self.log_message("🔗 認証ページを開きます")
         self.log_message(f"URL: {url}")
 
         try:
-            # Windows環境でChromeのシークレットモード起動を試みる
-            chrome_paths = [
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
-            ]
-            
-            chrome_found = False
-            if platform.system() == "Windows":
-                for path in chrome_paths:
-                    if os.path.exists(path):
-                        subprocess.Popen([path, "--incognito", url])
-                        chrome_found = True
-                        self.log_message("✅ Chrome (シークレットモード) で開きました")
-                        break
-            
-            if not chrome_found:
-                # Chromeが見つからない場合は既存の挙動
-                if shutil.which("wslview"):
-                    subprocess.Popen(["wslview", url])
-                else:
-                    webbrowser.open(url)
-                    
+            webbrowser.open(url)
+            self.log_message("✅ ブラウザで認証ページを開きました")
         except Exception as e:
             logger.debug(f"Failed to open browser automatically: {e}")
             self.log_message("⚠ ブラウザの自動起動に失敗しました。URLをコピーして開いてください。")
