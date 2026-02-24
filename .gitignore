@@ -26,6 +26,8 @@ AGENTS.md
 
 # User data
 tts_dictionary.json
+viewer_data.json
+custom_commands.json
 
 # Unused
 PENCIL_SETUP.md

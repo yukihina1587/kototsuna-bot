@@ -299,17 +299,22 @@ class VoicevoxTTS:
                 except Exception as e:
                     logger.error(f"Failed to create aiohttp session: {e}")
 
-    async def _synthesize_voicevox_async(self, text: str, retry: bool = True) -> Optional[bytes]:
+    async def _synthesize_voicevox_async(
+        self, text: str, speaker_id: Optional[int] = None, retry: bool = True
+    ) -> Optional[bytes]:
         """
         Synthesize speech from text using VOICEVOX API (async)
 
         Args:
             text: Text to synthesize
+            speaker_id: Speaker ID to use (None = use default self.speaker_id)
             retry: Whether to retry on failure (default: True)
 
         Returns:
             WAV audio data as bytes, or None if failed
         """
+        effective_speaker = speaker_id if speaker_id is not None else self.speaker_id
+
         try:
             if self.aio_session is None:
                 return None
@@ -317,7 +322,7 @@ class VoicevoxTTS:
             # Step 1: Create audio query
             async with self.aio_session.post(
                 f"{self.api_url}/audio_query",
-                params={"text": text, "speaker": self.speaker_id},
+                params={"text": text, "speaker": effective_speaker},
                 timeout=aiohttp.ClientTimeout(total=5)
             ) as response:
                 if response.status != 200:
@@ -325,14 +330,16 @@ class VoicevoxTTS:
                     if retry:
                         logger.info("Retrying VOICEVOX synthesis...")
                         await asyncio.sleep(0.5)
-                        return await self._synthesize_voicevox_async(text, retry=False)
+                        return await self._synthesize_voicevox_async(
+                            text, speaker_id=effective_speaker, retry=False
+                        )
                     return None
                 audio_query = await response.json()
 
             # Step 2: Synthesize speech
             async with self.aio_session.post(
                 f"{self.api_url}/synthesis",
-                params={"speaker": self.speaker_id},
+                params={"speaker": effective_speaker},
                 headers={"Content-Type": "application/json"},
                 json=audio_query,
                 timeout=aiohttp.ClientTimeout(total=5)
@@ -342,7 +349,9 @@ class VoicevoxTTS:
                     if retry:
                         logger.info("Retrying VOICEVOX synthesis...")
                         await asyncio.sleep(0.5)
-                        return await self._synthesize_voicevox_async(text, retry=False)
+                        return await self._synthesize_voicevox_async(
+                            text, speaker_id=effective_speaker, retry=False
+                        )
                     return None
                 return await response.read()
 
@@ -351,14 +360,18 @@ class VoicevoxTTS:
             if retry:
                 logger.info("Retrying VOICEVOX synthesis after timeout...")
                 await asyncio.sleep(0.5)
-                return await self._synthesize_voicevox_async(text, retry=False)
+                return await self._synthesize_voicevox_async(
+                    text, speaker_id=effective_speaker, retry=False
+                )
             return None
         except Exception as e:
             logger.error(f"Error during VOICEVOX synthesis: {e}")
             if retry:
                 logger.info("Retrying VOICEVOX synthesis after error...")
                 await asyncio.sleep(0.5)
-                return await self._synthesize_voicevox_async(text, retry=False)
+                return await self._synthesize_voicevox_async(
+                    text, speaker_id=effective_speaker, retry=False
+                )
             return None
 
     def _synthesize_pyttsx3(self, text: str) -> Optional[bytes]:
@@ -543,18 +556,25 @@ class VoicevoxTTS:
                             self._update_engine_mode('pyttsx3')
                             logger.warning("⚠️ VOICEVOX Engine が応答しません。pyttsx3に切り替えます。")
 
-                # Get text from synthesis queue
-                text = self.synthesis_queue.get(timeout=1)
-                if text is None:
+                # Get (text, speaker_id) from synthesis queue
+                item = self.synthesis_queue.get(timeout=1)
+                if item is None:
                     self.synthesis_queue.task_done()
                     continue
+
+                # Unpack tuple: (text, override_speaker_id)
+                if isinstance(item, tuple):
+                    text, override_speaker_id = item
+                else:
+                    text = item
+                    override_speaker_id = None
 
                 cleaned_text = clean_text_for_tts(text)
                 if not cleaned_text:
                     self.synthesis_queue.task_done()
                     continue
 
-                # pyttsx3はpygameに依存しないのでそのまま再生
+                # pyttsx3はpygameに依存しないのでそのまま再生（per-user voice非対応）
                 if self.engine_mode == 'pyttsx3':
                     self._speak_pyttsx3(cleaned_text)
                     self.synthesis_queue.task_done()
@@ -562,10 +582,19 @@ class VoicevoxTTS:
 
                 audio_data = None
 
+                # Determine effective speaker ID
+                effective_speaker = (
+                    override_speaker_id
+                    if override_speaker_id is not None
+                    else self.speaker_id
+                )
+
                 # 現在のエンジンモードに基づいて合成
                 if self.engine_mode == 'voicevox' and self.aio_session:
                     audio_data = self.aio_loop.run_until_complete(
-                        self._synthesize_voicevox_async(cleaned_text)
+                        self._synthesize_voicevox_async(
+                            cleaned_text, speaker_id=effective_speaker
+                        )
                     )
 
                     # VOICEVOX失敗時は即座にpyttsx3にフォールバック
@@ -696,13 +725,14 @@ class VoicevoxTTS:
 
         logger.info("TTS service stopped")
 
-    def speak(self, text: str, force: bool = False):
+    def speak(self, text: str, force: bool = False, speaker_id: Optional[int] = None):
         """
         Speak text (add to synthesis queue)
 
         Args:
             text: Text to speak
             force: Force speak even if TTS is disabled
+            speaker_id: Override speaker ID for this utterance (None = use default)
         """
         if not self.enabled and not force:
             logger.warning(f"⚠️ TTSが無効です。読み上げをスキップします: {text[:50]}...")
@@ -720,8 +750,8 @@ class VoicevoxTTS:
         logger.info(f"🔊 TTSキューに追加: {cleaned_text}")
         logger.debug(f"エンジンモード: {self.engine_mode}, キューサイズ: {self.synthesis_queue.qsize()}")
 
-        # Add to synthesis queue (non-blocking)
-        self.synthesis_queue.put(cleaned_text)
+        # Add to synthesis queue as (text, speaker_id) tuple
+        self.synthesis_queue.put((cleaned_text, speaker_id))
 
     def set_speaker(self, speaker_id: int):
         """スピーカーIDを変更"""

@@ -11,6 +11,7 @@ from src.config import load_config
 from src.commands import PermissionLevel, CooldownManager, check_permission, substitute_variables
 from src.commands_store import CommandStore
 from src.emote_provider import EmoteProvider
+from src.viewer_store import get_viewer_store
 
 
 class EventSubHandler:
@@ -236,6 +237,8 @@ class TranslateBot(commands.Bot):
         self._eventsub_handler = None
         # Third-party emote provider (BTTV/FFZ/7TV)
         self._emote_provider = EmoteProvider()
+        # Viewer store（視聴回数・ボイス割り当て）
+        self._viewer_store = get_viewer_store()
 
     async def event_ready(self):
         # GUI側から run_coroutine_threadsafe で送信できるよう、実際に動いているループを保持
@@ -316,6 +319,12 @@ class TranslateBot(commands.Bot):
         # 配信者の手入力（echo=False, 名前一致）は翻訳対象として処理を継続
         if self.nick and message.author.name.lower() == self.nick.lower():
             logger.debug(f"Processing broadcaster's own message: {message.author.name}")
+
+        # === 視聴回数の記録 ===
+        visit_display_name = (
+            getattr(message.author, "display_name", None) or message.author.name
+        )
+        self._viewer_store.record_visit(message.author.name, visit_display_name)
 
         # === コマンド処理（翻訳より先に実行）===
         if self._commands_enabled and message.content.startswith('!'):
@@ -435,7 +444,10 @@ class TranslateBot(commands.Bot):
                     speak_text = f"{display_name}さん、{speak_text}"
                 if speak_text and speak_text.strip():
                     try:
-                        self.tts.speak(speak_text)
+                        voice_override = self._viewer_store.get_assigned_voice(
+                            message.author.name
+                        )
+                        self.tts.speak(speak_text, speaker_id=voice_override)
                         logger.debug(f"TTS speak called (no translation): {speak_text[:30]}...")
                     except Exception as e:
                         logger.error(f"TTS speak error: {e}", exc_info=True)
@@ -499,7 +511,10 @@ class TranslateBot(commands.Bot):
             # TTSに渡す（空でないことを確認）
             if speak_text and speak_text.strip():
                 try:
-                    self.tts.speak(speak_text)
+                    voice_override = self._viewer_store.get_assigned_voice(
+                        message.author.name
+                    )
+                    self.tts.speak(speak_text, speaker_id=voice_override)
                     logger.debug(f"TTS speak called: {speak_text[:30]}...")
                 except Exception as e:
                     logger.error(f"TTS speak error: {e}", exc_info=True)
@@ -548,6 +563,8 @@ class TranslateBot(commands.Bot):
             "lang": self._cmd_lang,
             "tts": self._cmd_tts,
             "voice": self._cmd_voice,
+            "myvoice": self._cmd_myvoice,
+            "visits": self._cmd_visits,
         }
 
         handler = builtin_handlers.get(cmd_name)
@@ -563,7 +580,7 @@ class TranslateBot(commands.Bot):
 
     async def _cmd_help(self, message, args: str) -> None:
         """!help — 使用可能なコマンド一覧を表示"""
-        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!voice"]
+        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!voice", "!myvoice", "!visits"]
         custom_cmds = [
             f"!{c.name}" for c in self._command_store.list_all() if c.enabled
         ]
@@ -607,23 +624,247 @@ class TranslateBot(commands.Bot):
             await message.channel.send(f"TTS: {status} (使い方: !tts on/off)" + '\u200B')
 
     async def _cmd_voice(self, message, args: str) -> None:
-        """!voice [name] — VOICEVOXボイス変更/一覧表示（モデレーター以上）"""
-        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
-            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+        """!voice — ボイス管理コマンド (MOD+)
+
+        !voice list           - 利用可能なボイス一覧
+        !voice set @user <ID> - ユーザーにボイスを割り当て
+        !voice remove @user   - ボイス割り当てを解除
+        !voice check @user    - ユーザーのボイスを確認
+        """
+        config = load_config()
+        mode = config.get("voice_assign_mode", "mod_only")
+        if mode == "disabled":
+            await message.channel.send("ボイス割り当て機能は無効です" + '\u200B')
             return
-        if not args.strip():
-            # ボイス一覧を表示
-            try:
-                speakers = self.tts.get_speakers() if hasattr(self.tts, 'get_speakers') else []
-                if speakers:
-                    names = [s.get("name", "?") for s in speakers[:10]]
-                    await message.channel.send(f"利用可能なボイス: {', '.join(names)}" + '\u200B')
-                else:
-                    await message.channel.send("ボイス一覧を取得できませんでした" + '\u200B')
-            except Exception:
-                await message.channel.send("ボイス一覧を取得できませんでした" + '\u200B')
+
+        parts = args.strip().split()
+
+        if not parts:
+            await message.channel.send(
+                "使い方: !voice list | set @user <ID> | remove @user | check @user"
+                + '\u200B'
+            )
+            return
+
+        subcmd = parts[0].lower()
+
+        if subcmd == "list":
+            await self._cmd_voice_list(message, config)
+        elif subcmd == "set":
+            await self._cmd_voice_set(message, parts[1:], config)
+        elif subcmd == "remove":
+            await self._cmd_voice_remove(message, parts[1:])
+        elif subcmd == "check":
+            await self._cmd_voice_check(message, parts[1:])
         else:
-            await message.channel.send(f"ボイス変更は現在GUIから行ってください" + '\u200B')
+            await message.channel.send(
+                "使い方: !voice list | set @user <ID> | remove @user | check @user"
+                + '\u200B'
+            )
+
+    async def _cmd_voice_list(self, message, config: dict) -> None:
+        """利用可能なボイス一覧を表示"""
+        speakers = self.tts.get_speakers_list()
+        if not speakers:
+            await message.channel.send("ボイス一覧を取得できませんでした" + '\u200B')
+            return
+
+        allowed = config.get("voice_allowed_speakers", [])
+        if allowed:
+            speakers = [s for s in speakers if s["id"] in allowed]
+
+        display_list = [f"{s['name']}({s['id']})" for s in speakers[:10]]
+        remaining = len(speakers) - 10
+
+        msg = f"ボイス: {', '.join(display_list)}"
+        if remaining > 0:
+            msg += f" ...他{remaining}件"
+
+        await message.channel.send(msg + '\u200B')
+
+    async def _cmd_voice_set(self, message, parts: list[str], config: dict) -> None:
+        """!voice set @user <ID> — ユーザーにボイスを割り当て (MOD+)"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が必要です" + '\u200B')
+            return
+
+        if len(parts) < 2:
+            await message.channel.send("使い方: !voice set @ユーザー名 <ボイスID>" + '\u200B')
+            return
+
+        target = parts[0].lstrip("@").lower()
+        try:
+            speaker_id = int(parts[1])
+        except ValueError:
+            await message.channel.send("ボイスIDは数値で指定してください" + '\u200B')
+            return
+
+        allowed = config.get("voice_allowed_speakers", [])
+        if allowed and speaker_id not in allowed:
+            await message.channel.send("このボイスIDは許可されていません" + '\u200B')
+            return
+
+        speaker_name = self._get_speaker_name(speaker_id)
+        if not speaker_name:
+            await message.channel.send(f"ボイスID {speaker_id} が見つかりません" + '\u200B')
+            return
+
+        assigner = getattr(message.author, "display_name", message.author.name)
+        self._viewer_store.assign_voice(target, speaker_id, speaker_name, assigner)
+        await message.channel.send(
+            f"@{target} のボイスを {speaker_name} (ID:{speaker_id}) に設定しました"
+            + '\u200B'
+        )
+
+    async def _cmd_voice_remove(self, message, parts: list[str]) -> None:
+        """!voice remove @user — ボイス割り当てを解除 (MOD+)"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が必要です" + '\u200B')
+            return
+
+        if not parts:
+            await message.channel.send("使い方: !voice remove @ユーザー名" + '\u200B')
+            return
+
+        target = parts[0].lstrip("@").lower()
+        if self._viewer_store.remove_voice(target):
+            await message.channel.send(f"@{target} のボイス割り当てを解除しました" + '\u200B')
+        else:
+            await message.channel.send(f"@{target} にはボイスが割り当てられていません" + '\u200B')
+
+    async def _cmd_voice_check(self, message, parts: list[str]) -> None:
+        """!voice check @user — ユーザーのボイスを確認 (MOD+)"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が必要です" + '\u200B')
+            return
+
+        if not parts:
+            await message.channel.send("使い方: !voice check @ユーザー名" + '\u200B')
+            return
+
+        target = parts[0].lstrip("@").lower()
+        viewer = self._viewer_store.get_viewer(target)
+        if viewer and viewer.assigned_voice:
+            voice = viewer.assigned_voice
+            await message.channel.send(
+                f"@{target}: {voice['speaker_name']} (ID:{voice['speaker_id']}) "
+                f"視聴{viewer.visit_count}回" + '\u200B'
+            )
+        else:
+            visit_count = self._viewer_store.get_visit_count(target)
+            await message.channel.send(
+                f"@{target}: ボイス未設定 / 視聴{visit_count}回" + '\u200B'
+            )
+
+    def _get_speaker_name(self, speaker_id: int) -> str | None:
+        """VOICEVOX のスピーカー名を ID から取得する"""
+        speakers = self.tts.get_speakers_list()
+        for s in speakers:
+            if s.get("id") == speaker_id:
+                return s.get("display", s.get("name", f"Speaker {speaker_id}"))
+        return None
+
+    async def _cmd_myvoice(self, message, args: str) -> None:
+        """!myvoice [ID] — 自分のボイスを設定/確認"""
+        config = load_config()
+        mode = config.get("voice_assign_mode", "mod_only")
+
+        if mode == "disabled":
+            await message.channel.send("ボイス割り当て機能は無効です" + '\u200B')
+            return
+
+        username = message.author.name
+        display_name = getattr(message.author, "display_name", username)
+
+        if not args.strip():
+            # 現在のボイスを表示
+            viewer = self._viewer_store.get_viewer(username)
+            if viewer and viewer.assigned_voice:
+                voice = viewer.assigned_voice
+                await message.channel.send(
+                    f"{display_name} のボイス: {voice['speaker_name']} (ID:{voice['speaker_id']})"
+                    + '\u200B'
+                )
+            else:
+                await message.channel.send(
+                    f"{display_name}: ボイス未設定（デフォルト）" + '\u200B'
+                )
+            return
+
+        # セルフ設定
+        if mode != "self_service":
+            # mod_only の場合でも MOD+ ならセルフ設定可能
+            if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+                await message.channel.send(
+                    "セルフボイス設定は無効です（モデレーターに依頼してください）" + '\u200B'
+                )
+                return
+
+        # self_service モードの場合: 視聴回数チェック
+        if mode == "self_service":
+            min_visits = config.get("voice_self_assign_min_visits", 5)
+            visit_count = self._viewer_store.get_visit_count(username)
+            if visit_count < min_visits:
+                await message.channel.send(
+                    f"ボイス設定には{min_visits}回以上の視聴が必要です"
+                    f"（現在: {visit_count}回）" + '\u200B'
+                )
+                return
+
+        # ボイス ID のパース
+        arg = args.strip()
+        if arg.lower() == "reset":
+            if self._viewer_store.remove_voice(username):
+                await message.channel.send("ボイスをデフォルトに戻しました" + '\u200B')
+            else:
+                await message.channel.send("ボイスは既にデフォルトです" + '\u200B')
+            return
+
+        try:
+            speaker_id = int(arg)
+        except ValueError:
+            await message.channel.send(
+                "使い方: !myvoice <ボイスID> または !myvoice reset" + '\u200B'
+            )
+            return
+
+        allowed = config.get("voice_allowed_speakers", [])
+        if allowed and speaker_id not in allowed:
+            await message.channel.send("このボイスIDは許可されていません" + '\u200B')
+            return
+
+        speaker_name = self._get_speaker_name(speaker_id)
+        if not speaker_name:
+            await message.channel.send(
+                f"ボイスID {speaker_id} が見つかりません（!voice list で確認）" + '\u200B'
+            )
+            return
+
+        self._viewer_store.assign_voice(username, speaker_id, speaker_name, display_name)
+        await message.channel.send(
+            f"ボイスを {speaker_name} に設定しました" + '\u200B'
+        )
+
+    async def _cmd_visits(self, message, args: str) -> None:
+        """!visits [@user] — 視聴回数を確認"""
+        if args.strip():
+            # 他のユーザーの確認（MOD+ のみ）
+            if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+                await message.channel.send(
+                    "他のユーザーの確認はモデレーター以上が必要です" + '\u200B'
+                )
+                return
+            target = args.strip().lstrip("@").lower()
+            count = self._viewer_store.get_visit_count(target)
+            await message.channel.send(f"@{target} の視聴回数: {count}回" + '\u200B')
+        else:
+            display_name = (
+                getattr(message.author, "display_name", None) or message.author.name
+            )
+            count = self._viewer_store.get_visit_count(message.author.name)
+            await message.channel.send(
+                f"{display_name} の視聴回数: {count}回" + '\u200B'
+            )
 
     @property
     def command_store(self) -> CommandStore:

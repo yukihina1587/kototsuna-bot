@@ -78,6 +78,10 @@ DEFAULT_CONFIG = {
     "chat_html_window_geometry": "350x900+50+50",  # HTMLウィンドウのサイズと位置
     # コマンド機能
     "commands_enabled": True,
+    # ボイス割り当て設定
+    "voice_assign_mode": "mod_only",  # mod_only / self_service / disabled
+    "voice_self_assign_min_visits": 5,  # セルフ割り当てに必要な最低視聴回数
+    "voice_allowed_speakers": [],  # 空=全て許可、指定=制限
     # TTS設定
     "tts_volume": 80,
     "tts_speed": 1.0,
@@ -97,6 +101,7 @@ VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
 VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+VALID_VOICE_ASSIGN_MODES = {"mod_only", "self_service", "disabled"}
 
 def validate_config(config_data):
     """
@@ -169,6 +174,24 @@ def validate_config(config_data):
             validated[key] = DEFAULT_CONFIG.get(key, "")
             changed = True
 
+    # voice_assign_mode
+    if validated.get("voice_assign_mode") not in VALID_VOICE_ASSIGN_MODES:
+        logger.warning(
+            "voice_assign_mode is invalid: %s, fallback to mod_only",
+            validated.get("voice_assign_mode"),
+        )
+        validated["voice_assign_mode"] = "mod_only"
+        changed = True
+
+    # voice_self_assign_min_visits (int >= 0)
+    try:
+        validated["voice_self_assign_min_visits"] = max(
+            0, int(validated.get("voice_self_assign_min_visits", 5))
+        )
+    except (TypeError, ValueError):
+        validated["voice_self_assign_min_visits"] = 5
+        changed = True
+
     # リスト系
     if not isinstance(validated.get("translation_filters"), list):
         validated["translation_filters"] = []
@@ -176,6 +199,10 @@ def validate_config(config_data):
 
     if not isinstance(validated.get("translation_dictionary"), list):
         validated["translation_dictionary"] = []
+        changed = True
+
+    if not isinstance(validated.get("voice_allowed_speakers"), list):
+        validated["voice_allowed_speakers"] = []
         changed = True
 
     # ブール系
