@@ -351,7 +351,16 @@ def restart_app() -> None:
 
     logger.info(f"Restarting application: {current_exe} --cleanup")
     try:
-        subprocess.Popen([current_exe, "--cleanup"])
+        # 旧_MEIPASSに紐づく環境変数を除去して再起動
+        # （SSL_CERT_FILE等が旧_MEIパスを指し、証明書エラーになるため）
+        env = os.environ.copy()
+        old_meipass = getattr(sys, '_MEIPASS', '')
+        if old_meipass:
+            for key in list(env.keys()):
+                if isinstance(env[key], str) and old_meipass in env[key]:
+                    logger.debug(f"Removing stale env var: {key}={env[key]}")
+                    del env[key]
+        subprocess.Popen([current_exe, "--cleanup"], env=env)
         sys.exit(0)
     except OSError as e:
         logger.error(f"Failed to restart: {e}")

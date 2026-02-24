@@ -736,6 +736,7 @@ class KototsunaApp:
         self._apply_log_style(self.log)
         self.log.pack(fill="both", expand=True, padx=5, pady=(0, 4))
         self.log.insert("0.0", "--- システムログ開始 ---\n")
+        self.log.configure(state="disabled")
 
         self.comment_paned.add(tile_container, minsize=300)
         self.comment_paned.add(log_container, minsize=80)
@@ -752,6 +753,7 @@ class KototsunaApp:
         self._apply_log_style(self.event_log)
         self.event_log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.event_log.insert("0.0", "--- 特別イベントログ ---\n")
+        self.event_log.configure(state="disabled")
 
     def _build_participant_area(self):
         """参加者エリアを構築"""
@@ -1859,6 +1861,7 @@ class KototsunaApp:
         self._apply_log_style(self.log)
         self.log.pack(fill="both", expand=True, padx=5, pady=(0, 4))
         self.log.insert("0.0", "--- システムログ開始 ---\n")
+        self.log.configure(state="disabled")
 
         # PanedWindowに追加（上部60%, 下部40%）
         comment_paned.add(tile_container, minsize=200)
@@ -1930,6 +1933,7 @@ class KototsunaApp:
         self._apply_log_style(self.event_log)
         self.event_log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.event_log.insert("0.0", "--- 特別イベントログ ---\n")
+        self.event_log.configure(state="disabled")
 
         # === 右下: 参加者一覧 ===
         participant_frame = ctk.CTkFrame(right_paned, fg_color=PANEL_BG, corner_radius=12)
@@ -2680,8 +2684,10 @@ class KototsunaApp:
         log_line = f"[{timestamp}] {msg}\n"
 
         if hasattr(self, 'log'):
+            self.log.configure(state="normal")
             self.log.insert("end", log_line)
             self.log.see("end")
+            self.log.configure(state="disabled")
 
         # 履歴に記録
         log_entry = {
@@ -3392,8 +3398,10 @@ window.onload = function() {{
 
         # 特別イベントログに表示
         if hasattr(self, 'event_log'):
+            self.event_log.configure(state="normal")
             self.event_log.insert("end", event_msg)
             self.event_log.see("end")
+            self.event_log.configure(state="disabled")
 
         # メインログにも記録（履歴用）
         self.log_message(f"[特別イベント] {message}", log_type="event")
@@ -3618,8 +3626,10 @@ window.onload = function() {{
             self.log_history.clear()
             # システムログをクリア
             if hasattr(self, 'log'):
+                self.log.configure(state="normal")
                 self.log.delete("1.0", "end")
                 self.log.insert("0.0", "--- システムログクリア ---\n")
+                self.log.configure(state="disabled")
             # タイルをクリア
             if hasattr(self, "comment_tiles"):
                 for tile in self.comment_tiles:
