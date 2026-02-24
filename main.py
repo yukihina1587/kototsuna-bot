@@ -54,6 +54,16 @@ if getattr(sys, 'frozen', False):
             pass
     sys.excepthook = _kototsuna_excepthook
 
+# PyInstaller: 旧_MEIPASSのSSL証明書パスを現在の_MEIPASSに修正
+# アップデート後の再起動で旧パスが環境変数に残り、TLSエラーになる対策
+if getattr(sys, 'frozen', False):
+    _meipass = getattr(sys, '_MEIPASS', '')
+    if _meipass:
+        _cert = os.path.join(_meipass, 'certifi', 'cacert.pem')
+        if os.path.exists(_cert):
+            os.environ['SSL_CERT_FILE'] = _cert
+            os.environ['REQUESTS_CA_BUNDLE'] = _cert
+
 # コンソールウィンドウを非表示（console=True + hide-early のバックアップ）
 if sys.platform == "win32" and getattr(sys, 'frozen', False):
     try:
