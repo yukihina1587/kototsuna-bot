@@ -1,10 +1,21 @@
 import json
 import os
 import re
+import sys
 from datetime import datetime
 from src.logger import logger
 
-CONFIG_FILE = "config.json"
+
+def _get_config_dir() -> str:
+    """config.json を格納するディレクトリを返す"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller exe: exeと同じフォルダ
+        return os.path.dirname(os.path.abspath(sys.executable))
+    # 開発環境: プロジェクトルート（src/ の親）
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+CONFIG_FILE = os.path.join(_get_config_dir(), "config.json")
 
 DEFAULT_CONFIG = {
     "twitch_client_id": "",
