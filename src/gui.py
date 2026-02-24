@@ -298,8 +298,14 @@ class KototsunaApp:
     def _init_chat_html(self):
         """起動時にチャットHTML出力パスを設定する"""
         try:
-            path = self.chat_html_path.get().strip() or self._default_chat_html_path("")
             self._export_chat_html(force=True)
+            # OBS Browser Source用のURLをシステムログに表示
+            from src.overlay_server import get_overlay_port
+            port = get_overlay_port()
+            self.log_message(
+                f"OBS Browser Source URL: http://localhost:{port}/chat",
+                log_type="info"
+            )
         except Exception as e:
             logger.error(f"Failed to initialize chat HTML: {e}", exc_info=True)
 

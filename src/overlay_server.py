@@ -81,7 +81,9 @@ def start_server():
         socketserver.TCPServer.allow_reuse_address = True
         httpd = socketserver.TCPServer(("", port), handler)
         _httpd_instance = httpd
-        logger.info(f"Serving overlay at http://localhost:{port}/overlay.html")
+        logger.info(f"Overlay server started on port {port}")
+        logger.info(f"  Chat HTML: http://localhost:{port}/chat")
+        logger.info(f"  Overlay:   http://localhost:{port}/overlay.html")
         httpd.serve_forever()
     except OSError as e:
         logger.error(f"Server error (Port {_overlay_port} maybe in use): {e}", exc_info=True)
@@ -110,10 +112,16 @@ def run_server_thread():
     _server_thread = t
 
 
+def get_overlay_port() -> int:
+    """現在のオーバーレイサーバーのポート番号を返す"""
+    return _overlay_port
+
+
 def set_chat_html_path(path: str):
     """チャットHTMLのファイルパスを設定"""
     global _chat_html_path
     _chat_html_path = path
+    logger.info(f"Chat HTML path set to: {path}")
 
 
 def stop_server():
