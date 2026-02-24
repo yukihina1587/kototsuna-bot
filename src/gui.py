@@ -596,16 +596,6 @@ class KototsunaApp:
             fg_color="#3B82F6", hover_color="#2563EB", height=32
         ).pack(fill="x", pady=2)
 
-        ctk.CTkButton(
-            scroll, text="📊 JSON出力", command=self.export_log_json,
-            fg_color="#8B5CF6", hover_color="#7C3AED", height=32
-        ).pack(fill="x", pady=2)
-
-        ctk.CTkButton(
-            scroll, text="🗑 ログクリア", command=self.clear_log,
-            fg_color="#6B7280", hover_color="#4B5563", height=32
-        ).pack(fill="x", pady=2)
-
         # 区切り線
         ctk.CTkFrame(scroll, height=1, fg_color=BORDER).pack(fill="x", pady=12)
 
@@ -1924,24 +1914,6 @@ class KototsunaApp:
             hover_color="#2563EB",
             width=120
         ).pack(side="left", padx=(0, 5))
-
-        ctk.CTkButton(
-            log_btn_frame,
-            text="📊 JSON出力",
-            command=self.export_log_json,
-            fg_color="#8B5CF6",
-            hover_color="#7C3AED",
-            width=120
-        ).pack(side="left", padx=5)
-
-        ctk.CTkButton(
-            log_btn_frame,
-            text="🗑 ログクリア",
-            command=self.clear_log,
-            fg_color="#6B7280",
-            hover_color="#4B5563",
-            width=120
-        ).pack(side="left", padx=5)
 
         # === 右側: 上下2分割のPanedWindow（垂直方向） ===
         right_paned = tk.PanedWindow(
