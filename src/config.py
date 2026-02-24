@@ -15,7 +15,29 @@ def _get_config_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
-CONFIG_FILE = os.path.join(_get_config_dir(), "config.json")
+def _resolve_config_path() -> str:
+    """config.json のパスを決定する（旧バージョンからの移行対応）"""
+    config_dir = _get_config_dir()
+    primary = os.path.join(config_dir, "config.json")
+
+    # 正規の場所にあればそのまま使用
+    if os.path.exists(primary):
+        return primary
+
+    # 旧バージョン（相対パス）で保存されたconfig.jsonをワーキングディレクトリから探す
+    cwd_config = os.path.join(os.getcwd(), "config.json")
+    if cwd_config != primary and os.path.exists(cwd_config):
+        try:
+            import shutil
+            shutil.copy2(cwd_config, primary)
+        except Exception:
+            # コピー失敗時は旧パスを使い続ける
+            return cwd_config
+
+    return primary
+
+
+CONFIG_FILE = _resolve_config_path()
 
 DEFAULT_CONFIG = {
     "twitch_client_id": "",
