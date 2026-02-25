@@ -571,12 +571,12 @@ class KototsunaApp:
         # === パネルナビゲーション ===
         self._add_sidebar_section(scroll, "パネル")
         nav_items = [
-            ("settings", "⚙️ 設定"),
-            ("dictionary", "📖 辞書"),
-            ("participants", "👥 参加者"),
-            ("viewers", "🎙️ 常連管理"),
-            ("resources", "📊 リソース"),
-            ("commands", "💬 コマンド"),
+            ("settings", "⚙  設定"),
+            ("dictionary", "📖  辞書"),
+            ("participants", "👥  参加者"),
+            ("viewers", "🎙  常連管理"),
+            ("resources", "📊  リソース"),
+            ("commands", "💬  コマンド"),
         ]
         for panel_id, label in nav_items:
             btn = ctk.CTkButton(
