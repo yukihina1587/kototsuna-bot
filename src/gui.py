@@ -38,6 +38,7 @@ from src.logger import logger, set_log_level
 from src.tts import get_tts_instance
 from src.tts_dictionary import get_dictionary
 from src.participant_tracker import get_tracker
+from src.viewer_store import get_viewer_store
 from src.voicevox_manager import get_voicevox_manager
 from src.comment_data import CommentData
 from src import translator, __version__
@@ -573,6 +574,7 @@ class KototsunaApp:
             ("settings", "⚙️ 設定"),
             ("dictionary", "📖 辞書"),
             ("participants", "👥 参加者"),
+            ("viewers", "🎙️ 常連管理"),
             ("resources", "📊 リソース"),
             ("commands", "💬 コマンド"),
         ]
@@ -834,7 +836,7 @@ class KototsunaApp:
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "resources": "リソース監視", "commands": "コマンド管理"}
+        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "viewers": "常連管理", "resources": "リソース監視", "commands": "コマンド管理"}
         ctk.CTkLabel(header, text=titles.get(panel_id, ""), font=FONT_LABEL).pack(side="left", padx=12)
         ctk.CTkButton(header, text="✕", command=self._close_right_panel, width=32, height=32, fg_color="transparent", hover_color=BORDER).pack(side="right", padx=4)
 
@@ -847,6 +849,7 @@ class KototsunaApp:
             "settings": self._build_settings_panel,
             "dictionary": self._build_dictionary_panel,
             "participants": self._build_participants_panel,
+            "viewers": self._build_viewers_panel,
             "resources": self._build_resources_panel,
             "commands": self._build_commands_panel,
         }
@@ -1410,6 +1413,275 @@ class KototsunaApp:
         auto_frame = ctk.CTkFrame(parent, fg_color="transparent")
         auto_frame.pack(fill="x", pady=(8, 0))
         ctk.CTkSwitch(auto_frame, text="⏰ 自動送信(1分)", variable=self.auto_send_var, command=self.toggle_auto_send, font=("Segoe UI", 11)).pack(side="left")
+
+    # ========================================
+    # 常連管理パネル
+    # ========================================
+
+    def _build_viewers_panel(self, parent):
+        """常連管理パネル: 視聴回数ランキング・ボイス割り当て・設定"""
+        try:
+            viewer_store = get_viewer_store()
+
+            # =====================================
+            # セクション1: ボイス割り当て設定
+            # =====================================
+            self._add_panel_section(parent, "ボイス割り当て設定")
+
+            config = load_config()
+
+            # モード切替
+            mode_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            mode_frame.pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(mode_frame, text="モード", font=FONT_BODY).pack(side="left")
+
+            mode_map = {"mod_only": "モデ専用", "self_service": "セルフ", "disabled": "無効"}
+            mode_reverse = {v: k for k, v in mode_map.items()}
+            current_mode = config.get("voice_assign_mode", "mod_only")
+
+            self._voice_mode_var = tk.StringVar(value=mode_map.get(current_mode, "モデ専用"))
+            ctk.CTkOptionMenu(
+                mode_frame,
+                variable=self._voice_mode_var,
+                values=list(mode_map.values()),
+                command=lambda v: self._on_voice_mode_changed(mode_reverse.get(v, "mod_only")),
+                width=120, height=28,
+                fg_color=CARD_BG, button_color=ACCENT_SECONDARY,
+            ).pack(side="right")
+
+            # 最低視聴回数（self_service 用）
+            visits_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            visits_frame.pack(fill="x", pady=(0, 8))
+            ctk.CTkLabel(visits_frame, text="セルフ設定に必要な視聴回数", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(side="left")
+
+            self._voice_min_visits_var = tk.StringVar(
+                value=str(config.get("voice_self_assign_min_visits", 5))
+            )
+            min_entry = ctk.CTkEntry(
+                visits_frame, textvariable=self._voice_min_visits_var,
+                width=50, height=28
+            )
+            min_entry.pack(side="right")
+            min_entry.bind("<FocusOut>", lambda e: self._on_voice_min_visits_changed())
+
+            self._add_panel_divider(parent)
+
+            # =====================================
+            # セクション2: ボイス割り当て（クイック操作）
+            # =====================================
+            self._add_panel_section(parent, "ボイス割り当て")
+            ctk.CTkLabel(
+                parent, text="ユーザー名とボイスIDを入力",
+                font=("Segoe UI", 10), text_color=TEXT_SUBTLE
+            ).pack(anchor="w", pady=(0, 4))
+
+            assign_row = ctk.CTkFrame(parent, fg_color="transparent")
+            assign_row.pack(fill="x", pady=(0, 4))
+
+            self._viewer_assign_user_entry = ctk.CTkEntry(
+                assign_row, placeholder_text="ユーザー名", height=28
+            )
+            self._viewer_assign_user_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+            self._viewer_assign_voice_entry = ctk.CTkEntry(
+                assign_row, placeholder_text="ID", height=28, width=50
+            )
+            self._viewer_assign_voice_entry.pack(side="left", padx=(0, 4))
+
+            ctk.CTkButton(
+                assign_row, text="設定", command=self._assign_voice_from_panel,
+                width=50, height=28, fg_color=ACCENT
+            ).pack(side="right")
+
+            # 割り当て済み一覧
+            self._viewer_voice_list_frame = ctk.CTkScrollableFrame(
+                parent, height=100, fg_color=CARD_BG
+            )
+            self._viewer_voice_list_frame.pack(fill="x", pady=(0, 8))
+
+            self._add_panel_divider(parent)
+
+            # =====================================
+            # セクション3: 視聴回数ランキング
+            # =====================================
+            viewers = viewer_store._viewers
+            total = len(viewers)
+            self._add_panel_section(parent, f"視聴回数ランキング ({total}人)")
+
+            self._viewer_ranking_frame = ctk.CTkScrollableFrame(
+                parent, height=200, fg_color=CARD_BG
+            )
+            self._viewer_ranking_frame.pack(fill="x", pady=(0, 8))
+
+            # ボタン行
+            btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            btn_frame.pack(fill="x", pady=(4, 0))
+            ctk.CTkButton(
+                btn_frame, text="🔄 更新", command=self._refresh_viewers_panel,
+                height=32
+            ).pack(side="left", fill="x", expand=True)
+
+            # 初回描画
+            self._refresh_viewers_panel()
+
+        except Exception as e:
+            logger.error(f"常連管理パネル構築エラー: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _on_voice_mode_changed(self, mode: str) -> None:
+        """ボイス割り当てモードを変更して保存"""
+        config = load_config()
+        config["voice_assign_mode"] = mode
+        save_config(config)
+        logger.info("ボイス割り当てモード変更: %s", mode)
+
+    def _on_voice_min_visits_changed(self) -> None:
+        """最低視聴回数を変更して保存"""
+        try:
+            val = max(0, int(self._voice_min_visits_var.get()))
+        except (ValueError, TypeError):
+            val = 5
+        self._voice_min_visits_var.set(str(val))
+        config = load_config()
+        config["voice_self_assign_min_visits"] = val
+        save_config(config)
+        logger.info("セルフ設定の最低視聴回数変更: %d", val)
+
+    def _assign_voice_from_panel(self) -> None:
+        """パネルからボイスを割り当てる"""
+        username = self._viewer_assign_user_entry.get().strip().lstrip("@").lower()
+        voice_str = self._viewer_assign_voice_entry.get().strip()
+
+        if not username or not voice_str:
+            return
+
+        try:
+            speaker_id = int(voice_str)
+        except ValueError:
+            self.log_message("ボイスIDは数値で入力してください", log_type="system")
+            return
+
+        # スピーカー名を取得
+        tts = get_tts_instance()
+        speaker_name = None
+        for s in tts.get_speakers_list():
+            if s.get("id") == speaker_id:
+                speaker_name = s.get("display", s.get("name", f"Speaker {speaker_id}"))
+                break
+
+        if not speaker_name:
+            self.log_message(f"ボイスID {speaker_id} が見つかりません", log_type="system")
+            return
+
+        viewer_store = get_viewer_store()
+        viewer_store.assign_voice(username, speaker_id, speaker_name, "GUI")
+
+        # 入力欄をクリア
+        self._viewer_assign_user_entry.delete(0, "end")
+        self._viewer_assign_voice_entry.delete(0, "end")
+
+        self._refresh_viewers_panel()
+        self.log_message(
+            f"@{username} のボイスを {speaker_name} に設定しました", log_type="system"
+        )
+
+    def _remove_voice_from_panel(self, username: str) -> None:
+        """パネルからボイス割り当てを解除"""
+        viewer_store = get_viewer_store()
+        viewer_store.remove_voice(username)
+        self._refresh_viewers_panel()
+        self.log_message(f"@{username} のボイスを解除しました", log_type="system")
+
+    def _refresh_viewers_panel(self) -> None:
+        """常連管理パネルのリストを更新"""
+        viewer_store = get_viewer_store()
+
+        # --- ボイス割り当て済み一覧 ---
+        if hasattr(self, "_viewer_voice_list_frame"):
+            for w in self._viewer_voice_list_frame.winfo_children():
+                w.destroy()
+
+            assigned = viewer_store.get_viewers_with_voice()
+            if not assigned:
+                ctk.CTkLabel(
+                    self._viewer_voice_list_frame, text="割り当てなし",
+                    font=("Segoe UI", 10), text_color=TEXT_SUBTLE
+                ).pack(pady=8)
+            else:
+                for username, voice in assigned:
+                    row = ctk.CTkFrame(self._viewer_voice_list_frame, fg_color="transparent")
+                    row.pack(fill="x", pady=1)
+                    ctk.CTkLabel(
+                        row, text=f"@{username}",
+                        font=("Segoe UI Semibold", 10), width=90, anchor="w"
+                    ).pack(side="left", padx=(4, 4))
+                    ctk.CTkLabel(
+                        row,
+                        text=f"{voice['speaker_name']} ({voice['speaker_id']})",
+                        font=("Segoe UI", 9), text_color=TEXT_SUBTLE, anchor="w"
+                    ).pack(side="left", fill="x", expand=True)
+                    ctk.CTkButton(
+                        row, text="✕", width=24, height=24,
+                        fg_color="transparent", hover_color="#EF4444",
+                        command=lambda u=username: self._remove_voice_from_panel(u)
+                    ).pack(side="right")
+
+        # --- 視聴回数ランキング ---
+        if hasattr(self, "_viewer_ranking_frame"):
+            for w in self._viewer_ranking_frame.winfo_children():
+                w.destroy()
+
+            # visit_count 降順でソート
+            with viewer_store._lock:
+                sorted_viewers = sorted(
+                    viewer_store._viewers.items(),
+                    key=lambda x: x[1].visit_count,
+                    reverse=True,
+                )
+
+            if not sorted_viewers:
+                ctk.CTkLabel(
+                    self._viewer_ranking_frame, text="データなし",
+                    font=("Segoe UI", 10), text_color=TEXT_SUBTLE
+                ).pack(pady=8)
+            else:
+                # 上位50人まで表示
+                for i, (username, viewer) in enumerate(sorted_viewers[:50], 1):
+                    row = ctk.CTkFrame(self._viewer_ranking_frame, fg_color="transparent")
+                    row.pack(fill="x", pady=1)
+
+                    # 順位
+                    rank_color = (
+                        "#FFD700" if i == 1 else
+                        "#C0C0C0" if i == 2 else
+                        "#CD7F32" if i == 3 else
+                        TEXT_SUBTLE
+                    )
+                    ctk.CTkLabel(
+                        row, text=f"#{i}",
+                        font=("Segoe UI Semibold", 10), text_color=rank_color,
+                        width=30, anchor="e"
+                    ).pack(side="left", padx=(0, 6))
+
+                    # 名前
+                    ctk.CTkLabel(
+                        row, text=viewer.display_name,
+                        font=("Segoe UI", 10), anchor="w"
+                    ).pack(side="left", fill="x", expand=True)
+
+                    # ボイスアイコン
+                    if viewer.assigned_voice:
+                        ctk.CTkLabel(
+                            row, text="🎙️",
+                            font=("Segoe UI", 10), width=20
+                        ).pack(side="left", padx=(0, 2))
+
+                    # 回数
+                    ctk.CTkLabel(
+                        row, text=f"{viewer.visit_count}回",
+                        font=("Consolas", 10), text_color=ACCENT, width=45, anchor="e"
+                    ).pack(side="right", padx=(0, 4))
 
     def _build_resources_panel(self, parent):
         """リソースパネルのコンテンツ"""
