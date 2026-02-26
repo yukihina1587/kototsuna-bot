@@ -107,8 +107,6 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name='Kototsuna',
     debug=False,
@@ -116,7 +114,6 @@ exe = EXE(
     strip=False,
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,  # デフォルト(%TEMP%)。親子プロセスモードで_MEI自動削除が確実に動作する。AV隔離はruntime_cacheで対処。
     console=True,  # bootloaderエラーをstderrへ出力（MessageBox回避）
     hide_console='hide-early',  # bootloader起動直後にコンソールを非表示
     disable_windowed_traceback=False,
@@ -125,4 +122,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='assets/icon_fullsize.ico',  # パディング付き256x256高解像度ICOファイル
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='Kototsuna',
 )

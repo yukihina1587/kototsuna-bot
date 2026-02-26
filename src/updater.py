@@ -22,11 +22,14 @@ from src.logger import logger
 
 # GitHub API設定
 GITHUB_API_URL = "https://api.github.com/repos/yukihina1587/kototsuna-bot/releases"
-EXE_ASSET_NAME = "Kototsuna.exe"
+EXE_ASSET_NAME = "Kototsuna_Setup.exe"
 
 # タイムアウト設定
 REQUEST_TIMEOUT = 15
 DOWNLOAD_CHUNK_SIZE = 8192
+
+# Pending installer path (set by apply_update, used by restart_app)
+_pending_installer_path: Optional[str] = None
 
 
 class UpdateError(Exception):
@@ -295,64 +298,74 @@ def download_update(
 
 
 def apply_update(downloaded_path: str) -> None:
-    """ダウンロードしたexeで現在のexeを差し替える。
-
-    手順:
-    1. 現在のexe → .old にリネーム
-    2. ダウンロードファイル → 現在のexeの位置にコピー
-    3. 失敗時は .old から復元
+    """ダウンロードしたインストーラーを検証し、再起動時の実行に備える。
 
     Args:
-        downloaded_path: ダウンロードした一時ファイルのパス
+        downloaded_path: ダウンロードしたインストーラーのパス
 
     Raises:
-        UpdateError: 差し替え失敗時
+        UpdateError: ファイルが見つからない場合
     """
-    current_exe = _get_current_exe_path()
-    if not current_exe:
-        raise UpdateError("Cannot determine current executable path")
-
-    old_path = current_exe + ".old"
-
-    try:
-        # 既存の.oldファイルを削除
-        if os.path.exists(old_path):
-            os.unlink(old_path)
-
-        # 現在のexeをリネーム
-        logger.info(f"Renaming current exe: {current_exe} -> {old_path}")
-        os.rename(current_exe, old_path)
-
-        # ダウンロードファイルを配置
-        logger.info(f"Moving downloaded file: {downloaded_path} -> {current_exe}")
-        import shutil
-        shutil.move(downloaded_path, current_exe)
-
-        logger.info("Update applied successfully")
-
-    except OSError as e:
-        # ロールバック: .oldを元に戻す
-        logger.error(f"Update failed, attempting rollback: {e}")
-        try:
-            if os.path.exists(old_path) and not os.path.exists(current_exe):
-                os.rename(old_path, current_exe)
-                logger.info("Rollback successful")
-        except OSError as rollback_error:
-            logger.critical(f"Rollback failed: {rollback_error}")
-        raise UpdateError(f"Failed to apply update: {e}") from e
+    global _pending_installer_path
+    if not os.path.exists(downloaded_path):
+        raise UpdateError(f"Installer not found: {downloaded_path}")
+    _pending_installer_path = downloaded_path
+    logger.info(f"Installer ready for execution: {downloaded_path}")
 
 
 def restart_app() -> None:
-    """アプリを再起動する（--cleanup引数付き）。"""
+    """アプリを再起動する。保留中のインストーラーがあれば実行する。"""
+    global _pending_installer_path
     current_exe = _get_current_exe_path()
     if not current_exe:
         logger.error("Cannot determine executable path for restart")
         return
 
+    if _pending_installer_path and os.path.exists(_pending_installer_path):
+        _launch_installer_and_restart(_pending_installer_path, current_exe)
+    else:
+        _restart_directly(current_exe)
+
+
+def _launch_installer_and_restart(installer_path: str, current_exe: str) -> None:
+    """バッチスクリプトでインストーラーを実行し、アプリを再起動する。"""
+    install_dir = os.path.dirname(current_exe)
+    exe_name = os.path.basename(current_exe)
+    app_exe = os.path.join(install_dir, exe_name)
+
+    bat_content = (
+        '@echo off\r\n'
+        ':waitloop\r\n'
+        'timeout /t 1 /nobreak >nul\r\n'
+        f'tasklist /FI "IMAGENAME eq {exe_name}" 2>nul | findstr /I "{exe_name}" >nul\r\n'
+        'if %ERRORLEVEL%==0 goto waitloop\r\n'
+        f'"{installer_path}" /SILENT /SUPPRESSMSGBOXES /DIR="{install_dir}" /NORESTART\r\n'
+        f'start "" "{app_exe}"\r\n'
+        f'del "{installer_path}" 2>nul\r\n'
+        'del "%~f0" 2>nul\r\n'
+    )
+
+    bat_path = os.path.join(tempfile.gettempdir(), "kototsuna_update.bat")
+    with open(bat_path, "w", encoding="ascii", errors="replace") as f:
+        f.write(bat_content)
+
+    logger.info(f"Launching update script: {bat_path}")
+    creation_flags = (
+        subprocess.CREATE_NEW_PROCESS_GROUP
+        | subprocess.DETACHED_PROCESS
+        | subprocess.CREATE_NO_WINDOW
+    )
+    subprocess.Popen(
+        ["cmd", "/c", bat_path],
+        creationflags=creation_flags,
+    )
+    os._exit(0)
+
+
+def _restart_directly(current_exe: str) -> None:
+    """インストーラーなしでアプリを直接再起動する。"""
     logger.info(f"Restarting application: {current_exe} --cleanup")
     try:
-        # 旧_MEIPASSに紐づく環境変数を除去して再起動
-        # （SSL_CERT_FILE等が旧_MEIパスを指し、証明書エラーになるため）
         env = os.environ.copy()
         old_meipass = getattr(sys, '_MEIPASS', '')
         if old_meipass:
@@ -360,10 +373,8 @@ def restart_app() -> None:
                 if isinstance(env[key], str) and old_meipass in env[key]:
                     logger.debug(f"Removing stale env var: {key}={env[key]}")
                     del env[key]
-        # 親プロセスから独立した新プロセスとして起動
         creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
         subprocess.Popen([current_exe, "--cleanup"], env=env, creationflags=creation_flags)
-        # 新プロセスが確立するまで待機してから終了
         import time
         time.sleep(1)
         os._exit(0)
@@ -405,6 +416,17 @@ def cleanup_old_exe() -> None:
                 cleaned += 1
             except OSError as e:
                 logger.warning(f"Failed to clean up {filepath}: {e}")
+
+    # Clean up update batch scripts in temp directory
+    temp_dir = tempfile.gettempdir()
+    bat_path = os.path.join(temp_dir, "kototsuna_update.bat")
+    if os.path.exists(bat_path):
+        try:
+            os.unlink(bat_path)
+            logger.info(f"Cleaned up update script: {bat_path}")
+            cleaned += 1
+        except OSError:
+            pass
 
     if cleaned:
         logger.info(f"Cleanup complete: {cleaned} file(s)/dir(s) removed")

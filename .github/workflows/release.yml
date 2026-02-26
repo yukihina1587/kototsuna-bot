@@ -32,11 +32,11 @@ jobs:
 
       - name: Verify build output
         run: |
-          if (!(Test-Path "dist/Kototsuna.exe")) {
-            Write-Error "Build failed: Kototsuna.exe not found"
+          if (!(Test-Path "dist/Kototsuna/Kototsuna.exe")) {
+            Write-Error "Build failed: dist/Kototsuna/Kototsuna.exe not found"
             exit 1
           }
-          $size = (Get-Item "dist/Kototsuna.exe").Length / 1MB
+          $size = (Get-Item "dist/Kototsuna/Kototsuna.exe").Length / 1MB
           Write-Host "Build successful: Kototsuna.exe ($([math]::Round($size, 2)) MB)"
         shell: pwsh
 
@@ -54,8 +54,8 @@ jobs:
           candidates = (
               glob.glob('build/**/_tcl_data/init.tcl', recursive=True)
               + glob.glob('build/**/_internal/_tcl_data/init.tcl', recursive=True)
-              + glob.glob('dist/**/_tcl_data/init.tcl', recursive=True)
-              + glob.glob('dist/**/_internal/_tcl_data/init.tcl', recursive=True)
+              + glob.glob('dist/Kototsuna/_internal/_tcl_data/init.tcl', recursive=True)
+              + glob.glob('dist/Kototsuna/_internal/**/init.tcl', recursive=True)
           )
           print(f'init.tcl in known Tcl data paths: {len(candidates)} files')
           for m in candidates[:5]:
@@ -68,10 +68,23 @@ jobs:
           python $scriptPath
         shell: pwsh
 
+      - name: Build installer with Inno Setup
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          Write-Host "Building installer for version: $version"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=$version installer.iss
+          if (!(Test-Path "installer_output/Kototsuna_Setup.exe")) {
+            Write-Error "Inno Setup build failed: Kototsuna_Setup.exe not found"
+            exit 1
+          }
+          $size = (Get-Item "installer_output/Kototsuna_Setup.exe").Length / 1MB
+          Write-Host "Installer built: Kototsuna_Setup.exe ($([math]::Round($size, 2)) MB)"
+        shell: pwsh
+
       - name: Calculate SHA256 hash
         id: hash
         run: |
-          $hash = (Get-FileHash -Path "dist/Kototsuna.exe" -Algorithm SHA256).Hash
+          $hash = (Get-FileHash -Path "installer_output/Kototsuna_Setup.exe" -Algorithm SHA256).Hash
           Write-Host "SHA256: $hash"
           "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         shell: pwsh
@@ -89,12 +102,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Kototsuna.exe
+          files: installer_output/Kototsuna_Setup.exe
           prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           body: |
             ## SHA256
             ```
-            ${{ steps.hash.outputs.sha256 }}  Kototsuna.exe
+            ${{ steps.hash.outputs.sha256 }}  Kototsuna_Setup.exe
             ```
           append_body: true
