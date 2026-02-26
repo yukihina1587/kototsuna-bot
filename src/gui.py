@@ -544,32 +544,33 @@ class KototsunaApp:
         sidebar.pack(side="left", fill="y", padx=(0, 8))
         sidebar.pack_propagate(False)
 
-        scroll = ctk.CTkScrollableFrame(sidebar, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=6, pady=6)
+        # === 上部コンテンツ ===
+        top = ctk.CTkFrame(sidebar, fg_color="transparent")
+        top.pack(fill="x", padx=6, pady=(6, 0))
 
         # === 翻訳モード ===
-        self._add_sidebar_section(scroll, "翻訳モード")
+        self._add_sidebar_section(top, "翻訳モード")
         ctk.CTkOptionMenu(
-            scroll, variable=self.lang_mode, values=['自動', '英→日', '日→英'],
-            fg_color=CARD_BG, button_color=ACCENT_SECONDARY, height=30
-        ).pack(fill="x", pady=(0, 6))
+            top, variable=self.lang_mode, values=['自動', '英→日', '日→英'],
+            fg_color=CARD_BG, button_color=ACCENT_SECONDARY, height=28
+        ).pack(fill="x", pady=(0, 4))
 
         # === 機能トグル ===
-        self._add_sidebar_section(scroll, "機能")
+        self._add_sidebar_section(top, "機能")
 
-        self._add_sidebar_toggle(scroll, "チャット翻訳", self.chat_translation_enabled, self._on_translation_toggle_changed)
-        self._add_sidebar_toggle(scroll, "名前も読み上げ", self.tts_include_name_var, None)
-        self._add_sidebar_toggle(scroll, "声→翻訳チャット", self.voice_var, self.toggle_voice)
+        self._add_sidebar_toggle(top, "チャット翻訳", self.chat_translation_enabled, self._on_translation_toggle_changed)
+        self._add_sidebar_toggle(top, "名前も読み上げ", self.tts_include_name_var, None)
+        self._add_sidebar_toggle(top, "声→翻訳チャット", self.voice_var, self.toggle_voice)
 
         # === 音量・速度スライダー ===
-        self._add_sidebar_slider(scroll, "音量", self.tts_volume_var, 0, 100, "%")
-        self._add_sidebar_slider(scroll, "速度", self.tts_speed_var, 0.5, 2.0, "x")
+        self._add_sidebar_slider(top, "音量", self.tts_volume_var, 0, 100, "%")
+        self._add_sidebar_slider(top, "速度", self.tts_speed_var, 0.5, 2.0, "x")
 
         # 区切り線
-        ctk.CTkFrame(scroll, height=1, fg_color=BORDER).pack(fill="x", pady=6)
+        ctk.CTkFrame(top, height=1, fg_color=BORDER).pack(fill="x", pady=4)
 
         # === パネルナビゲーション ===
-        self._add_sidebar_section(scroll, "パネル")
+        self._add_sidebar_section(top, "パネル")
         nav_items = [
             ("settings", "⚙  設定"),
             ("dictionary", "📖  辞書"),
@@ -580,32 +581,31 @@ class KototsunaApp:
         ]
         for panel_id, label in nav_items:
             btn = ctk.CTkButton(
-                scroll, text=label, command=lambda p=panel_id: self._toggle_right_panel(p),
-                fg_color=CARD_BG, hover_color=ACCENT, anchor="w", height=30,
+                top, text=label, command=lambda p=panel_id: self._toggle_right_panel(p),
+                fg_color=CARD_BG, hover_color=ACCENT, anchor="w", height=28,
                 text_color="#FFFFFF", corner_radius=6
             )
             btn.pack(fill="x", pady=1)
             self.nav_buttons[panel_id] = btn
 
         # 区切り線
-        ctk.CTkFrame(scroll, height=1, fg_color=BORDER).pack(fill="x", pady=6)
+        ctk.CTkFrame(top, height=1, fg_color=BORDER).pack(fill="x", pady=4)
 
-        # === 下部アクション（ログ操作ボタン） ===
-        self._add_sidebar_section(scroll, "ログ操作")
-
+        # === ログ操作 ===
         ctk.CTkButton(
-            scroll, text="📄 テキスト出力", command=self.export_log_text,
-            fg_color="#3B82F6", hover_color="#2563EB", height=28
+            top, text="📄 テキスト出力", command=self.export_log_text,
+            fg_color="#3B82F6", hover_color="#2563EB", height=26
         ).pack(fill="x", pady=1)
 
-        # 区切り線
-        ctk.CTkFrame(scroll, height=1, fg_color=BORDER).pack(fill="x", pady=6)
+        # === 下部固定: OBS連携 ===
+        bottom = ctk.CTkFrame(sidebar, fg_color="transparent")
+        bottom.pack(side="bottom", fill="x", padx=6, pady=(0, 6))
 
-        # === OBS連携 ===
-        self._add_sidebar_section(scroll, "OBS連携")
+        ctk.CTkFrame(bottom, height=1, fg_color=BORDER).pack(fill="x", pady=(0, 4))
+        self._add_sidebar_section(bottom, "OBS連携")
 
         self.obs_url_label = ctk.CTkLabel(
-            scroll,
+            bottom,
             text="http://localhost:8080/chat",
             font=("Consolas", 10),
             text_color="#9BAEC6",
@@ -614,13 +614,13 @@ class KototsunaApp:
         self.obs_url_label.pack(fill="x", pady=(0, 2))
 
         ctk.CTkButton(
-            scroll, text="📋 URLコピー", command=self._copy_obs_url,
-            fg_color="#10B981", hover_color="#059669", height=28
+            bottom, text="📋 URLコピー", command=self._copy_obs_url,
+            fg_color="#10B981", hover_color="#059669", height=26
         ).pack(fill="x", pady=1)
 
         ctk.CTkButton(
-            scroll, text="❓ 設定方法", command=self._open_obs_setup_wiki,
-            fg_color="#6B7280", hover_color="#4B5563", height=28
+            bottom, text="❓ 設定方法", command=self._open_obs_setup_wiki,
+            fg_color="#6B7280", hover_color="#4B5563", height=26
         ).pack(fill="x", pady=1)
 
     def _add_sidebar_section(self, parent, text):
@@ -2278,6 +2278,13 @@ class KototsunaApp:
         # スクロール可能なフレームを作成
         scrollable_frame = ctk.CTkScrollableFrame(self.tab_settings, fg_color="transparent")
         scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # マニュアルリンク
+        ctk.CTkButton(
+            scrollable_frame, text="📖 マニュアル (Wiki)",
+            command=lambda: webbrowser.open("https://github.com/yukihina1587/kototsuna-bot/wiki"),
+            fg_color="#6366F1", hover_color="#4F46E5", height=32
+        ).pack(fill="x", padx=10, pady=(10, 4))
 
         frm_set = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
         frm_set.pack(fill="both", expand=True, padx=10, pady=10)
