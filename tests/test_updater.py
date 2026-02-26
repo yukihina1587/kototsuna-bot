@@ -126,8 +126,8 @@ MOCK_RELEASE_DATA = {
     "prerelease": False,
     "assets": [
         {
-            "name": "Kototsuna.exe",
-            "browser_download_url": "https://github.com/test/releases/download/v1.1.0/Kototsuna.exe",
+            "name": "Kototsuna_Setup.exe",
+            "browser_download_url": "https://github.com/test/releases/download/v1.1.0/Kototsuna_Setup.exe",
             "size": 300000000,
         }
     ],
@@ -148,7 +148,7 @@ class TestCheckForUpdates:
         assert result.version == "1.1.0"
         assert result.tag_name == "v1.1.0"
         assert result.sha256 == "aabbccdd11223344aabbccdd11223344aabbccdd11223344aabbccdd11223344"
-        assert result.asset_url.endswith("Kototsuna.exe")
+        assert result.asset_url.endswith("Kototsuna_Setup.exe")
 
     @patch("src.updater.requests.get")
     def test_no_new_version(self, mock_get):
@@ -199,8 +199,8 @@ class TestCheckForUpdates:
             "tag_name": "v1.1.3-rc9",
             "prerelease": True,
             "assets": [{
-                "name": "Kototsuna.exe",
-                "browser_download_url": "https://example.com/v1.1.3-rc9/Kototsuna.exe",
+                "name": "Kototsuna_Setup.exe",
+                "browser_download_url": "https://example.com/v1.1.3-rc9/Kototsuna_Setup.exe",
                 "size": 100,
             }],
         }
@@ -209,8 +209,8 @@ class TestCheckForUpdates:
             "tag_name": "v1.1.3-rc11",
             "prerelease": True,
             "assets": [{
-                "name": "Kototsuna.exe",
-                "browser_download_url": "https://example.com/v1.1.3-rc11/Kototsuna.exe",
+                "name": "Kototsuna_Setup.exe",
+                "browser_download_url": "https://example.com/v1.1.3-rc11/Kototsuna_Setup.exe",
                 "size": 100,
             }],
         }
@@ -243,7 +243,7 @@ class TestDownloadUpdate:
         release = ReleaseInfo(
             version="1.1.0", tag_name="v1.1.0", name="Release",
             body="", published_at="", prerelease=False,
-            asset_url="https://example.com/Kototsuna.exe",
+            asset_url="https://example.com/Kototsuna_Setup.exe",
             asset_size=len(content), sha256="",
         )
 
@@ -268,7 +268,7 @@ class TestDownloadUpdate:
         release = ReleaseInfo(
             version="1.1.0", tag_name="v1.1.0", name="Release",
             body="", published_at="", prerelease=False,
-            asset_url="https://example.com/Kototsuna.exe",
+            asset_url="https://example.com/Kototsuna_Setup.exe",
             asset_size=len(content),
             sha256="0000000000000000000000000000000000000000000000000000000000000000",
         )
@@ -288,7 +288,7 @@ class TestDownloadUpdate:
         release = ReleaseInfo(
             version="1.1.0", tag_name="v1.1.0", name="Release",
             body="", published_at="", prerelease=False,
-            asset_url="https://example.com/Kototsuna.exe",
+            asset_url="https://example.com/Kototsuna_Setup.exe",
             asset_size=len(content), sha256="",
         )
 
