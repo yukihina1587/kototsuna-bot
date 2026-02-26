@@ -300,6 +300,9 @@ def download_update(
 def apply_update(downloaded_path: str) -> None:
     """ダウンロードしたインストーラーを検証し、再起動時の実行に備える。
 
+    .tmp拡張子のままではWindowsがexeとして認識しないため、
+    .exe拡張子にリネームする。
+
     Args:
         downloaded_path: ダウンロードしたインストーラーのパス
 
@@ -309,6 +312,17 @@ def apply_update(downloaded_path: str) -> None:
     global _pending_installer_path
     if not os.path.exists(downloaded_path):
         raise UpdateError(f"Installer not found: {downloaded_path}")
+
+    # .tmp → .exe にリネーム（Windowsが実行可能ファイルとして認識するため）
+    if not downloaded_path.endswith(".exe"):
+        exe_path = downloaded_path.rsplit(".", 1)[0] + ".exe"
+        try:
+            os.rename(downloaded_path, exe_path)
+            downloaded_path = exe_path
+            logger.info(f"Renamed installer to .exe: {exe_path}")
+        except OSError as e:
+            logger.warning(f"Failed to rename installer: {e}")
+
     _pending_installer_path = downloaded_path
     logger.info(f"Installer ready for execution: {downloaded_path}")
 
@@ -350,9 +364,11 @@ def _launch_installer_and_restart(installer_path: str, current_exe: str) -> None
         f.write(bat_content)
 
     logger.info(f"Launching update script: {bat_path}")
+    # CREATE_NO_WINDOW: コンソールウィンドウを非表示
+    # CREATE_NEW_PROCESS_GROUP: 親プロセスから独立
+    # 注: DETACHED_PROCESSとCREATE_NO_WINDOWは併用不可（MSドキュメント）
     creation_flags = (
         subprocess.CREATE_NEW_PROCESS_GROUP
-        | subprocess.DETACHED_PROCESS
         | subprocess.CREATE_NO_WINDOW
     )
     subprocess.Popen(
