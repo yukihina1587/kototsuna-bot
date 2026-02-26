@@ -1134,6 +1134,13 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
+        # マニュアルリンク
+        ctk.CTkButton(
+            parent, text="📖 マニュアル (Wiki)",
+            command=lambda: webbrowser.open("https://github.com/yukihina1587/kototsuna-bot/wiki"),
+            fg_color="#6366F1", hover_color="#4F46E5", height=32
+        ).pack(fill="x", pady=(4, 8))
+
     def _build_commands_panel(self, parent):
         """コマンド管理パネルのコンテンツ"""
         try:
@@ -2278,13 +2285,6 @@ class KototsunaApp:
         # スクロール可能なフレームを作成
         scrollable_frame = ctk.CTkScrollableFrame(self.tab_settings, fg_color="transparent")
         scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # マニュアルリンク
-        ctk.CTkButton(
-            scrollable_frame, text="📖 マニュアル (Wiki)",
-            command=lambda: webbrowser.open("https://github.com/yukihina1587/kototsuna-bot/wiki"),
-            fg_color="#6366F1", hover_color="#4F46E5", height=32
-        ).pack(fill="x", padx=10, pady=(10, 4))
 
         frm_set = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
         frm_set.pack(fill="both", expand=True, padx=10, pady=10)
