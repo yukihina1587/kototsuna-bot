@@ -2,7 +2,6 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
 from src.logger import logger
 
 
@@ -50,11 +49,9 @@ DEFAULT_CONFIG = {
     "voicevox_speaker_id": 14,  # 冥鳴ひまり (Meimei Himari)
     "voicevox_engine_path": "",  # VOICEVOX Engineの実行ファイルパス
     "voicevox_auto_start": True,  # VOICEVOX Engineを自動起動するかどうか
-    # Gladia STT設定
-    "gladia_api_key": "",
-    "gladia_usage_seconds": 0,  # 今月の使用秒数
-    "gladia_reset_month": "",  # 最後にリセットした月 (例: "2025-12")
-    "stt_provider": "gladia",  # 音声認識プロバイダー: "gladia" または "google"
+    # ローカルSTT設定
+    "stt_num_threads": 2,          # sherpa-onnx CPU threads
+    "stt_vad_threshold": 0.5,     # Silero VAD threshold (0.01-1.0)
     # イベント効果音
     "bits_sound_path": "",
     "bits_sound_volume": 80,
@@ -154,9 +151,6 @@ def validate_config(config_data):
         "channel_mode",
         "voicevox_url",
         "voicevox_engine_path",
-        "gladia_api_key",
-        "gladia_reset_month",
-        "stt_provider",
         "bits_sound_path",
         "subscription_sound_path",
         "gift_sub_sound_path",
@@ -190,6 +184,22 @@ def validate_config(config_data):
         )
     except (TypeError, ValueError):
         validated["voice_self_assign_min_visits"] = 5
+        changed = True
+
+    # stt_num_threads (int, 1-8)
+    try:
+        stt_threads = int(validated.get("stt_num_threads", 2))
+        validated["stt_num_threads"] = max(1, min(8, stt_threads))
+    except (TypeError, ValueError):
+        validated["stt_num_threads"] = 2
+        changed = True
+
+    # stt_vad_threshold (float, 0.01-1.0)
+    try:
+        vad_threshold = float(validated.get("stt_vad_threshold", 0.5))
+        validated["stt_vad_threshold"] = max(0.01, min(1.0, vad_threshold))
+    except (TypeError, ValueError):
+        validated["stt_vad_threshold"] = 0.5
         changed = True
 
     # リスト系
@@ -248,54 +258,6 @@ def save_config(config_data):
             json.dump(config_data, f, indent=4, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Failed to save config: {e}", exc_info=True)
-
-def check_gladia_usage(config_data):
-    """
-    Gladiaの使用時間をチェックし、月の制限に達しているか確認
-    10時間（36000秒）を超えている場合はGoogle SRに自動切り替え
-    新しい月になっている場合は使用時間をリセット
-
-    Returns:
-        bool: Gladiaが使用可能な場合True、制限超過でFalse
-    """
-    current_month = datetime.now().strftime("%Y-%m")
-    reset_month = config_data.get("gladia_reset_month", "")
-    usage_seconds = config_data.get("gladia_usage_seconds", 0)
-
-    # 新しい月になったらリセット
-    if reset_month != current_month:
-        config_data["gladia_usage_seconds"] = 0
-        config_data["gladia_reset_month"] = current_month
-        config_data["stt_provider"] = "gladia"  # Gladiaに戻す
-        save_config(config_data)
-        logger.info(f"Gladia usage reset for new month: {current_month}")
-        return True
-
-    # 10時間（36000秒）の制限チェック
-    MAX_SECONDS = 36000  # 10時間
-    if usage_seconds >= MAX_SECONDS:
-        if config_data.get("stt_provider") != "google":
-            config_data["stt_provider"] = "google"
-            save_config(config_data)
-            logger.warning(f"Gladia usage limit reached ({usage_seconds}s / {MAX_SECONDS}s). Switched to Google SR.")
-        return False
-
-    return True
-
-def update_gladia_usage(config_data, seconds):
-    """
-    Gladiaの使用時間を更新
-
-    Args:
-        config_data: 設定データ
-        seconds: 追加する秒数
-    """
-    config_data["gladia_usage_seconds"] = config_data.get("gladia_usage_seconds", 0) + seconds
-    save_config(config_data)
-
-    remaining = 36000 - config_data["gladia_usage_seconds"]
-    logger.info(f"Gladia usage: {config_data['gladia_usage_seconds']}s / 36000s (Remaining: {remaining}s / {remaining/3600:.1f}h)")
-
 
 def validate_deepl_api_key(key: str) -> tuple[bool, str]:
     """

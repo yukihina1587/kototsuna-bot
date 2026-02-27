@@ -58,27 +58,30 @@ _zip_size = os.path.getsize(_tcl_zip_path)
 print(f"[SPEC] Tcl/Tk ZIP: {_zip_count} files, {_zip_size:,} bytes (init.tcl: {'FOUND' if _init_found else 'MISSING'})")
 datas.append((_tcl_zip_path, '.'))
 
-# pyaudioのC拡張を収集
-tmp_ret = collect_all('pyaudio')
+# sherpa-onnxのネイティブDLLと依存ファイルを収集
+tmp_ret = collect_all('sherpa_onnx')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-print(f"[SPEC] pyaudio collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={tmp_ret[2]}")
-for _b in tmp_ret[1]:
-    print(f"[SPEC]   binary: {_b}")
-# _portaudioはCエクステンション(.pyd)のためcollect_allで漏れる場合がある
-hiddenimports += ['pyaudio._portaudio']
-# .pydファイルを明示的にバイナリとして追加（collect_all/hiddenimportsで漏れる場合の保険）
-import pyaudio as _pa_mod
-_pa_dir = os.path.dirname(_pa_mod.__file__)
-_portaudio_found = False
-for _f in os.listdir(_pa_dir):
-    if _f.startswith('_portaudio') and (_f.endswith('.pyd') or _f.endswith('.so')):
-        binaries.append((os.path.join(_pa_dir, _f), 'pyaudio'))
-        print(f"[SPEC] Explicitly added pyaudio binary: {_f}")
-        _portaudio_found = True
-        break
-if not _portaudio_found:
-    print(f"[SPEC] WARNING: _portaudio.pyd not found in {_pa_dir}")
-    print(f"[SPEC]   contents: {os.listdir(_pa_dir)}")
+print(f"[SPEC] sherpa_onnx collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={len(tmp_ret[2])}")
+
+# sounddeviceとPortAudioのネイティブライブラリを収集
+tmp_ret = collect_all('sounddevice')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+print(f"[SPEC] sounddevice collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={len(tmp_ret[2])}")
+# _sounddevice_dataにPortAudioのDLLが含まれる場合がある
+try:
+    tmp_ret = collect_all('_sounddevice_data')
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+    print(f"[SPEC] _sounddevice_data collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}")
+except Exception:
+    print("[SPEC] _sounddevice_data not found (may not be needed)")
+
+# STTモデルファイルを同梱（models/ディレクトリ）
+_models_dir = os.path.join('.', 'models')
+if os.path.isdir(_models_dir):
+    datas.append((_models_dir, 'models'))
+    print(f"[SPEC] Added models/ directory to datas")
+else:
+    print(f"[SPEC] WARNING: models/ directory not found. STT models must be present at build time.")
 
 # srcパッケージ内の全サブモジュールを収集
 hiddenimports += collect_submodules('src')

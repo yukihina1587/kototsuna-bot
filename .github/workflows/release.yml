@@ -26,6 +26,36 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
+      - name: Download STT models
+        run: |
+          Write-Host "Downloading ReazonSpeech-k2-v2 model files..."
+          New-Item -ItemType Directory -Path "models/reazonspeech" -Force
+
+          $baseUrl = "https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01/resolve/main"
+          $files = @(
+            @{ Name = "encoder-epoch-99-avg-1.int8.onnx"; Dir = "models/reazonspeech" },
+            @{ Name = "decoder-epoch-99-avg-1.int8.onnx"; Dir = "models/reazonspeech" },
+            @{ Name = "joiner-epoch-99-avg-1.int8.onnx"; Dir = "models/reazonspeech" },
+            @{ Name = "tokens.txt"; Dir = "models/reazonspeech" }
+          )
+          foreach ($f in $files) {
+            $url = "$baseUrl/$($f.Name)"
+            $dest = "$($f.Dir)/$($f.Name)"
+            Write-Host "  Downloading $($f.Name)..."
+            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+            $size = (Get-Item $dest).Length / 1MB
+            Write-Host "    -> $([math]::Round($size, 2)) MB"
+          }
+
+          Write-Host "Downloading Silero VAD model..."
+          $vadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+          Invoke-WebRequest -Uri $vadUrl -OutFile "models/silero_vad.onnx" -UseBasicParsing
+          $vadSize = (Get-Item "models/silero_vad.onnx").Length / 1MB
+          Write-Host "  -> $([math]::Round($vadSize, 2)) MB"
+
+          Write-Host "All STT models downloaded successfully."
+        shell: pwsh
+
       - name: Build with PyInstaller
         run: |
           pyinstaller --clean Kototsuna.spec

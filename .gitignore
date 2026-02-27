@@ -24,6 +24,12 @@ ngrok.exe
 .claude/
 AGENTS.md
 
+# STT models (downloaded at build time)
+models/
+
+# Installer output
+installer_output/
+
 # User data
 tts_dictionary.json
 viewer_data.json

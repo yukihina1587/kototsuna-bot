@@ -1,462 +1,450 @@
-import speech_recognition as sr
-from src.translator import translate_text_sync, should_filter, apply_translation_dictionary
-from src.logger import logger
-from src.config import check_gladia_usage, update_gladia_usage
-import threading
-import time
-import pyaudio
-import asyncio
-import json
-import base64
-import requests
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+"""Local speech recognition using sherpa-onnx ReazonSpeech-k2-v2 + Silero VAD.
 
-# Gladia関連のインポート（websocketsが利用可能かチェック）
+Replaces the previous Gladia/Google SR implementation with fully offline
+recognition powered by sherpa-onnx transducer models.
+"""
+
+from __future__ import annotations
+
+import os
+import queue
+import sys
+import threading
+from typing import Any, Callable, Optional
+
+from src.logger import logger
+from src.translator import translate_text_sync
+
+# --- Optional dependency availability checks ---------------------------------
+
 try:
-    import websockets
-    GLADIA_AVAILABLE = True
+    import numpy as np
+    NUMPY_AVAILABLE = True
 except ImportError:
-    GLADIA_AVAILABLE = False
-    logger.warning("websockets not installed. Only Google SR will be available.")
+    np = None  # type: ignore[assignment]
+    NUMPY_AVAILABLE = False
+    logger.warning("numpy is not installed. Speech recognition will be unavailable.")
+
+try:
+    import sherpa_onnx
+    SHERPA_AVAILABLE = True
+except ImportError:
+    SHERPA_AVAILABLE = False
+    logger.warning(
+        "sherpa_onnx is not installed. Speech recognition will be unavailable."
+    )
+
+try:
+    import sounddevice as sd
+    SOUNDDEVICE_AVAILABLE = True
+except ImportError:
+    sd = None  # type: ignore[assignment]
+    SOUNDDEVICE_AVAILABLE = False
+    logger.warning(
+        "sounddevice is not installed. Speech recognition will be unavailable."
+    )
+
+# --- Constants ----------------------------------------------------------------
+
+SAMPLE_RATE: int = 16_000
+VAD_WINDOW_SIZE: int = 512
+AUDIO_CHUNK_SAMPLES: int = 1_600  # 100 ms at 16 kHz
+
+
+# --- Model path helpers -------------------------------------------------------
+
+
+def _get_models_dir() -> str:
+    """Return the absolute path to the ``models/`` directory.
+
+    * PyInstaller (frozen): next to the executable.
+    * Development: project root (one level above ``src/``).
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.join(
+            os.path.dirname(os.path.abspath(sys.executable)), "models"
+        )
+    return os.path.join(
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "models"
+    )
+
+
+def is_stt_available() -> bool:
+    """Return *True* when the required STT model files are present on disk."""
+    models_dir = _get_models_dir()
+    required_files = [
+        os.path.join(models_dir, "reazonspeech", "encoder-epoch-99-avg-1.int8.onnx"),
+        os.path.join(models_dir, "reazonspeech", "decoder-epoch-99-avg-1.int8.onnx"),
+        os.path.join(models_dir, "reazonspeech", "joiner-epoch-99-avg-1.int8.onnx"),
+        os.path.join(models_dir, "reazonspeech", "tokens.txt"),
+        os.path.join(models_dir, "silero_vad.onnx"),
+    ]
+    return all(os.path.exists(f) for f in required_files)
+
+
+# --- VoiceTranslator ---------------------------------------------------------
+
 
 class VoiceTranslator:
-    # ステレオミキサーを除外するためのキーワード
-    STEREO_MIX_KEYWORDS = ['stereo mix', 'ステレオ ミキサー', 'ステレオミキサー', 'what u hear', 'wave out']
+    """Capture microphone audio, detect speech with Silero VAD, recognise with
+    ReazonSpeech-k2-v2, and pass the recognised text through DeepL translation.
+    """
+
+    # Keywords used to filter out stereo-mix / loopback virtual devices.
+    STEREO_MIX_KEYWORDS: list[str] = [
+        "stereo mix",
+        "ステレオ ミキサー",
+        "ステレオミキサー",
+        "what u hear",
+        "wave out",
+    ]
+
+    # ------------------------------------------------------------------
+    # Static helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
-    def get_microphone_devices() -> list:
+    def get_microphone_devices() -> list[dict[str, Any]]:
+        """Return a list of input devices, excluding stereo-mix variants.
+
+        Each element is ``{'index': int, 'name': str}``.
         """
-        利用可能なマイクデバイス一覧を取得（ステレオミキサー除外）
-        Returns: [{'index': int, 'name': str}, ...]
-        """
-        devices = []
+        devices: list[dict[str, Any]] = []
+        if not SOUNDDEVICE_AVAILABLE:
+            logger.error("sounddevice is not available; cannot enumerate devices.")
+            return devices
+
         try:
-            device_names = sr.Microphone.list_microphone_names()
-            for index, name in enumerate(device_names):
-                # ステレオミキサーを除外
-                name_lower = name.lower()
-                is_stereo_mix = any(keyword in name_lower for keyword in VoiceTranslator.STEREO_MIX_KEYWORDS)
-                if not is_stereo_mix:
-                    devices.append({'index': index, 'name': name})
+            all_devices = sd.query_devices()
+            for i, dev in enumerate(all_devices):
+                if dev["max_input_channels"] > 0:
+                    name: str = dev["name"]
+                    name_lower = name.lower()
+                    is_stereo_mix = any(
+                        kw in name_lower for kw in VoiceTranslator.STEREO_MIX_KEYWORDS
+                    )
+                    if not is_stereo_mix:
+                        devices.append({"index": i, "name": name})
         except Exception as e:
             logger.error(f"Failed to get microphone devices: {e}")
         return devices
 
-    def __init__(self, mode_getter, api_key_getter, callback, config_data=None, device_index=None):
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    def __init__(
+        self,
+        mode_getter: Callable[[], str],
+        api_key_getter: Callable[[], str],
+        callback: Optional[Callable[[str, str], None]],
+        config_data: Optional[dict[str, Any]] = None,
+        device_index: Optional[int] = None,
+    ) -> None:
+        """Initialise the voice translator.
+
+        Parameters
+        ----------
+        mode_getter:
+            Callable returning the current translation mode string.
+        api_key_getter:
+            Callable returning the DeepL API key.
+        callback:
+            ``callback(recognised_text, translated_text)`` invoked on each
+            final recognition result.
+        config_data:
+            Application configuration dictionary.  Relevant keys:
+            ``stt_num_threads`` (default 2), ``stt_vad_threshold`` (default 0.5).
+        device_index:
+            Microphone device index for *sounddevice*.  ``None`` selects the
+            system default input device.
         """
-        mode_getter: Function returning current translation mode ('英→日', etc.)
-        api_key_getter: Function returning DeepL API Key
-        callback: Function(text, translated_text) to handle result
-        config_data: Configuration dictionary (for Gladia settings)
-        device_index: Microphone device index (None for default)
-        """
-        self.r = sr.Recognizer()
-        # マイクの初期化は起動時に行うと固まることがあるため遅延させる
-        self.mic = None
-        self.device_index = device_index
         self.mode_getter = mode_getter
         self.api_key_getter = api_key_getter
         self.callback = callback
-        self.config_data = config_data or {}
-        self.stop_listening = None
+        self.config_data: dict[str, Any] = config_data or {}
+        self.device_index = device_index
 
-        # Gladia関連
-        self.gladia_client = None
-        self.gladia_thread = None
-        self.gladia_running = False
-        self.audio_start_time = None  # 使用時間追跡用
+        # Internal state
+        self._running: bool = False
+        self._audio_queue: queue.Queue[np.ndarray] = queue.Queue()
+        self._worker_thread: Optional[threading.Thread] = None
+        self._audio_stream: Optional[Any] = None  # sd.InputStream
 
-    def start(self):
-        """音声認識を開始"""
+        # sherpa-onnx handles (created in start())
+        self._recognizer: Optional[Any] = None  # sherpa_onnx.OfflineRecognizer
+        self._vad: Optional[Any] = None  # sherpa_onnx.VoiceActivityDetector
+        self._vad_window_size: int = VAD_WINDOW_SIZE
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def start(self) -> bool:
+        """Start audio capture and recognition.  Returns *True* on success."""
         logger.info("VoiceTranslator.start() called")
-        # プロバイダーを決定（Gladia使用可能かチェック）
-        provider = self.config_data.get("stt_provider", "google")
-        gladia_api_key = self.config_data.get("gladia_api_key", "")
 
-        logger.info(f"Voice recognition provider: {provider}")
-        logger.info(f"Gladia API key configured: {bool(gladia_api_key)}")
-        logger.info(f"Gladia SDK available: {GLADIA_AVAILABLE}")
+        if self._running:
+            logger.warning("VoiceTranslator is already running.")
+            return True
 
-        # Gladiaが選択されているが、APIキーがない、またはSDKがインストールされていない場合はGoogle SRにフォールバック
-        if provider == "gladia":
-            if not GLADIA_AVAILABLE:
-                logger.warning("Gladia SDK not available. Falling back to Google SR.")
-                provider = "google"
-            elif not gladia_api_key:
-                logger.warning("Gladia API key not configured. Falling back to Google SR.")
-                provider = "google"
-            elif not check_gladia_usage(self.config_data):
-                logger.warning("Gladia usage limit reached. Using Google SR.")
-                provider = "google"
-
-        try:
-            if provider == "gladia":
-                return self._start_gladia()
-            else:
-                return self._start_google_sr()
-        except Exception as e:
-            logger.error(f"Failed to start voice recognition: {e}", exc_info=True)
+        # --- Pre-flight checks ---
+        if not NUMPY_AVAILABLE:
+            logger.error("numpy is not installed. Cannot start STT.")
             return False
 
-    def _start_google_sr(self):
-        """Google Speech Recognitionを開始"""
-        try:
-            logger.info(f"Starting Google Speech Recognition... (device_index={self.device_index})")
-            # マイクの初期化が重い環境があるためここで遅延初期化する
-            if self.mic is None:
-                try:
-                    self.mic = sr.Microphone(device_index=self.device_index)
-                    logger.info(f"Microphone initialized with device_index={self.device_index}")
-                except OSError as e:
-                    logger.error(f"Failed to access microphone: {e}", exc_info=True)
-                    return False
-                except Exception as mic_err:
-                    logger.error(f"Failed to initialize microphone: {mic_err}", exc_info=True)
-                    return False
+        if not SHERPA_AVAILABLE:
+            logger.error("sherpa_onnx is not installed. Cannot start STT.")
+            return False
 
-            logger.info("Adjusting for ambient noise...")
-            with self.mic as source:
-                self.r.adjust_for_ambient_noise(source, duration=1)
+        if not SOUNDDEVICE_AVAILABLE:
+            logger.error("sounddevice is not installed. Cannot start STT.")
+            return False
 
-            logger.info("Starting background listening...")
-            # phrase_time_limitを付けて定期的に結果を返すようにする
-            self.stop_listening = self.r.listen_in_background(
-                self.mic, self.process_audio, phrase_time_limit=6
+        if not is_stt_available():
+            logger.error(
+                "STT model files are missing.  "
+                f"Expected under: {_get_models_dir()}"
             )
-            logger.info("Google SR started successfully.")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to start Google SR: {e}", exc_info=True)
             return False
 
-    def _start_gladia(self):
-        """Gladiaリアルタイム音声認識を開始"""
-        if not GLADIA_AVAILABLE:
-            logger.error("Gladia SDK is not available.")
-            return False
-
+        # --- Create recognizer and VAD ---
         try:
-            logger.info("Starting Gladia real-time transcription...")
-            gladia_api_key = self.config_data.get("gladia_api_key", "")
-
-            if not gladia_api_key:
-                logger.error("Gladia API key is required but not provided.")
-                return False
-
-            # 別スレッドでGladiaを実行
-            self.gladia_running = True
-            self.audio_start_time = time.time()
-            self.gladia_thread = threading.Thread(target=self._run_gladia_stream, daemon=True)
-            self.gladia_thread.start()
-
-            logger.info("Gladia started successfully.")
-            return True
+            self._create_recognizer()
+            self._create_vad()
         except Exception as e:
-            logger.error(f"Failed to start Gladia: {e}", exc_info=True)
+            logger.error(f"Failed to initialise sherpa-onnx: {e}", exc_info=True)
+            self._recognizer = None
+            self._vad = None
             return False
 
-    def _run_gladia_stream(self):
-        """Gladiaでの音声ストリーミング処理（別スレッドで実行）"""
-        p = None
-        stream = None
+        # --- Open audio stream ---
         try:
-            logger.info("Gladia: Starting _run_gladia_stream")
-            # PyAudioでマイク入力を取得
-            CHUNK = 1024
-            FORMAT = pyaudio.paInt16
-            CHANNELS = 1
-            RATE = 16000
+            self._audio_stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                blocksize=AUDIO_CHUNK_SAMPLES,
+                device=self.device_index,
+                callback=self._audio_callback,
+            )
+            self._audio_stream.start()
+            logger.info(
+                f"Audio stream opened (device_index={self.device_index}, "
+                f"sample_rate={SAMPLE_RATE})"
+            )
+        except Exception as e:
+            logger.error(f"Failed to open audio stream: {e}", exc_info=True)
+            self._recognizer = None
+            self._vad = None
+            return False
 
-            logger.info("Gladia: Initializing PyAudio")
-            p = pyaudio.PyAudio()
-            logger.info(f"Gladia: Opening microphone stream (device_index={self.device_index})")
-            stream = p.open(format=FORMAT,
-                          channels=CHANNELS,
-                          rate=RATE,
-                          input=True,
-                          input_device_index=self.device_index,
-                          frames_per_buffer=CHUNK)
+        # --- Start worker thread ---
+        self._running = True
+        self._worker_thread = threading.Thread(
+            target=self._recognition_worker, daemon=True, name="stt-worker"
+        )
+        self._worker_thread.start()
 
-            logger.info("Gladia: Microphone stream opened.")
+        logger.info("VoiceTranslator started successfully (sherpa-onnx local STT).")
+        return True
 
-            # 言語設定
-            mode = self.mode_getter()
-            language = 'ja' if mode in ['日→英', '自動'] else 'en'
+    def stop(self) -> None:
+        """Stop recognition and release all resources."""
+        if not self._running:
+            logger.debug("VoiceTranslator.stop() called but not running.")
+            return
 
-            # Gladia APIの実装
-            # 注: 実際のGladia SDKの使用方法に応じて調整が必要
-            # ここでは簡略化した例を示します
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        logger.info("Stopping VoiceTranslator...")
+        self._running = False
 
+        # Stop the audio stream first so no new data enters the queue.
+        if self._audio_stream is not None:
             try:
-                loop.run_until_complete(self._gladia_websocket_stream(stream, language))
-            finally:
-                loop.close()
-
-        except Exception as e:
-            logger.error(f"Gladia stream error: {e}", exc_info=True)
-        finally:
-            # PyAudioリソースの確実な解放
-            if stream is not None:
-                try:
-                    logger.info("Gladia: Closing audio stream...")
-                    stream.stop_stream()
-                    stream.close()
-                    logger.info("Gladia: Audio stream closed.")
-                except Exception as e:
-                    logger.error(f"Failed to close audio stream: {e}", exc_info=True)
-
-            if p is not None:
-                try:
-                    logger.info("Gladia: Terminating PyAudio...")
-                    p.terminate()
-                    logger.info("Gladia: PyAudio terminated.")
-                except Exception as e:
-                    logger.error(f"Failed to terminate PyAudio: {e}", exc_info=True)
-
-            self.gladia_running = False
-            # 使用時間を記録
-            if self.audio_start_time:
-                elapsed = time.time() - self.audio_start_time
-                update_gladia_usage(self.config_data, int(elapsed))
-                self.audio_start_time = None
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(requests.exceptions.RequestException),
-        reraise=True
-    )
-    def _init_gladia_session(self, url, headers, config):
-        """Gladiaセッションを初期化（リトライ付き）"""
-        logger.info("Gladia: Sending session initialization request...")
-        response = requests.post(url, headers=headers, json=config, timeout=10)
-        response.raise_for_status()
-        return response.json()
-
-    async def _gladia_websocket_stream(self, audio_stream, language):
-        """Gladia WebSocketストリーミング（非同期）"""
-        try:
-            gladia_api_key = self.config_data.get("gladia_api_key", "")
-
-            # Step 1: Initialize live session via POST request
-            logger.info(f"Gladia: Initializing live session (language={language})")
-
-            init_url = "https://api.gladia.io/v2/live"
-            headers = {
-                "X-Gladia-Key": gladia_api_key,
-                "Content-Type": "application/json"
-            }
-
-            config = {
-                "encoding": "wav/pcm",
-                "sample_rate": 16000,
-                "bit_depth": 16,
-                "channels": 1,
-                "language_config": {
-                    "languages": [language],
-                    "code_switching": False
-                },
-                "messages_config": {
-                    "receive_partial_transcripts": False,
-                    "receive_final_transcripts": True
-                }
-            }
-
-            session_data = self._init_gladia_session(init_url, headers, config)
-            ws_url = session_data.get("url")
-            session_id = session_data.get("id")
-
-            if not ws_url:
-                logger.error("Gladia: Failed to get WebSocket URL from response")
-                return
-
-            logger.info(f"Gladia: Session initialized (id={session_id})")
-
-            # Step 2: Connect to WebSocket
-            async with websockets.connect(ws_url) as ws:
-                logger.info("Gladia: WebSocket connected, starting audio stream")
-
-                # Create tasks for sending and receiving
-                send_task = asyncio.create_task(self._gladia_send_audio(ws, audio_stream))
-                receive_task = asyncio.create_task(self._gladia_receive_transcripts(ws))
-
-                # Wait for both tasks to complete
-                await asyncio.gather(send_task, receive_task)
-
-                logger.info("Gladia: WebSocket session ended")
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Gladia session initialization error: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"Gladia WebSocket error: {e}", exc_info=True)
-
-    async def _gladia_send_audio(self, ws, audio_stream):
-        """音声データをGladiaに送信（非同期）"""
-        try:
-            CHUNK = 1024
-            logger.info("Gladia: Starting audio transmission")
-            chunk_count = 0
-
-            while self.gladia_running:
-                # 音声データを読み取り
-                data = audio_stream.read(CHUNK, exception_on_overflow=False)
-
-                # base64エンコード
-                chunk_b64 = base64.b64encode(data).decode("utf-8")
-
-                # JSONメッセージを作成して送信
-                message = json.dumps({
-                    "type": "audio_chunk",
-                    "data": {
-                        "chunk": chunk_b64
-                    }
-                })
-
-                await ws.send(message)
-                chunk_count += 1
-
-                # 5秒ごとにログ出力（デバッグ用）
-                if chunk_count % 500 == 0:
-                    logger.info(f"Gladia: Sent {chunk_count} audio chunks")
-
-                await asyncio.sleep(0.01)  # 少し待機
-
-            # 録音停止メッセージを送信
-            logger.info("Gladia: Sending stop_recording message")
-            stop_message = json.dumps({"type": "stop_recording"})
-            await ws.send(stop_message)
-
-        except Exception as e:
-            logger.error(f"Gladia audio send error: {e}", exc_info=True)
-
-    async def _gladia_receive_transcripts(self, ws):
-        """Gladiaから文字起こし結果を受信（非同期）"""
-        try:
-            logger.info("Gladia: Starting transcript reception")
-            message_count = 0
-
-            async for message in ws:
-                if not self.gladia_running:
-                    break
-
-                message_count += 1
-
-                try:
-                    data = json.loads(message)
-                    msg_type = data.get("type")
-
-                    if msg_type == "transcript":
-                        # 文字起こし結果を処理
-                        transcript_data = data.get("data", {})
-                        is_final = transcript_data.get("is_final", False)
-                        utterance = transcript_data.get("utterance", {})
-                        text = utterance.get("text", "")
-
-                        logger.info(f"Gladia: Transcript received, is_final={is_final}, text='{text}'")
-
-                        if is_final and text:
-                            logger.info(f"Gladia final transcript: {text}")
-                            self._process_gladia_result(text)
-                        elif text:
-                            # 部分的な文字起こしもログに記録
-                            logger.info(f"Gladia partial transcript: {text}")
-
-                    elif msg_type == "error":
-                        error_msg = data.get("message", "Unknown error")
-                        logger.error(f"Gladia error: {error_msg}")
-
-                    # その他のメッセージタイプはログに記録しない（audio_chunkなど）
-
-                except json.JSONDecodeError as e:
-                    logger.error(f"Gladia: Failed to parse message: {e}, raw message: {message[:200]}")
-
-        except Exception as e:
-            logger.error(f"Gladia transcript receive error: {e}", exc_info=True)
-
-    def _process_gladia_result(self, text):
-        """Gladiaの文字起こし結果を処理"""
-        try:
-            mode = self.mode_getter()
-            logger.info(f"Gladia recognized: {text}")
-
-            # 翻訳
-            api_key = self.api_key_getter()
-            if api_key:
-                # 自動モードの場合はそのままtranslatorに渡して判定させる
-                translated = translate_text_sync(text, mode, api_key)
-            else:
-                translated = "(No API Key)"
-
-            # コールバック
-            if self.callback:
-                self.callback(text, translated)
-
-        except Exception as e:
-            logger.error(f"Gladia result processing error: {e}", exc_info=True)
-
-    def stop(self):
-        """音声認識を停止し、全てのリソースを解放"""
-        # Gladia停止
-        if self.gladia_running:
-            logger.info("Stopping Gladia...")
-            self.gladia_running = False
-            if self.gladia_thread:
-                self.gladia_thread.join(timeout=3)
-            logger.info("Stopped Gladia listening.")
-
-        # Google SR停止
-        if self.stop_listening:
-            logger.info("Stopping Google SR background listening...")
-            self.stop_listening(wait_for_stop=False)
-            self.stop_listening = None
-            logger.info("Stopped Google SR listening.")
-
-        # マイクリソースの解放
-        if self.mic is not None:
-            try:
-                # マイクのストリームを閉じる
-                logger.info("Releasing microphone resource...")
-                self.mic = None
-                logger.info("Microphone resource released.")
+                self._audio_stream.stop()
+                self._audio_stream.close()
+                logger.info("Audio stream closed.")
             except Exception as e:
-                logger.error(f"Failed to release microphone: {e}", exc_info=True)
+                logger.error(f"Error closing audio stream: {e}", exc_info=True)
+            finally:
+                self._audio_stream = None
 
-    def process_audio(self, recognizer, audio):
-        mode = self.mode_getter()
+        # Wait for the worker thread to finish.
+        if self._worker_thread is not None:
+            self._worker_thread.join(timeout=3.0)
+            if self._worker_thread.is_alive():
+                logger.warning("STT worker thread did not exit within timeout.")
+            self._worker_thread = None
 
-        # Determine Recognition Language based on Translation Mode
-        # If translating JA -> EN, we recognize JA.
-        # If translating EN -> JA, we recognize EN.
-        # If Auto, default to JA (Assuming Japanese streamer).
-        recog_lang = 'ja-JP'
-        if mode == '英→日':
-            recog_lang = 'en-US'
-        elif mode == '日→英':
-            recog_lang = 'ja-JP'
+        # Drain the queue so it does not hold stale references.
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except queue.Empty:
+                break
 
+        self._recognizer = None
+        self._vad = None
+
+        logger.info("VoiceTranslator stopped.")
+
+    # ------------------------------------------------------------------
+    # Internals -- model creation
+    # ------------------------------------------------------------------
+
+    def _create_recognizer(self) -> None:
+        """Instantiate the sherpa-onnx OfflineRecognizer (transducer).
+
+        sherpa-onnx uses narrow (ANSI) file I/O on Windows, so paths with
+        non-ASCII characters cause silent failures.  We temporarily change
+        CWD to the models parent directory and pass relative paths.
+        """
+        models_dir = _get_models_dir()
+        # Parent of models/ — used as CWD anchor for relative paths
+        base_dir = os.path.dirname(models_dir)
+        reazonspeech_rel = os.path.join("models", "reazonspeech")
+
+        num_threads: int = int(self.config_data.get("stt_num_threads", 2))
+
+        encoder_rel = os.path.join(reazonspeech_rel, "encoder-epoch-99-avg-1.int8.onnx")
+        decoder_rel = os.path.join(reazonspeech_rel, "decoder-epoch-99-avg-1.int8.onnx")
+        joiner_rel = os.path.join(reazonspeech_rel, "joiner-epoch-99-avg-1.int8.onnx")
+        tokens_rel = os.path.join(reazonspeech_rel, "tokens.txt")
+
+        # Verify files exist using absolute paths
+        for name, rel in [("encoder", encoder_rel), ("decoder", decoder_rel),
+                          ("joiner", joiner_rel), ("tokens", tokens_rel)]:
+            abs_path = os.path.join(base_dir, rel)
+            exists = os.path.exists(abs_path)
+            size = os.path.getsize(abs_path) if exists else 0
+            logger.info(f"  {name}: {abs_path} (exists={exists}, size={size:,} bytes)")
+
+        logger.info(
+            f"Creating OfflineRecognizer (num_threads={num_threads}, "
+            f"sherpa_onnx={sherpa_onnx.__version__}, cwd_anchor={base_dir})"
+        )
+
+        # Change CWD so sherpa-onnx receives ASCII-only relative paths
+        prev_cwd = os.getcwd()
         try:
-            # Recognize
-            text = recognizer.recognize_google(audio, language=recog_lang)
-            logger.info(f"Recognized ({recog_lang}): {text}")
+            os.chdir(base_dir)
+            self._recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
+                encoder=encoder_rel,
+                decoder=decoder_rel,
+                joiner=joiner_rel,
+                tokens=tokens_rel,
+                num_threads=num_threads,
+                provider="cpu",
+                decoding_method="greedy_search",
+                feature_dim=80,
+                sample_rate=SAMPLE_RATE,
+            )
+        finally:
+            os.chdir(prev_cwd)
 
-            # Translate
+        logger.info("OfflineRecognizer created.")
+
+    def _create_vad(self) -> None:
+        """Instantiate the Silero VAD via sherpa-onnx."""
+        models_dir = _get_models_dir()
+        base_dir = os.path.dirname(models_dir)
+        vad_rel = os.path.join("models", "silero_vad.onnx")
+        vad_threshold: float = float(self.config_data.get("stt_vad_threshold", 0.5))
+
+        logger.info(
+            f"Creating VoiceActivityDetector (threshold={vad_threshold}, "
+            f"model={os.path.join(base_dir, vad_rel)})"
+        )
+
+        vad_config = sherpa_onnx.VadModelConfig()
+        vad_config.silero_vad.threshold = vad_threshold
+        vad_config.silero_vad.min_silence_duration = 0.5
+        vad_config.silero_vad.min_speech_duration = 0.25
+        vad_config.silero_vad.max_speech_duration = 20.0
+        vad_config.silero_vad.window_size = self._vad_window_size
+        vad_config.sample_rate = SAMPLE_RATE
+
+        prev_cwd = os.getcwd()
+        try:
+            os.chdir(base_dir)
+            vad_config.silero_vad.model = vad_rel
+            self._vad = sherpa_onnx.VoiceActivityDetector(
+                vad_config, buffer_size_in_seconds=30
+            )
+        finally:
+            os.chdir(prev_cwd)
+
+        logger.info("VoiceActivityDetector created.")
+
+    # ------------------------------------------------------------------
+    # Internals -- audio pipeline
+    # ------------------------------------------------------------------
+
+    def _audio_callback(
+        self,
+        indata: np.ndarray,
+        frames: int,
+        time_info: Any,
+        status: Any,
+    ) -> None:
+        """Called by sounddevice for each audio block.  Enqueues samples."""
+        if status:
+            logger.warning(f"Audio callback status: {status}")
+        if self._running:
+            # indata shape is (frames, 1) -- flatten to 1-D float32.
+            self._audio_queue.put(indata[:, 0].copy())
+
+    def _recognition_worker(self) -> None:
+        """Worker thread: reads audio from the queue, runs VAD, recognises."""
+        logger.info("STT worker thread started.")
+        buffer = np.array([], dtype=np.float32)
+
+        while self._running:
+            # Fetch the next audio chunk (with timeout so we can check _running).
+            try:
+                samples = self._audio_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            buffer = np.concatenate([buffer, samples])
+
+            # Feed VAD in window-sized chunks.
+            while len(buffer) >= self._vad_window_size:
+                self._vad.accept_waveform(buffer[: self._vad_window_size])
+                buffer = buffer[self._vad_window_size :]
+
+            # Process every completed speech segment.
+            while not self._vad.empty():
+                speech_samples = self._vad.front.samples
+                self._vad.pop()
+
+                stream = self._recognizer.create_stream()
+                stream.accept_waveform(SAMPLE_RATE, speech_samples)
+                self._recognizer.decode_stream(stream)
+
+                text: str = stream.result.text.strip()
+                if text:
+                    self._process_result(text)
+
+        logger.info("STT worker thread exiting.")
+
+    # ------------------------------------------------------------------
+    # Internals -- result handling
+    # ------------------------------------------------------------------
+
+    def _process_result(self, text: str) -> None:
+        """Translate recognised text and invoke the user callback."""
+        try:
+            mode = self.mode_getter()
+            logger.info(f"Recognized: {text}")
+
             api_key = self.api_key_getter()
             if api_key:
-                # 自動モードの場合はそのままtranslatorに渡して判定させる
                 translated = translate_text_sync(text, mode, api_key)
             else:
                 translated = "(No API Key)"
 
-            # Callback
             if self.callback:
                 self.callback(text, translated)
-
-        except sr.UnknownValueError:
-            # Speech was unintelligible
-            logger.debug("Speech was unintelligible")
-        except sr.RequestError as e:
-            logger.error(f"Google API Error: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Voice recognition error: {e}", exc_info=True)
+            logger.error(f"Result processing error: {e}", exc_info=True)

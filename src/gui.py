@@ -200,7 +200,7 @@ class KototsunaApp:
         save_config(self.config)
         self.client_id = tk.StringVar(value=self.config.get("twitch_client_id", ""))
         self.deepl_key = tk.StringVar(value=self.config.get("deepl_api_key", ""))
-        self.gladia_key = tk.StringVar(value=self.config.get("gladia_api_key", ""))
+        # Gladia removed — local STT via sherpa-onnx
         self.voicevox_path = tk.StringVar(value=self.config.get("voicevox_engine_path", ""))
         self.voicevox_auto_start = tk.BooleanVar(value=self.config.get("voicevox_auto_start", True))
         self.voicevox_speaker_id = tk.IntVar(value=self.config.get("voicevox_speaker_id", 14))
@@ -949,8 +949,7 @@ class KototsunaApp:
         ctk.CTkButton(parent, text="↗ DeepL API登録", command=lambda: webbrowser.open("https://www.deepl.com/pro-api"),
                       fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
 
-        ctk.CTkLabel(parent, text="Gladia API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
-        ctk.CTkEntry(parent, textvariable=self.gladia_key, show="*", height=32).pack(fill="x", pady=(0, 4))
+        # ローカルSTT（sherpa-onnx）— API Key不要
 
         # マイク選択
         ctk.CTkLabel(parent, text="マイク選択（ステレオミキサー除外済み）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
@@ -1725,11 +1724,7 @@ class KototsunaApp:
         self.res_deepl_label = ctk.CTkLabel(parent, text="DeepL: 取得中...", font=("Consolas", 11))
         self.res_deepl_label.pack(anchor="w", pady=2)
 
-        # Gladia使用状況
-        usage_sec = self.config.get("gladia_usage_seconds", 0)
-        usage_h = usage_sec / 3600
-        self.res_gladia_label = ctk.CTkLabel(parent, text=f"Gladia: {usage_h:.2f}h / 10h", font=("Consolas", 11))
-        self.res_gladia_label.pack(anchor="w", pady=2)
+        # ローカルSTT（API使用なし）
 
         self._add_panel_divider(parent)
 
@@ -1781,14 +1776,7 @@ class KototsunaApp:
 
         threading.Thread(target=update_deepl, daemon=True).start()
 
-        # Gladia使用量更新
-        try:
-            usage_sec = self.config.get("gladia_usage_seconds", 0)
-            usage_h = usage_sec / 3600
-            if hasattr(self, 'res_gladia_label'):
-                self.res_gladia_label.configure(text=f"Gladia: {usage_h:.2f}h / 10h")
-        except Exception as e:
-            logger.debug(f"Gladia usage update failed: {e}")
+        # ローカルSTT — API使用量トラッキング不要
 
     # 辞書パネル用ヘルパー
     def _add_tts_dict_entry(self):
@@ -2348,30 +2336,10 @@ class KototsunaApp:
                                       width=200)
         btn_deepl_help.grid(row=9, column=2, padx=10, pady=(0, 5), sticky="w")
 
-        # 音声認識API設定
-        ctk.CTkLabel(frm_set, text="音声認識API設定", font=("Arial", 16, "bold")).grid(row=10, column=0, columnspan=3, sticky="w", pady=(20, 10))
-        ctk.CTkLabel(frm_set, text="Gladia API Key (音声認識):", font=("Arial", 14, "bold")).grid(row=11, column=0, sticky="w", pady=(10, 0))
-        ctk.CTkEntry(frm_set, textvariable=self.gladia_key, width=300, show="*").grid(row=12, column=0, columnspan=2, sticky="ew", pady=(0, 5))
-
-        btn_gladia_help = ctk.CTkButton(frm_set, text="Gladia登録ページへ (月10h無料)",
-                                       command=lambda: webbrowser.open("https://www.gladia.io"),
-                                       fg_color="gray",
-                                       width=200)
-        btn_gladia_help.grid(row=12, column=2, padx=10, pady=(0, 5), sticky="w")
-
-        # Gladia使用状況表示
-        usage_sec = self.config.get("gladia_usage_seconds", 0)
-        usage_hours = usage_sec / 3600
-        remaining_hours = 10 - usage_hours
-        usage_text = f"今月の使用: {usage_hours:.2f}h / 10h (残り: {remaining_hours:.2f}h)"
-        provider = self.config.get("stt_provider", "gladia")
-        provider_text = "Gladia" if provider == "gladia" else "Google SR"
-
-        self.gladia_usage_label = ctk.CTkLabel(frm_set,
-                                               text=f"{usage_text}\n現在のプロバイダー: {provider_text}",
-                                               text_color="gray",
-                                               font=("Arial", 11))
-        self.gladia_usage_label.grid(row=13, column=0, columnspan=3, sticky="w")
+        # 音声認識設定（ローカルSTT）
+        ctk.CTkLabel(frm_set, text="音声認識設定", font=("Arial", 16, "bold")).grid(row=10, column=0, columnspan=3, sticky="w", pady=(20, 10))
+        ctk.CTkLabel(frm_set, text="ローカル音声認識（ReazonSpeech — API不要）",
+                     text_color="gray", font=("Arial", 11)).grid(row=11, column=0, columnspan=3, sticky="w")
 
         # 読み上げ設定
         ctk.CTkLabel(frm_set, text="読み上げ設定", font=("Arial", 16, "bold")).grid(row=14, column=0, columnspan=3, sticky="w", pady=(20, 10))
@@ -2819,7 +2787,7 @@ class KototsunaApp:
         watch_vars = [
             self.client_id,
             self.deepl_key,
-            self.gladia_key,
+
             self.voicevox_path,
             self.voicevox_auto_start,
             self.voicevox_speaker_id,
@@ -2858,7 +2826,7 @@ class KototsunaApp:
         try:
             self.config["twitch_client_id"] = self.client_id.get().strip()
             self.config["deepl_api_key"] = self.deepl_key.get().strip()
-            self.config["gladia_api_key"] = self.gladia_key.get().strip()
+
             self.config["voicevox_engine_path"] = self.voicevox_path.get().strip()
             self.config["voicevox_auto_start"] = self.voicevox_auto_start.get()
             self.config["voicevox_speaker_id"] = self.voicevox_speaker_id.get()
@@ -2918,20 +2886,6 @@ class KototsunaApp:
             messagebox.showwarning("設定の警告", "\n".join(warnings) + "\n\n設定は保存されましたが、形式を確認してください。")
         else:
             messagebox.showinfo("保存完了", "設定を config.json に保存しました。")
-        # 使用状況表示を更新
-        self._update_gladia_usage_display()
-
-    def _update_gladia_usage_display(self):
-        """Gladia使用状況の表示を更新"""
-        usage_sec = self.config.get("gladia_usage_seconds", 0)
-        usage_hours = usage_sec / 3600
-        remaining_hours = 10 - usage_hours
-        usage_text = f"今月の使用: {usage_hours:.2f}h / 10h (残り: {remaining_hours:.2f}h)"
-        provider = self.config.get("stt_provider", "gladia")
-        provider_text = "Gladia" if provider == "gladia" else "Google SR"
-
-        if hasattr(self, 'gladia_usage_label'):
-            self.gladia_usage_label.configure(text=f"{usage_text}\n現在のプロバイダー: {provider_text}")
 
     def _set_status(self, text: str, tone: str = "info"):
         """ヘッダーのステータス表示を更新"""
@@ -4545,7 +4499,7 @@ window.onload = function() {{
             logger.info(f"voice_translator.start() returned: {success}")
             if not success:
                 self.voice_var.set(False)
-                self.log_message("❌ マイクの起動に失敗しました (pyaudio等が不足している可能性があります)")
+                self.log_message("❌ マイクの起動に失敗しました (モデルファイルまたは依存パッケージが不足しています)")
                 self._set_status("音声認識の起動に失敗しました。", "error")
             else:
                 self._set_status("音声翻訳を開始しました。", "success")
