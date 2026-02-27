@@ -28,24 +28,31 @@ jobs:
 
       - name: Download STT models
         run: |
-          Write-Host "Downloading ReazonSpeech-k2-v2 model files..."
+          Write-Host "Downloading ReazonSpeech-k2-v2 model package from GitHub Releases..."
           New-Item -ItemType Directory -Path "models/reazonspeech" -Force
 
-          $baseUrl = "https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01/resolve/main"
-          $files = @(
-            @{ Name = "encoder-epoch-99-avg-1.int8.onnx"; Dir = "models/reazonspeech" },
-            @{ Name = "decoder-epoch-99-avg-1.int8.onnx"; Dir = "models/reazonspeech" },
-            @{ Name = "joiner-epoch-99-avg-1.int8.onnx"; Dir = "models/reazonspeech" },
-            @{ Name = "tokens.txt"; Dir = "models/reazonspeech" }
+          $tarUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2"
+          $tarFile = "$env:TEMP\reazonspeech.tar.bz2"
+          Invoke-WebRequest -Uri $tarUrl -OutFile $tarFile -UseBasicParsing
+          $tarSize = (Get-Item $tarFile).Length / 1MB
+          Write-Host "  Downloaded: $([math]::Round($tarSize, 2)) MB"
+
+          Write-Host "Extracting model files..."
+          tar -xjf $tarFile -C "$env:TEMP"
+          $extractDir = "$env:TEMP\sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
+          $needed = @(
+            "encoder-epoch-99-avg-1.int8.onnx",
+            "decoder-epoch-99-avg-1.int8.onnx",
+            "joiner-epoch-99-avg-1.int8.onnx",
+            "tokens.txt"
           )
-          foreach ($f in $files) {
-            $url = "$baseUrl/$($f.Name)"
-            $dest = "$($f.Dir)/$($f.Name)"
-            Write-Host "  Downloading $($f.Name)..."
-            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
-            $size = (Get-Item $dest).Length / 1MB
-            Write-Host "    -> $([math]::Round($size, 2)) MB"
+          foreach ($f in $needed) {
+            Copy-Item "$extractDir\$f" "models\reazonspeech\$f"
+            $size = (Get-Item "models\reazonspeech\$f").Length / 1MB
+            Write-Host "  $f ($([math]::Round($size, 2)) MB)"
           }
+          Remove-Item $tarFile -Force
+          Remove-Item $extractDir -Recurse -Force
 
           Write-Host "Downloading Silero VAD model..."
           $vadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
