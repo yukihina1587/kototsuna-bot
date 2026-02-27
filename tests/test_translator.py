@@ -4,9 +4,8 @@ import pytest
 from src import translator
 
 
-@pytest.mark.asyncio
-async def test_translate_text_uses_cache(monkeypatch):
-    # 新しいキャッシュとレートリミッタをセット
+def test_translate_text_uses_cache(monkeypatch):
+    """translate_text の非同期キャッシュテスト（同期ラッパー）"""
     translator._cache = translator._TranslationCache(max_entries=10, ttl=60)
     translator._rate_limiter = translator._RateLimiter(min_interval=0, max_concurrent=5)
     translator.set_translation_filters([])
@@ -20,8 +19,12 @@ async def test_translate_text_uses_cache(monkeypatch):
 
     monkeypatch.setattr(translator, "_translate_http_async", fake_http)
 
-    res1 = await translator.translate_text("hello", "英→日", "KEY")
-    res2 = await translator.translate_text("hello", "英→日", "KEY")
+    loop = asyncio.new_event_loop()
+    try:
+        res1 = loop.run_until_complete(translator.translate_text("hello", "英→日", "KEY"))
+        res2 = loop.run_until_complete(translator.translate_text("hello", "英→日", "KEY"))
+    finally:
+        loop.close()
 
     assert res1 == "OUT"
     assert res2 == "OUT"

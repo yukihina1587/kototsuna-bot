@@ -141,6 +141,8 @@ class TestIsSTTAvailable:
 
         os.makedirs(reazonspeech_dir, exist_ok=True)
         (tmp_path / "models" / "reazonspeech" / "encoder-epoch-99-avg-1.int8.onnx").touch()
+        (tmp_path / "models" / "reazonspeech" / "decoder-epoch-99-avg-1.int8.onnx").touch()
+        (tmp_path / "models" / "reazonspeech" / "joiner-epoch-99-avg-1.int8.onnx").touch()
         (tmp_path / "models" / "reazonspeech" / "tokens.txt").touch()
         (tmp_path / "models" / "silero_vad.onnx").touch()
 
