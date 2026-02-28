@@ -3,6 +3,13 @@ import io
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 
+# --- 多重起動防止 (Windows Named Mutex) ---
+if sys.platform == "win32":
+    import ctypes
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "KototsunaAppMutex")
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        sys.exit(0)
+
 # PyInstaller GUIモードでのクラッシュログ記録（console=Falseではトレースバックが見えないため）
 # rthookで設置済みのraw excepthookを上書きし、可能ならtraceback moduleで詳細出力する。
 # 失敗時はraw方式（osモジュールのみ）にフォールバック。
