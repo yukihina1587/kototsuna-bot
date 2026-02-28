@@ -394,11 +394,11 @@ class TestGetModelsDir:
             assert result.endswith("models")
 
     def test_frozen_mode(self):
-        """In PyInstaller mode, models dir is next to the executable."""
+        """In PyInstaller mode, models dir is under sys._MEIPASS."""
         with patch.object(sys, "frozen", True, create=True), \
-             patch.object(sys, "executable", "/opt/app/Kototsuna.exe"):
+             patch.object(sys, "_MEIPASS", "/opt/app/_internal", create=True):
             result = _get_models_dir()
-            assert result == "/opt/app/models"
+            assert result == "/opt/app/_internal/models"
 
 
 # =========================================================================

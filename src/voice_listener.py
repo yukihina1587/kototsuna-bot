@@ -61,9 +61,7 @@ def _get_models_dir() -> str:
     * Development: project root (one level above ``src/``).
     """
     if getattr(sys, "frozen", False):
-        return os.path.join(
-            os.path.dirname(os.path.abspath(sys.executable)), "models"
-        )
+        return os.path.join(sys._MEIPASS, "models")
     return os.path.join(
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "models"
     )
