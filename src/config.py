@@ -51,7 +51,7 @@ DEFAULT_CONFIG = {
     "voicevox_auto_start": True,  # VOICEVOX Engineを自動起動するかどうか
     # ローカルSTT設定
     "stt_num_threads": 2,          # sherpa-onnx CPU threads
-    "stt_vad_threshold": 0.5,     # Silero VAD threshold (0.01-1.0)
+    "stt_vad_threshold": 0.3,     # Silero VAD threshold (0.01-1.0)
     # イベント効果音
     "bits_sound_path": "",
     "bits_sound_volume": 80,
@@ -196,10 +196,10 @@ def validate_config(config_data):
 
     # stt_vad_threshold (float, 0.01-1.0)
     try:
-        vad_threshold = float(validated.get("stt_vad_threshold", 0.5))
+        vad_threshold = float(validated.get("stt_vad_threshold", 0.3))
         validated["stt_vad_threshold"] = max(0.01, min(1.0, vad_threshold))
     except (TypeError, ValueError):
-        validated["stt_vad_threshold"] = 0.5
+        validated["stt_vad_threshold"] = 0.3
         changed = True
 
     # リスト系

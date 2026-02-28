@@ -356,11 +356,11 @@ class TestConfigDefaults:
     """Verify default config values for STT settings."""
 
     def test_config_defaults(self):
-        """Default stt_num_threads=2 and stt_vad_threshold=0.5 from config.py."""
+        """Default stt_num_threads=2 and stt_vad_threshold=0.3 from config.py."""
         from src.config import DEFAULT_CONFIG
 
         assert DEFAULT_CONFIG["stt_num_threads"] == 2
-        assert DEFAULT_CONFIG["stt_vad_threshold"] == 0.5
+        assert DEFAULT_CONFIG["stt_vad_threshold"] == 0.3
 
     def test_voice_translator_uses_config_defaults(self):
         """VoiceTranslator falls back to defaults when config_data is empty."""
@@ -368,7 +368,7 @@ class TestConfigDefaults:
 
         # Verify the defaults match what _create_recognizer / _create_vad would use.
         assert int(vt.config_data.get("stt_num_threads", 2)) == 2
-        assert float(vt.config_data.get("stt_vad_threshold", 0.5)) == 0.5
+        assert float(vt.config_data.get("stt_vad_threshold", 0.3)) == 0.3
 
     def test_voice_translator_respects_custom_config(self):
         """VoiceTranslator uses values from config_data when provided."""

@@ -38,7 +38,7 @@ def test_stt_num_threads_invalid():
 
 def test_stt_vad_threshold_default():
     validated, _ = validate_config({})
-    assert validated["stt_vad_threshold"] == 0.5
+    assert validated["stt_vad_threshold"] == 0.3
 
 
 def test_stt_vad_threshold_clamped():
@@ -48,7 +48,7 @@ def test_stt_vad_threshold_clamped():
 
 def test_stt_vad_threshold_invalid():
     validated, changed = validate_config({"stt_vad_threshold": "abc"})
-    assert validated["stt_vad_threshold"] == 0.5
+    assert validated["stt_vad_threshold"] == 0.3
     assert changed is True
 
 

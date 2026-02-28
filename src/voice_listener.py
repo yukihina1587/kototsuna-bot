@@ -10,6 +10,7 @@ import os
 import queue
 import sys
 import threading
+from collections import deque
 from typing import Any, Callable, Optional
 
 from src.logger import logger
@@ -49,6 +50,7 @@ except ImportError:
 SAMPLE_RATE: int = 16_000
 VAD_WINDOW_SIZE: int = 512
 AUDIO_CHUNK_SAMPLES: int = 1_600  # 100 ms at 16 kHz
+PRE_ROLL_SECONDS: float = 0.3  # VADトリガー前の音声を保持する秒数
 
 
 # --- Model path helpers -------------------------------------------------------
@@ -347,7 +349,7 @@ class VoiceTranslator:
         models_dir = _get_models_dir()
         base_dir = os.path.dirname(models_dir)
         vad_rel = os.path.join("models", "silero_vad.onnx")
-        vad_threshold: float = float(self.config_data.get("stt_vad_threshold", 0.5))
+        vad_threshold: float = float(self.config_data.get("stt_vad_threshold", 0.3))
 
         logger.info(
             f"Creating VoiceActivityDetector (threshold={vad_threshold}, "
@@ -357,7 +359,7 @@ class VoiceTranslator:
         vad_config = sherpa_onnx.VadModelConfig()
         vad_config.silero_vad.threshold = vad_threshold
         vad_config.silero_vad.min_silence_duration = 0.5
-        vad_config.silero_vad.min_speech_duration = 0.25
+        vad_config.silero_vad.min_speech_duration = 0.1
         vad_config.silero_vad.max_speech_duration = 20.0
         vad_config.silero_vad.window_size = self._vad_window_size
         vad_config.sample_rate = SAMPLE_RATE
@@ -397,6 +399,10 @@ class VoiceTranslator:
         logger.info("STT worker thread started.")
         buffer = np.array([], dtype=np.float32)
 
+        # Ring buffer: VADトリガー前の音声を保持し、発話冒頭の欠落を防ぐ
+        pre_roll_size = int(SAMPLE_RATE * PRE_ROLL_SECONDS)
+        pre_roll: deque[float] = deque(maxlen=pre_roll_size)
+
         while self._running:
             # Fetch the next audio chunk (with timeout so we can check _running).
             try:
@@ -408,13 +414,22 @@ class VoiceTranslator:
 
             # Feed VAD in window-sized chunks.
             while len(buffer) >= self._vad_window_size:
-                self._vad.accept_waveform(buffer[: self._vad_window_size])
+                chunk = buffer[: self._vad_window_size]
+                self._vad.accept_waveform(chunk)
                 buffer = buffer[self._vad_window_size :]
+                # Keep recent audio in ring buffer for pre-roll
+                pre_roll.extend(chunk)
 
             # Process every completed speech segment.
             while not self._vad.empty():
                 speech_samples = self._vad.front.samples
                 self._vad.pop()
+
+                # Prepend pre-roll audio to capture speech onset
+                if pre_roll:
+                    pre_roll_array = np.array(pre_roll, dtype=np.float32)
+                    speech_samples = np.concatenate([pre_roll_array, speech_samples])
+                    pre_roll.clear()
 
                 stream = self._recognizer.create_stream()
                 stream.accept_waveform(SAMPLE_RATE, speech_samples)
