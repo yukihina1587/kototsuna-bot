@@ -47,6 +47,8 @@ from src.gui_helpers import DifferentialListManager, create_participant_row, cre
 from src.updater import (
     check_for_updates, download_update, apply_update, restart_app,
     ReleaseInfo, UpdateError, format_file_size,
+    save_rollback_info, get_rollback_info, clear_rollback_info,
+    rollback_to_previous,
 )
 
 # 外観設定 / テーマ
@@ -4402,6 +4404,9 @@ window.onload = function() {{
                     self.master.after(0, lambda: self._update_progress.set(progress))
                     self.master.after(0, lambda t=dl_text: self._update_progress_label.configure(text=t))
 
+                # ロールバック情報を保存（現バージョンのインストーラーURL）
+                save_rollback_info(__version__)
+
                 temp_path = download_update(release, progress_callback=on_progress)
                 self.master.after(0, lambda: self._update_progress_label.configure(text="適用中..."))
 
@@ -4438,6 +4443,54 @@ window.onload = function() {{
             "アップデートエラー",
             f"アップデートに失敗しました:\n{message}",
         )
+
+    def _show_rollback_dialog(self) -> None:
+        """アップデート直後のロールバック確認ダイアログを表示する。"""
+        info = get_rollback_info()
+        if not info or not info["version"]:
+            clear_rollback_info()
+            return
+
+        prev_version = info["version"]
+        result = messagebox.askyesno(
+            "アップデート完了",
+            f"v{__version__} にアップデートしました。\n\n"
+            f"問題がある場合、前のバージョン ({prev_version}) に戻せます。\n"
+            "前のバージョンに戻しますか？",
+            parent=self.master,
+        )
+
+        if result:
+            self._do_rollback()
+        else:
+            clear_rollback_info()
+
+    def _do_rollback(self) -> None:
+        """ロールバックを実行する。"""
+        self.log_message("前のバージョンに戻しています...")
+
+        def do_rollback_thread() -> None:
+            try:
+                rollback_to_previous()
+                # restart_app() が os._exit(0) を呼ぶため、ここには到達しない
+            except UpdateError as e:
+                logger.error(f"Rollback failed: {e}")
+                self.master.after(0, lambda: messagebox.showerror(
+                    "ロールバックエラー",
+                    f"前のバージョンに戻せませんでした:\n{e}",
+                    parent=self.master,
+                ))
+                self.master.after(0, lambda: clear_rollback_info())
+            except Exception as e:
+                logger.error(f"Unexpected rollback error: {e}", exc_info=True)
+                self.master.after(0, lambda: messagebox.showerror(
+                    "ロールバックエラー",
+                    f"予期しないエラーが発生しました:\n{e}",
+                    parent=self.master,
+                ))
+                self.master.after(0, lambda: clear_rollback_info())
+
+        threading.Thread(target=do_rollback_thread, daemon=True).start()
 
     def cleanup_resources(self):
         """アプリケーション終了時に全てのリソースを解放"""

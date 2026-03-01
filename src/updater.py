@@ -459,6 +459,138 @@ def _get_current_exe_path() -> Optional[str]:
     return None
 
 
+def _find_installer_url_for_version(version: str) -> str:
+    """指定バージョンのインストーラーURLをGitHub Releasesから取得する。
+
+    Args:
+        version: バージョン文字列 (例: "v1.5.0-beta.3", "1.5.0")
+
+    Returns:
+        インストーラーのダウンロードURL。見つからなければ空文字列
+    """
+    tag = version if version.startswith("v") else f"v{version}"
+    try:
+        url = f"{GITHUB_API_URL}/tags/{tag}"
+        response = requests.get(
+            url,
+            timeout=REQUEST_TIMEOUT,
+            headers={"Accept": "application/vnd.github.v3+json"},
+        )
+        response.raise_for_status()
+        release_data = response.json()
+        for asset in release_data.get("assets", []):
+            if asset.get("name") == EXE_ASSET_NAME:
+                return asset.get("browser_download_url", "")
+    except Exception as e:
+        logger.warning(f"Failed to find installer URL for {version}: {e}")
+    return ""
+
+
+def save_rollback_info(current_version: str) -> None:
+    """アップデート前に現バージョン情報をconfigに保存する。
+
+    Args:
+        current_version: 現在のアプリバージョン (例: "1.5.0-beta.4")
+    """
+    from src.config import load_config, save_config
+
+    tag = current_version if current_version.startswith("v") else f"v{current_version}"
+    installer_url = _find_installer_url_for_version(tag)
+
+    config = load_config()
+    config["previous_version"] = tag
+    config["just_updated"] = True
+    config["previous_installer_url"] = installer_url
+    save_config(config)
+    logger.info(f"Rollback info saved: version={tag}, url={'found' if installer_url else 'not found'}")
+
+
+def get_rollback_info() -> Optional[dict]:
+    """ロールバック可能な情報を取得する。
+
+    Returns:
+        {"version": str, "installer_url": str} または None
+    """
+    from src.config import load_config
+
+    config = load_config()
+    prev_version = config.get("previous_version", "")
+    if not prev_version:
+        return None
+    return {
+        "version": prev_version,
+        "installer_url": config.get("previous_installer_url", ""),
+    }
+
+
+def clear_rollback_info() -> None:
+    """ロールバック情報とjust_updatedフラグをクリアする。"""
+    from src.config import load_config, save_config
+
+    config = load_config()
+    config["just_updated"] = False
+    save_config(config)
+    logger.info("Rollback just_updated flag cleared")
+
+
+def rollback_to_previous(
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> None:
+    """前バージョンにロールバックする。
+
+    GitHubから前バージョンのインストーラーをダウンロードし、
+    apply_update + restart_app で差し替える。
+
+    Args:
+        progress_callback: (downloaded_bytes, total_bytes) を受け取るコールバック
+
+    Raises:
+        UpdateError: ロールバック情報がない、またはダウンロード失敗時
+    """
+    info = get_rollback_info()
+    if not info or not info["version"]:
+        raise UpdateError("ロールバック情報がありません")
+
+    installer_url = info["installer_url"]
+
+    # URLが保存されていない場合、GitHubから再取得を試みる
+    if not installer_url:
+        installer_url = _find_installer_url_for_version(info["version"])
+    if not installer_url:
+        raise UpdateError(
+            f"バージョン {info['version']} のインストーラーが見つかりません。\n"
+            "GitHubからリリースが削除された可能性があります。"
+        )
+
+    logger.info(f"Rolling back to {info['version']} from {installer_url}")
+
+    # ダウンロード（SHA256検証なしのReleaseInfo）
+    rollback_release = ReleaseInfo(
+        version=info["version"].lstrip("vV"),
+        tag_name=info["version"],
+        name=f"Rollback to {info['version']}",
+        body="",
+        published_at="",
+        prerelease=False,
+        asset_url=installer_url,
+        asset_size=0,
+        sha256="",  # ロールバック時はSHA256検証をスキップ
+    )
+
+    temp_path = download_update(rollback_release, progress_callback=progress_callback)
+    apply_update(temp_path)
+
+    # ロールバック情報をクリア（前のバージョンに戻るため）
+    from src.config import load_config, save_config
+    config = load_config()
+    config["previous_version"] = ""
+    config["just_updated"] = False
+    config["previous_installer_url"] = ""
+    save_config(config)
+
+    restart_app()
+
+
 def format_file_size(size_bytes: int) -> str:
     """バイト数を人間が読みやすい形式に変換する。
 

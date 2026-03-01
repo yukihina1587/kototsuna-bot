@@ -92,6 +92,10 @@ DEFAULT_CONFIG = {
     "include_prerelease": False,
     "last_update_check": "",
     "skipped_version": "",
+    # ロールバック設定
+    "previous_version": "",          # ロールバック可能な前バージョン (例: "v1.5.0-beta.3")
+    "just_updated": False,           # アップデート直後フラグ
+    "previous_installer_url": "",    # 前バージョンのインストーラーURL
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
@@ -163,6 +167,8 @@ def validate_config(config_data):
         "ui_theme",
         "last_update_check",
         "skipped_version",
+        "previous_version",
+        "previous_installer_url",
     ]:
         if validated.get(key) is None:
             validated[key] = DEFAULT_CONFIG.get(key, "")
@@ -216,7 +222,7 @@ def validate_config(config_data):
         changed = True
 
     # ブール系
-    for key in ["chat_html_output", "chat_html_newest_first", "tts_include_name", "commands_enabled"]:
+    for key in ["chat_html_output", "chat_html_newest_first", "tts_include_name", "commands_enabled", "just_updated"]:
         if not isinstance(validated.get(key), bool):
             validated[key] = bool(validated.get(key))
             changed = True

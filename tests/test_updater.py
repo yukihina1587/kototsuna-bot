@@ -10,11 +10,16 @@ from src.updater import (
     ReleaseInfo,
     UpdateError,
     _extract_sha256,
+    _find_installer_url_for_version,
     check_for_updates,
+    clear_rollback_info,
     download_update,
     format_file_size,
+    get_rollback_info,
     is_newer,
     parse_version,
+    rollback_to_previous,
+    save_rollback_info,
 )
 
 
@@ -320,3 +325,149 @@ class TestFormatFileSize:
 
     def test_gb(self):
         assert format_file_size(1_073_741_824) == "1.0 GB"
+
+
+# =========================================
+# _find_installer_url_for_version (mocked)
+# =========================================
+
+class TestFindInstallerUrl:
+    @patch("src.updater.requests.get")
+    def test_found(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "tag_name": "v1.0.0",
+            "assets": [{
+                "name": "Kototsuna_Setup.exe",
+                "browser_download_url": "https://example.com/v1.0.0/Kototsuna_Setup.exe",
+                "size": 100,
+            }],
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        url = _find_installer_url_for_version("v1.0.0")
+        assert url == "https://example.com/v1.0.0/Kototsuna_Setup.exe"
+
+    @patch("src.updater.requests.get")
+    def test_not_found(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"tag_name": "v1.0.0", "assets": []}
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        url = _find_installer_url_for_version("v1.0.0")
+        assert url == ""
+
+    @patch("src.updater.requests.get")
+    def test_network_error(self, mock_get):
+        import requests as req
+        mock_get.side_effect = req.RequestException("Network error")
+
+        url = _find_installer_url_for_version("v1.0.0")
+        assert url == ""
+
+    @patch("src.updater.requests.get")
+    def test_adds_v_prefix(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"tag_name": "v1.0.0", "assets": []}
+        mock_response.raise_for_status = MagicMock()
+        mock_get.return_value = mock_response
+
+        _find_installer_url_for_version("1.0.0")
+        call_url = mock_get.call_args[0][0]
+        assert call_url.endswith("/tags/v1.0.0")
+
+
+# =========================================
+# save / get / clear rollback info (mocked config)
+# =========================================
+
+class TestRollbackInfo:
+    @patch("src.config.save_config")
+    @patch("src.config.load_config")
+    @patch("src.updater._find_installer_url_for_version")
+    def test_save_rollback_info(self, mock_find, mock_load, mock_save):
+        mock_load.return_value = {"previous_version": "", "just_updated": False, "previous_installer_url": ""}
+        mock_find.return_value = "https://example.com/setup.exe"
+
+        save_rollback_info("1.5.0-beta.4")
+
+        saved = mock_save.call_args[0][0]
+        assert saved["previous_version"] == "v1.5.0-beta.4"
+        assert saved["just_updated"] is True
+        assert saved["previous_installer_url"] == "https://example.com/setup.exe"
+
+    @patch("src.config.load_config")
+    def test_get_rollback_info_exists(self, mock_load):
+        mock_load.return_value = {
+            "previous_version": "v1.4.0",
+            "previous_installer_url": "https://example.com/v1.4.0/setup.exe",
+        }
+
+        info = get_rollback_info()
+        assert info is not None
+        assert info["version"] == "v1.4.0"
+        assert info["installer_url"] == "https://example.com/v1.4.0/setup.exe"
+
+    @patch("src.config.load_config")
+    def test_get_rollback_info_empty(self, mock_load):
+        mock_load.return_value = {"previous_version": "", "previous_installer_url": ""}
+
+        info = get_rollback_info()
+        assert info is None
+
+    @patch("src.config.save_config")
+    @patch("src.config.load_config")
+    def test_clear_rollback_info(self, mock_load, mock_save):
+        mock_load.return_value = {"just_updated": True, "previous_version": "v1.4.0"}
+
+        clear_rollback_info()
+
+        saved = mock_save.call_args[0][0]
+        assert saved["just_updated"] is False
+
+    @patch("src.updater.restart_app")
+    @patch("src.updater.apply_update")
+    @patch("src.updater.download_update")
+    @patch("src.config.save_config")
+    @patch("src.config.load_config")
+    @patch("src.updater.get_rollback_info")
+    def test_rollback_to_previous_success(
+        self, mock_info, mock_load, mock_save, mock_download, mock_apply, mock_restart
+    ):
+        mock_info.return_value = {
+            "version": "v1.4.0",
+            "installer_url": "https://example.com/v1.4.0/setup.exe",
+        }
+        mock_load.return_value = {
+            "previous_version": "v1.4.0",
+            "just_updated": True,
+            "previous_installer_url": "https://example.com/v1.4.0/setup.exe",
+        }
+        mock_download.return_value = "/tmp/fake_installer.exe"
+
+        rollback_to_previous()
+
+        mock_download.assert_called_once()
+        release_arg = mock_download.call_args[0][0]
+        assert release_arg.tag_name == "v1.4.0"
+        assert release_arg.asset_url == "https://example.com/v1.4.0/setup.exe"
+        mock_apply.assert_called_once_with("/tmp/fake_installer.exe")
+        mock_restart.assert_called_once()
+
+    @patch("src.updater.get_rollback_info")
+    def test_rollback_no_info_raises(self, mock_info):
+        mock_info.return_value = None
+
+        with pytest.raises(UpdateError, match="ロールバック情報がありません"):
+            rollback_to_previous()
+
+    @patch("src.updater._find_installer_url_for_version")
+    @patch("src.updater.get_rollback_info")
+    def test_rollback_no_url_raises(self, mock_info, mock_find):
+        mock_info.return_value = {"version": "v1.4.0", "installer_url": ""}
+        mock_find.return_value = ""
+
+        with pytest.raises(UpdateError, match="インストーラーが見つかりません"):
+            rollback_to_previous()

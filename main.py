@@ -242,6 +242,11 @@ if __name__ == '__main__':
         from src.updater import cleanup_old_exe
         cleanup_old_exe()
 
+    # アップデート直後かどうか確認
+    from src.config import load_config as _load_config
+    _startup_config = _load_config()
+    _just_updated = _startup_config.get("just_updated", False)
+
     # メインウィンドウを作成（非表示）
     try:
         root = ctk.CTk()
@@ -263,6 +268,9 @@ if __name__ == '__main__':
             splash.destroy()
             # メインウィンドウを表示
             root.deiconify()
+            # アップデート直後ならロールバックダイアログを表示
+            if _just_updated:
+                root.after(500, app._show_rollback_dialog)
         except Exception as e:
             logger.critical(f"アプリケーション初期化エラー: {e}", exc_info=True)
             splash.destroy()
