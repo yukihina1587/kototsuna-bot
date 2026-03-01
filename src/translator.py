@@ -245,12 +245,15 @@ _session_manager = _SessionManager()
 _batcher = _TranslationBatcher()
 _translation_filters = []
 _translation_dictionary = []
+_translation_engine = "deepl"  # deepl / local / hybrid
 _stats = {
     "requests": 0,
     "cache_hits": 0,
     "filtered": 0,
     "errors": 0,
     "batched": 0,
+    "local_requests": 0,
+    "local_errors": 0,
 }
 
 
@@ -265,6 +268,48 @@ def _normalize_text(text):
 def _make_cache_key(text, mode, api_key):
     safe_key = api_key or ""
     return (text, mode, safe_key)
+
+
+def set_translation_engine(engine: str) -> None:
+    """翻訳エンジンを設定する。"""
+    global _translation_engine
+    if engine in ("deepl", "local", "hybrid"):
+        _translation_engine = engine
+        logger.info(f"Translation engine set to: {engine}")
+
+
+def get_translation_engine() -> str:
+    """現在の翻訳エンジンを返す。"""
+    return _translation_engine
+
+
+def _translate_local(text: str, mode: str) -> str | None:
+    """ローカル翻訳を試みる。成功時は翻訳結果、失敗時はNone。"""
+    try:
+        from src.local_translator import get_local_translator
+    except ImportError:
+        return None
+
+    translator = get_local_translator()
+    if translator is None:
+        return None
+
+    if mode == "英→日":
+        direction = "en-ja"
+    elif mode == "日→英":
+        direction = "ja-en"
+    elif mode == "自動":
+        direction = "ja-en" if _is_japanese(text) else "en-ja"
+    else:
+        direction = "en-ja"
+
+    _stats["local_requests"] += 1
+    result = translator.translate(text, direction)
+    if result == text:
+        # translate() returns original text on error
+        _stats["local_errors"] += 1
+        return None
+    return result
 
 
 def set_translation_filters(filters):
@@ -385,10 +430,6 @@ def _translate_http_sync(payload, endpoint, api_key):
 
 
 async def translate_text(text, mode, api_key):
-    if not api_key:
-        logger.error("DeepL API Key is missing.")
-        return _normalize_text(text)
-
     text = _normalize_text(text)
     if not text.strip():
         return text
@@ -408,6 +449,25 @@ async def translate_text(text, mode, api_key):
         _stats["cache_hits"] += 1
         logger.debug("translate_text cache hit")
         return cached
+
+    # ローカル翻訳エンジン
+    if _translation_engine == "local":
+        result = _translate_local(text, mode)
+        if result is not None:
+            _cache.set(cache_key, result)
+            return result
+        return text
+
+    # DeepL API（deepl or hybrid）
+    if not api_key:
+        # hybrid: DeepL APIキーなしでもローカルにフォールバック
+        if _translation_engine == "hybrid":
+            result = _translate_local(text, mode)
+            if result is not None:
+                _cache.set(cache_key, result)
+                return result
+        logger.error("DeepL API Key is missing.")
+        return text
 
     payload = _build_payload(text, mode)
     endpoint = get_deepl_endpoint(api_key)
@@ -431,14 +491,17 @@ async def translate_text(text, mode, api_key):
         logger.error(f"Exception during DeepL request: {e}", exc_info=True)
         _stats["errors"] += 1
 
+    # hybrid: DeepL失敗時にローカルフォールバック
+    if _translation_engine == "hybrid":
+        result = _translate_local(text, mode)
+        if result is not None:
+            _cache.set(cache_key, result)
+            return result
+
     return text
 
 
 def translate_text_sync(text, mode, api_key):
-    if not api_key:
-        logger.error("DeepL API Key is missing.")
-        return _normalize_text(text)
-
     text = _normalize_text(text)
     if not text.strip():
         return text
@@ -456,6 +519,24 @@ def translate_text_sync(text, mode, api_key):
         _stats["cache_hits"] += 1
         logger.debug("translate_text_sync cache hit")
         return cached
+
+    # ローカル翻訳エンジン
+    if _translation_engine == "local":
+        result = _translate_local(text, mode)
+        if result is not None:
+            _cache.set(cache_key, result)
+            return result
+        return text
+
+    # DeepL API（deepl or hybrid）
+    if not api_key:
+        if _translation_engine == "hybrid":
+            result = _translate_local(text, mode)
+            if result is not None:
+                _cache.set(cache_key, result)
+                return result
+        logger.error("DeepL API Key is missing.")
+        return text
 
     payload = _build_payload(text, mode)
     endpoint = get_deepl_endpoint(api_key)
@@ -476,6 +557,13 @@ def translate_text_sync(text, mode, api_key):
     except Exception as e:
         logger.error(f"Exception during DeepL request: {e}", exc_info=True)
         _stats["errors"] += 1
+
+    # hybrid: DeepL失敗時にローカルフォールバック
+    if _translation_engine == "hybrid":
+        result = _translate_local(text, mode)
+        if result is not None:
+            _cache.set(cache_key, result)
+            return result
 
     return text
 

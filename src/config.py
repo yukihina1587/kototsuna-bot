@@ -87,6 +87,8 @@ DEFAULT_CONFIG = {
     "ui_theme": "default",  # default / gradient / minimal / cyberpunk
     # ログ設定
     "log_level": "INFO",  # DEBUG / INFO / WARNING / ERROR
+    # 翻訳エンジン設定
+    "translation_engine": "deepl",  # deepl / local / hybrid
     # アップデート設定
     "auto_update_check": True,
     "include_prerelease": False,
@@ -103,6 +105,7 @@ VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_VOICE_ASSIGN_MODES = {"mod_only", "self_service", "disabled"}
+VALID_TRANSLATION_ENGINES = {"deepl", "local", "hybrid"}
 
 def validate_config(config_data):
     """
@@ -173,6 +176,15 @@ def validate_config(config_data):
         if validated.get(key) is None:
             validated[key] = DEFAULT_CONFIG.get(key, "")
             changed = True
+
+    # translation_engine
+    if validated.get("translation_engine") not in VALID_TRANSLATION_ENGINES:
+        logger.warning(
+            "translation_engine is invalid: %s, fallback to deepl",
+            validated.get("translation_engine"),
+        )
+        validated["translation_engine"] = "deepl"
+        changed = True
 
     # voice_assign_mode
     if validated.get("voice_assign_mode") not in VALID_VOICE_ASSIGN_MODES:

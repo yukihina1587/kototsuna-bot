@@ -169,6 +169,7 @@ class KototsunaApp:
         self.config = load_config()
         translator.set_translation_filters(self.config.get("translation_filters", []))
         translator.set_translation_dictionary(self.config.get("translation_dictionary", []))
+        translator.set_translation_engine(self.config.get("translation_engine", "deepl"))
 
         # テーマ適用（widgetビルド前に実行）
         saved_theme = self.config.get("ui_theme", "default")
@@ -195,6 +196,7 @@ class KototsunaApp:
         # 認証済みユーザー名（トークン検証時に取得）
         self.auth_username = tk.StringVar(value="")
         self.lang_mode = tk.StringVar(value=self.config.get("translate_mode", "自動"))
+        self.translation_engine = tk.StringVar(value=self.config.get("translation_engine", "deepl"))
         # チャット翻訳は毎回オフから開始（安全のため）
         self.chat_translation_enabled = tk.BooleanVar(value=False)
         # config.jsonにも反映して、bot.pyと同期させる
@@ -554,6 +556,15 @@ class KototsunaApp:
         self._add_sidebar_section(top, "翻訳モード")
         ctk.CTkOptionMenu(
             top, variable=self.lang_mode, values=['自動', '英→日', '日→英'],
+            fg_color=CARD_BG, button_color=ACCENT_SECONDARY, height=28
+        ).pack(fill="x", pady=(0, 4))
+
+        # === 翻訳エンジン ===
+        self._add_sidebar_section(top, "翻訳エンジン")
+        ctk.CTkOptionMenu(
+            top, variable=self.translation_engine,
+            values=['deepl', 'local', 'hybrid'],
+            command=self._on_translation_engine_changed,
             fg_color=CARD_BG, button_color=ACCENT_SECONDARY, height=28
         ).pack(fill="x", pady=(0, 4))
 
@@ -2836,6 +2847,7 @@ class KototsunaApp:
             self.config["channel_name"] = self.channel.get().strip()
             self.config["channel_mode"] = self.channel_mode.get()
             self.config["translate_mode"] = self.lang_mode.get()
+            self.config["translation_engine"] = self.translation_engine.get()
             self.config["bits_sound_path"] = self.bits_sound_path.get().strip()
             self.config["bits_sound_volume"] = int(self.bits_volume_var.get())
             self.config["subscription_sound_path"] = self.sub_sound_path.get().strip()
@@ -4568,6 +4580,14 @@ window.onload = function() {{
         save_config(self.config)
         status = "有効" if enabled else "無効"
         self.log_message(f"チャット翻訳を{status}にしました")
+
+    def _on_translation_engine_changed(self, value: str) -> None:
+        """翻訳エンジン選択が変更されたとき"""
+        translator.set_translation_engine(value)
+        self.config["translation_engine"] = value
+        save_config(self.config)
+        engine_labels = {"deepl": "DeepL API", "local": "ローカル (OPUS-MT)", "hybrid": "ハイブリッド"}
+        self.log_message(f"翻訳エンジンを {engine_labels.get(value, value)} に変更しました")
 
     def _ensure_tts_started(self):
         """チャット読み上げを常時ONにするための起動ヘルパー"""
