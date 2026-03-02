@@ -140,16 +140,27 @@ class LocalTranslator:
         try:
             pair = self._get_model(direction)
             source_tokens = pair.source_sp.encode(text, out_type=str)
-            # 出力長は入力の3倍+10、最大512トークン
-            max_length = min(len(source_tokens) * 3 + 10, 512)
+            n_src = len(source_tokens)
+            # 出力長制限: 入力トークン数に比例 + 余裕
+            max_length = min(n_src * 3 + 5, 512)
             results = pair.translator.translate_batch(
                 [source_tokens],
                 max_decoding_length=max_length,
                 repetition_penalty=1.5,
                 no_repeat_ngram_size=2,
+                beam_size=2,
             )
             output_tokens = results[0].hypotheses[0]
             translated = pair.target_sp.decode(output_tokens)
+
+            # リピート検出: 出力が入力より極端に長い場合は品質不良とみなす
+            if len(translated) > len(text) * 5 + 20:
+                logger.warning(
+                    f"Local translation output too long ({len(translated)} chars "
+                    f"vs input {len(text)} chars), likely repetition"
+                )
+                return text
+
             return translated
         except Exception as e:
             logger.error(f"Local translation error ({direction}): {e}", exc_info=True)
