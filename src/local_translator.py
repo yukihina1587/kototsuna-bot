@@ -17,16 +17,18 @@ from src.logger import logger
 try:
     import ctranslate2
     _HAS_CT2 = True
-except ImportError:
+except ImportError as e:
     ctranslate2 = None  # type: ignore[assignment]
     _HAS_CT2 = False
+    logger.warning(f"ctranslate2 not available: {e}")
 
 try:
     import sentencepiece as spm
     _HAS_SPM = True
-except ImportError:
+except ImportError as e:
     spm = None  # type: ignore[assignment]
     _HAS_SPM = False
+    logger.warning(f"sentencepiece not available: {e}")
 
 
 # NLLB-200 model directory under models/

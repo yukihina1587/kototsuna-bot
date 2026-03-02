@@ -75,6 +75,15 @@ try:
 except Exception:
     print("[SPEC] _sounddevice_data not found (may not be needed)")
 
+# CTranslate2 + SentencePiece（ローカル翻訳エンジン）のネイティブDLLと依存ファイルを収集
+tmp_ret = collect_all('ctranslate2')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+print(f"[SPEC] ctranslate2 collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={len(tmp_ret[2])}")
+
+tmp_ret = collect_all('sentencepiece')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+print(f"[SPEC] sentencepiece collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={len(tmp_ret[2])}")
+
 # STTモデルファイルを同梱（models/ディレクトリ）
 _models_dir = os.path.join('.', 'models')
 if os.path.isdir(_models_dir):
