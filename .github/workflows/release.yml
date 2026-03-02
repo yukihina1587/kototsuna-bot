@@ -63,6 +63,24 @@ jobs:
           Write-Host "All STT models downloaded successfully."
         shell: pwsh
 
+      - name: Download NLLB-200 translation model
+        run: |
+          Write-Host "Downloading NLLB-200-distilled-600M (CTranslate2 INT8) from HuggingFace..."
+          pip install huggingface_hub
+          python download_translation_models.py
+
+          $modelDir = "models/nllb-200-distilled-600M-ct2-int8"
+          if (!(Test-Path "$modelDir/model.bin")) {
+            Write-Error "NLLB-200 model download failed: model.bin not found"
+            exit 1
+          }
+          $size = (Get-Item "$modelDir/model.bin").Length / 1MB
+          Write-Host "  model.bin ($([math]::Round($size, 2)) MB)"
+          $spmSize = (Get-Item "$modelDir/sentencepiece.bpe.model").Length / 1MB
+          Write-Host "  sentencepiece.bpe.model ($([math]::Round($spmSize, 2)) MB)"
+          Write-Host "NLLB-200 translation model downloaded successfully."
+        shell: pwsh
+
       - name: Build with PyInstaller
         run: |
           pyinstaller --clean Kototsuna.spec
