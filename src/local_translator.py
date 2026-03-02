@@ -141,6 +141,7 @@ class LocalTranslator:
             )
 
             hypothesis = results[0].hypotheses[0]
+            logger.info(f"NLLB raw hypothesis: {hypothesis[:20]}")
             # Remove leading language token
             if hypothesis and hypothesis[0] == tgt_lang:
                 hypothesis = hypothesis[1:]

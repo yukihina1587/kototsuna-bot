@@ -305,9 +305,11 @@ def _translate_local(text: str, mode: str) -> str | None:
         direction = "en-ja"
 
     _stats["local_requests"] += 1
+    logger.info(f"Local translate: text='{text[:50]}' direction={direction}")
     result = translator.translate(text, direction)
+    logger.info(f"Local translate result: '{result[:100]}'")
     if result == text:
-        # translate() returns original text on error
+        logger.warning(f"Local translation returned same text (direction={direction})")
         _stats["local_errors"] += 1
         return None
     return result
