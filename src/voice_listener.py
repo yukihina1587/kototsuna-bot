@@ -452,8 +452,11 @@ class VoiceTranslator:
             logger.info(f"Recognized: {text}")
 
             api_key = self.api_key_getter()
-            if api_key:
-                translated = translate_text_sync(text, mode, api_key)
+            # ローカル/hybridモードではAPIキーなしでも翻訳可能
+            from src.translator import get_translation_engine
+            engine = get_translation_engine()
+            if api_key or engine in ("local", "hybrid"):
+                translated = translate_text_sync(text, mode, api_key or "")
             else:
                 translated = "(No API Key)"
 

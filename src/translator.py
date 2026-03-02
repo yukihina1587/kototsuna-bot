@@ -292,6 +292,7 @@ def _translate_local(text: str, mode: str) -> str | None:
 
     translator = get_local_translator()
     if translator is None:
+        logger.warning("Local translator unavailable (models missing or dependencies not installed)")
         return None
 
     if mode == "英→日":
@@ -456,6 +457,7 @@ async def translate_text(text, mode, api_key):
         if result is not None:
             _cache.set(cache_key, result)
             return result
+        logger.warning("Local translation failed, returning original text")
         return text
 
     # DeepL API（deepl or hybrid）
@@ -526,6 +528,7 @@ def translate_text_sync(text, mode, api_key):
         if result is not None:
             _cache.set(cache_key, result)
             return result
+        logger.warning("Local translation failed, returning original text")
         return text
 
     # DeepL API（deepl or hybrid）

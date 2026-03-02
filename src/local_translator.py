@@ -56,7 +56,7 @@ def is_local_translation_available() -> bool:
         for filename in _REQUIRED_FILES:
             filepath = os.path.join(model_path, filename)
             if not os.path.isfile(filepath):
-                logger.debug(f"Local translation model file missing: {filepath}")
+                logger.warning(f"Local translation model file missing: {filepath}")
                 return False
     return True
 
