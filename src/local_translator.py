@@ -140,7 +140,13 @@ class LocalTranslator:
         try:
             pair = self._get_model(direction)
             source_tokens = pair.source_sp.encode(text, out_type=str)
-            results = pair.translator.translate_batch([source_tokens])
+            max_length = max(len(source_tokens) * 3, 256)
+            results = pair.translator.translate_batch(
+                [source_tokens],
+                max_decoding_length=max_length,
+                repetition_penalty=1.2,
+                no_repeat_ngram_size=3,
+            )
             output_tokens = results[0].hypotheses[0]
             translated = pair.target_sp.decode(output_tokens)
             return translated
