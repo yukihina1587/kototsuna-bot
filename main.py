@@ -268,9 +268,9 @@ if __name__ == '__main__':
             splash.destroy()
             # メインウィンドウを表示
             root.deiconify()
-            # アップデート直後ならロールバックダイアログを表示
+            # アップデート直後ならチャットログに通知
             if _just_updated:
-                root.after(500, app._show_rollback_dialog)
+                root.after(500, app._show_update_notification)
         except Exception as e:
             logger.critical(f"アプリケーション初期化エラー: {e}", exc_info=True)
             splash.destroy()

@@ -1144,6 +1144,17 @@ class KototsunaApp:
             variable=self.include_prerelease, font=("Segoe UI", 10),
         ).pack(anchor="w", pady=2)
 
+        # ロールバックボタン（アップデート直後のみ表示）
+        rollback_info = get_rollback_info()
+        if rollback_info and rollback_info["version"]:
+            self._rollback_btn = ctk.CTkButton(
+                parent, text=f"前のバージョンに戻す ({rollback_info['version']})",
+                command=self._do_rollback,
+                fg_color="#DC2626", hover_color="#B91C1C", height=32,
+                font=("Segoe UI", 10),
+            )
+            self._rollback_btn.pack(fill="x", pady=(8, 0))
+
         self._add_panel_divider(parent)
 
         # マニュアルリンク
@@ -4456,26 +4467,19 @@ window.onload = function() {{
             f"アップデートに失敗しました:\n{message}",
         )
 
-    def _show_rollback_dialog(self) -> None:
-        """アップデート直後のロールバック確認ダイアログを表示する。"""
+    def _show_update_notification(self) -> None:
+        """アップデート直後のチャットログ通知を表示する。"""
         info = get_rollback_info()
         if not info or not info["version"]:
             clear_rollback_info()
             return
 
         prev_version = info["version"]
-        result = messagebox.askyesno(
-            "アップデート完了",
-            f"v{__version__} にアップデートしました。\n\n"
-            f"問題がある場合、前のバージョン ({prev_version}) に戻せます。\n"
-            "前のバージョンに戻しますか？",
-            parent=self.master,
+        self.log_message(
+            f"v{__version__} にアップデートしました。"
+            f"問題があれば「設定」→「前のバージョンに戻す」から {prev_version} に戻せます。",
+            log_type="system",
         )
-
-        if result:
-            self._do_rollback()
-        else:
-            clear_rollback_info()
 
     def _do_rollback(self) -> None:
         """ロールバックを実行する。"""
