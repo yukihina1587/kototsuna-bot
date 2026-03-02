@@ -81,18 +81,17 @@ class TestLocalTranslator:
 
     @patch("src.local_translator.ctranslate2")
     @patch("src.local_translator.spm")
-    def test_translate_success(self, mock_spm, mock_ct2):
-        """正常な翻訳フロー"""
-        # Mock SentencePiece
-        mock_source_sp = MagicMock()
-        mock_source_sp.encode.return_value = ["▁Hello", "▁world"]
-        mock_target_sp = MagicMock()
-        mock_target_sp.decode.return_value = "こんにちは世界"
-        mock_spm.SentencePieceProcessor.side_effect = [mock_source_sp, mock_target_sp]
+    def test_translate_ja_en(self, mock_spm, mock_ct2):
+        """日→英翻訳フロー"""
+        # Mock SentencePiece (single tokenizer for NLLB)
+        mock_sp = MagicMock()
+        mock_sp.encode.return_value = ["▁こんにちは", "世界"]
+        mock_sp.decode.return_value = "Hello world"
+        mock_spm.SentencePieceProcessor.return_value = mock_sp
 
         # Mock CTranslate2
         mock_result = MagicMock()
-        mock_result.hypotheses = [["▁こんにちは", "世界"]]
+        mock_result.hypotheses = [["eng_Latn", "▁Hello", "▁world"]]
         mock_translator = MagicMock()
         mock_translator.translate_batch.return_value = [mock_result]
         mock_ct2.Translator.return_value = mock_translator
@@ -100,10 +99,45 @@ class TestLocalTranslator:
         t = LocalTranslator()
         with patch("os.getcwd", return_value="/fake"), \
              patch("os.chdir"):
-            result = t.translate("Hello world", "en-ja")
+            result = t.translate("こんにちは世界", "ja-en")
 
-        assert result == "こんにちは世界"
-        assert t.is_loaded("en-ja") is True
+        assert result == "Hello world"
+        assert t.is_loaded("ja-en") is True
+
+        # Verify source format: [src_lang] + tokens + ["</s>"]
+        call_args = mock_translator.translate_batch.call_args
+        source = call_args[0][0][0]
+        assert source[0] == "jpn_Jpan"
+        assert source[-1] == "</s>"
+        # Verify target_prefix
+        assert call_args[1]["target_prefix"] == [["eng_Latn"]]
+
+    @patch("src.local_translator.ctranslate2")
+    @patch("src.local_translator.spm")
+    def test_translate_en_ja(self, mock_spm, mock_ct2):
+        """英→日翻訳フロー"""
+        mock_sp = MagicMock()
+        mock_sp.encode.return_value = ["▁Hello"]
+        mock_sp.decode.return_value = "こんにちは"
+        mock_spm.SentencePieceProcessor.return_value = mock_sp
+
+        mock_result = MagicMock()
+        mock_result.hypotheses = [["jpn_Jpan", "▁こんにちは"]]
+        mock_translator = MagicMock()
+        mock_translator.translate_batch.return_value = [mock_result]
+        mock_ct2.Translator.return_value = mock_translator
+
+        t = LocalTranslator()
+        with patch("os.getcwd", return_value="/fake"), \
+             patch("os.chdir"):
+            result = t.translate("Hello", "en-ja")
+
+        assert result == "こんにちは"
+        # Verify source uses eng_Latn prefix
+        call_args = mock_translator.translate_batch.call_args
+        source = call_args[0][0][0]
+        assert source[0] == "eng_Latn"
+        assert call_args[1]["target_prefix"] == [["jpn_Jpan"]]
 
     @patch("src.local_translator.ctranslate2")
     @patch("src.local_translator.spm")
@@ -117,6 +151,30 @@ class TestLocalTranslator:
             result = t.translate("Hello", "en-ja")
 
         assert result == "Hello"
+
+    @patch("src.local_translator.ctranslate2")
+    @patch("src.local_translator.spm")
+    def test_single_model_for_both_directions(self, mock_spm, mock_ct2):
+        """NLLB-200は1モデルで双方向翻訳"""
+        mock_sp = MagicMock()
+        mock_sp.encode.return_value = ["▁test"]
+        mock_sp.decode.return_value = "result"
+        mock_spm.SentencePieceProcessor.return_value = mock_sp
+
+        mock_result = MagicMock()
+        mock_result.hypotheses = [["eng_Latn", "▁result"]]
+        mock_translator = MagicMock()
+        mock_translator.translate_batch.return_value = [mock_result]
+        mock_ct2.Translator.return_value = mock_translator
+
+        t = LocalTranslator()
+        with patch("os.getcwd", return_value="/fake"), \
+             patch("os.chdir"):
+            t.translate("test", "ja-en")
+            t.translate("test", "en-ja")
+
+        # CTranslate2.Translator should be created only once
+        assert mock_ct2.Translator.call_count == 1
 
 
 # =========================================

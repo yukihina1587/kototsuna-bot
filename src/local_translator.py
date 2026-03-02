@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""ローカル翻訳エンジン (CTranslate2 + OPUS-MT)
+"""ローカル翻訳エンジン (CTranslate2 + NLLB-200)
 
 CTranslate2 + SentencePieceを使用したオフライン翻訳。
-Helsinki-NLP/OPUS-MT ja-en / en-jap モデルのINT8量子化版を使用。
+facebook/nllb-200-distilled-600M の INT8量子化版を使用。
+1モデルで日英双方向翻訳が可能。
 """
 
 import os
@@ -28,12 +29,15 @@ except ImportError:
     _HAS_SPM = False
 
 
-# Model directory names under models/
-_JA_EN_MODEL_DIR = "opus-mt-ja-en"
-_EN_JA_MODEL_DIR = "opus-mt-en-jap"
+# NLLB-200 model directory under models/
+_NLLB_MODEL_DIR = "nllb-200-distilled-600M-ct2-int8"
 
-# Required files in each model directory
-_REQUIRED_FILES = ["model.bin", "source.spm", "target.spm"]
+# Required files in the model directory
+_REQUIRED_FILES = ["model.bin", "sentencepiece.bpe.model"]
+
+# NLLB-200 language codes
+_LANG_JA = "jpn_Jpan"
+_LANG_EN = "eng_Latn"
 
 
 def _get_models_dir() -> str:
@@ -51,78 +55,53 @@ def is_local_translation_available() -> bool:
         return False
 
     models_dir = _get_models_dir()
-    for model_name in [_JA_EN_MODEL_DIR, _EN_JA_MODEL_DIR]:
-        model_path = os.path.join(models_dir, model_name)
-        for filename in _REQUIRED_FILES:
-            filepath = os.path.join(model_path, filename)
-            if not os.path.isfile(filepath):
-                logger.warning(f"Local translation model file missing: {filepath}")
-                return False
+    model_path = os.path.join(models_dir, _NLLB_MODEL_DIR)
+    for filename in _REQUIRED_FILES:
+        filepath = os.path.join(model_path, filename)
+        if not os.path.isfile(filepath):
+            logger.warning(f"Local translation model file missing: {filepath}")
+            return False
     return True
 
 
-class _ModelPair:
-    """CTranslate2 Translator + SentencePiece tokenizer pair."""
-
-    def __init__(
-        self,
-        translator: "ctranslate2.Translator",
-        source_sp: "spm.SentencePieceProcessor",
-        target_sp: "spm.SentencePieceProcessor",
-    ):
-        self.translator = translator
-        self.source_sp = source_sp
-        self.target_sp = target_sp
-
-
 class LocalTranslator:
-    """CTranslate2 + OPUS-MT ローカル翻訳エンジン。
+    """CTranslate2 + NLLB-200 ローカル翻訳エンジン。
 
+    1つのモデルで日英双方向翻訳が可能。
     モデルは初回翻訳時に遅延ロードされる。
     """
 
     def __init__(self) -> None:
-        self._ja_en: Optional[_ModelPair] = None
-        self._en_ja: Optional[_ModelPair] = None
+        self._translator: Optional["ctranslate2.Translator"] = None
+        self._sp: Optional["spm.SentencePieceProcessor"] = None
         self._lock = threading.Lock()
         self._models_dir = _get_models_dir()
 
-    def _load_model(self, model_name: str) -> _ModelPair:
+    def _load_model(self) -> None:
         """モデルをロードする。非ASCIIパス対策でCWD+相対パスを使用。"""
-        model_path = os.path.join(self._models_dir, model_name)
         base_dir = os.path.dirname(self._models_dir)
-        rel_model = os.path.join("models", model_name)
+        rel_model = os.path.join("models", _NLLB_MODEL_DIR)
 
         prev_cwd = os.getcwd()
         try:
             os.chdir(base_dir)
 
-            translator = ctranslate2.Translator(
+            self._translator = ctranslate2.Translator(
                 rel_model, device="cpu", compute_type="int8"
             )
 
-            source_sp = spm.SentencePieceProcessor()
-            source_sp.load(os.path.join(rel_model, "source.spm"))
+            self._sp = spm.SentencePieceProcessor()
+            self._sp.load(os.path.join(rel_model, "sentencepiece.bpe.model"))
 
-            target_sp = spm.SentencePieceProcessor()
-            target_sp.load(os.path.join(rel_model, "target.spm"))
-
-            logger.info(f"Local translation model loaded: {model_name}")
-            return _ModelPair(translator, source_sp, target_sp)
+            logger.info(f"NLLB-200 translation model loaded: {_NLLB_MODEL_DIR}")
         finally:
             os.chdir(prev_cwd)
 
-    def _get_model(self, direction: str) -> _ModelPair:
-        """指定方向のモデルを取得（遅延ロード）。"""
+    def _ensure_loaded(self) -> None:
+        """モデルがロード済みでなければロードする。"""
         with self._lock:
-            if direction == "ja-en":
-                if self._ja_en is None:
-                    self._ja_en = self._load_model(_JA_EN_MODEL_DIR)
-                return self._ja_en
-            else:
-                if self._en_ja is None:
-                    self._en_ja = self._load_model(_EN_JA_MODEL_DIR)
-                return self._en_ja
+            if self._translator is None:
+                self._load_model()
 
     def translate(self, text: str, direction: str) -> str:
         """テキストを翻訳する。
@@ -138,23 +117,38 @@ class LocalTranslator:
             return text
 
         try:
-            pair = self._get_model(direction)
-            source_tokens = pair.source_sp.encode(text, out_type=str)
-            n_src = len(source_tokens)
-            # 出力長制限: 入力トークン数に比例 + 余裕
-            max_length = min(n_src * 3 + 5, 512)
-            results = pair.translator.translate_batch(
-                [source_tokens],
-                max_decoding_length=max_length,
-                repetition_penalty=1.5,
-                no_repeat_ngram_size=2,
-                beam_size=2,
-            )
-            output_tokens = results[0].hypotheses[0]
-            translated = pair.target_sp.decode(output_tokens)
+            self._ensure_loaded()
 
-            # リピート検出: 出力が入力より極端に長い場合は品質不良とみなす
-            if len(translated) > len(text) * 5 + 20:
+            if direction == "ja-en":
+                src_lang, tgt_lang = _LANG_JA, _LANG_EN
+            else:
+                src_lang, tgt_lang = _LANG_EN, _LANG_JA
+
+            # NLLB-200 format: [src_lang] + tokens + ["</s>"]
+            tokens = self._sp.encode(text.strip(), out_type=str)
+            source = [src_lang] + tokens + ["</s>"]
+
+            n_src = len(tokens)
+            max_length = min(n_src * 3 + 10, 512)
+
+            results = self._translator.translate_batch(
+                [source],
+                target_prefix=[[tgt_lang]],
+                max_decoding_length=max_length,
+                repetition_penalty=1.2,
+                no_repeat_ngram_size=3,
+                beam_size=4,
+            )
+
+            hypothesis = results[0].hypotheses[0]
+            # Remove leading language token
+            if hypothesis and hypothesis[0] == tgt_lang:
+                hypothesis = hypothesis[1:]
+
+            translated = self._sp.decode(hypothesis)
+
+            # Repetition guard: output too long relative to input
+            if len(translated) > len(text) * 5 + 30:
                 logger.warning(
                     f"Local translation output too long ({len(translated)} chars "
                     f"vs input {len(text)} chars), likely repetition"
@@ -167,10 +161,8 @@ class LocalTranslator:
             return text
 
     def is_loaded(self, direction: str) -> bool:
-        """指定方向のモデルがロード済みか。"""
-        if direction == "ja-en":
-            return self._ja_en is not None
-        return self._en_ja is not None
+        """モデルがロード済みか。NLLB-200は1モデルなのでdirectionに関わらず同じ。"""
+        return self._translator is not None
 
 
 _translator: Optional[LocalTranslator] = None
