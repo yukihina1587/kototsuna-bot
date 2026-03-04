@@ -241,6 +241,62 @@ OBSなどの配信ソフトでブラウザソースとして使用できます�
 2. ログ履歴上限は`chat_log_history_limit`で調整可能（デフォルト1000）
 3. `scripts/profile_app.py cpu`でCPUプロファイリングが可能
 
+## プラグイン（わんコメ互換）
+
+ことつなはわんコメ互換の JavaScript プラグイン (`plugin.js`) に対応しています。  
+Node.js がインストールされていれば、わんコメ用に作られたプラグインをそのまま利用できます。
+
+### プラグインの配置
+
+```
+%APPDATA%\Kototsuna\plugins\{plugin-name}\plugin.js
+```
+
+フォルダを作成して `plugin.js` を配置するだけで、BOT 起動時に自動的に読み込まれます。
+
+### 対応フック
+
+| フック | 説明 |
+|--------|------|
+| `init({ dir, store }, initialData)` | 起動時に1回呼ばれる |
+| `filterComment(comment, service, userData)` | コメントごとに呼ばれる。`false` を返すとブロック、変更したオブジェクトを返すと変換 |
+| `subscribe(type, data)` | コメントイベント通知 (`type='comments'`) |
+| `destroy()` | 停止時に呼ばれる |
+
+### サンプル plugin.js
+
+```javascript
+const plugin = {
+  name: 'My Plugin',
+  uid: 'com.example.myplugin',
+  version: '1.0.0',
+  author: 'YourName',
+  permissions: ['comments'],
+
+  init({ dir, store }, initialData) {},
+  destroy() {},
+
+  filterComment(comment, service, userData) {
+    // NGワードをブロック
+    if (comment.data.comment.includes('NG')) return false
+    return comment
+  },
+
+  subscribe(type, ...args) {
+    if (type === 'comments') {
+      const { comments } = args[0]
+      // 全コメントを受信
+    }
+  },
+}
+module.exports = plugin
+```
+
+### 注意
+
+- Node.js が必要です（[nodejs.org](https://nodejs.org/)）
+- `store` は `%APPDATA%\Kototsuna\plugin-store\{uid}.json` に永続化されます
+
 ## ライセンス
 
 MIT License

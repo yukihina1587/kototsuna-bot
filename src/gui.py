@@ -36,6 +36,7 @@ from src.voice_listener import VoiceTranslator
 from src.overlay_server import update_translation, run_server_thread
 from src.logger import logger, set_log_level
 from src.tts import get_tts_instance
+import src.channel_manager as channel_manager
 from src.tts_dictionary import get_dictionary
 from src.participant_tracker import get_tracker
 from src.viewer_store import get_viewer_store
@@ -204,7 +205,9 @@ class KototsunaApp:
         save_config(self.config)
         self.client_id = tk.StringVar(value=self.config.get("twitch_client_id", ""))
         self.deepl_key = tk.StringVar(value=self.config.get("deepl_api_key", ""))
-        # Gladia removed — local STT via sherpa-onnx
+        # チャンネル検証状態: "unknown" / "checking" / "valid" / "invalid" / "rate_limited"
+        self._ch_valid_state = "unknown"
+        self._ch_validate_after_id = None  # after() ID for debounce
         self.voicevox_path = tk.StringVar(value=self.config.get("voicevox_engine_path", ""))
         self.voicevox_auto_start = tk.BooleanVar(value=self.config.get("voicevox_auto_start", True))
         self.voicevox_speaker_id = tk.IntVar(value=self.config.get("voicevox_speaker_id", 14))
@@ -289,6 +292,9 @@ class KototsunaApp:
 
         # ウィンドウアイコンを設定（ウィジェット構築後）
         self._setup_window_icon()
+
+        # チャンネル入力の変更トレース（正規化・デバウンス検証）
+        self.channel.trace_add("write", self._on_channel_input_changed)
 
         # BOT起動前にHTML出力パスを設定（/chatエンドポイント用）
         self.master.after(500, self._init_chat_html)
@@ -591,6 +597,7 @@ class KototsunaApp:
             ("viewers", "🎙  常連管理"),
             ("resources", "📊  リソース"),
             ("commands", "💬  コマンド"),
+            ("plugins", "🧩  プラグイン"),
         ]
         for panel_id, label in nav_items:
             btn = ctk.CTkButton(
@@ -712,6 +719,137 @@ class KototsunaApp:
             # 手動入力を有効化
             if hasattr(self, 'channel_entry'):
                 self.channel_entry.configure(state="normal")
+
+    # ---------------------------------------------------------------------------
+    # チャンネル履歴・バリデーション
+    # ---------------------------------------------------------------------------
+
+    def _channel_history_values(self) -> list:
+        """ComboBox に渡す履歴ログイン名リストを返す。"""
+        return [h["login"] for h in channel_manager.get_history(self.config)]
+
+    def _refresh_channel_entry_values(self):
+        """チャンネル ComboBox の候補値を最新の履歴で更新する。"""
+        if hasattr(self, 'channel_entry'):
+            try:
+                self.channel_entry.configure(values=self._channel_history_values())
+            except Exception:
+                pass
+
+    def _on_channel_input_changed(self, *args):
+        """チャンネル入力変更時: URL 正規化 + 300ms デバウンスで検証を開始。"""
+        raw = self.channel.get()
+        # URL 貼り付け自動抽出
+        normalized = channel_manager.normalize_channel_name(raw)
+        if normalized and normalized != raw:
+            self.channel.set(normalized)
+            return  # set() が再度コールバックを呼ぶので処理終了
+
+        # デバウンス
+        if self._ch_validate_after_id:
+            try:
+                self.master.after_cancel(self._ch_validate_after_id)
+            except Exception:
+                pass
+        if normalized:
+            self._set_channel_indicator("checking")
+            self._ch_validate_after_id = self.master.after(400, lambda: self._validate_channel_bg(normalized))
+        else:
+            self._set_channel_indicator("unknown")
+
+    def _validate_channel_bg(self, login: str):
+        """バックグラウンドスレッドで Twitch API 検証を実行。"""
+        import threading
+        token = self.token or self.config.get("twitch_access_token", "")
+        client_id = self.client_id.get().strip() or self.config.get("twitch_client_id", "")
+        if not token or not client_id:
+            self._set_channel_indicator("unknown")
+            return
+
+        def _run():
+            valid, display_name, user_data = channel_manager.validate_channel(token, client_id, login)
+            if valid is True:
+                state = "valid"
+            elif valid is False:
+                state = "invalid"
+            else:
+                state = "rate_limited"
+            try:
+                self.master.after(0, lambda: self._set_channel_indicator(state))
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _set_channel_indicator(self, state: str):
+        """検証インジケータの表示を更新する。"""
+        self._ch_valid_state = state
+        _map = {
+            "unknown":      ("·",  "#888888"),
+            "checking":     ("…",  "#888888"),
+            "valid":        ("✓",  "#22C55E"),
+            "invalid":      ("✕",  "#EF4444"),
+            "rate_limited": ("?",  "#F59E0B"),
+        }
+        symbol, color = _map.get(state, ("·", "#888888"))
+        for attr in ("channel_indicator", "channel_indicator2"):
+            lbl = getattr(self, attr, None)
+            if lbl:
+                try:
+                    lbl.configure(text=symbol, text_color=color)
+                except Exception:
+                    pass
+
+    def _show_channel_history_dialog(self):
+        """履歴管理ダイアログ（各行に [削除] ボタン）を表示する。"""
+        history = channel_manager.get_history(self.config)
+        if not history:
+            messagebox.showinfo("チャンネル履歴", "履歴がありません。")
+            return
+
+        dlg = tk.Toplevel(self.master)
+        dlg.title("チャンネル履歴の管理")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        ctk.CTkLabel(dlg, text="クリックで選択 / [削除] で履歴から除去", font=("Segoe UI", 11), text_color="#888").pack(padx=16, pady=(10, 4))
+
+        scroll = ctk.CTkScrollableFrame(dlg, width=360, height=min(len(history) * 42 + 20, 280))
+        scroll.pack(padx=12, pady=(0, 12), fill="both", expand=True)
+
+        def _select(login):
+            self.channel.set(login)
+            dlg.destroy()
+
+        def _delete(login):
+            channel_manager.remove_from_history(self.config, login)
+            save_config(self.config)
+            self._refresh_channel_entry_values()
+            dlg.destroy()
+            # 残りが0件でなければ再表示
+            if self.config.get("channel_history"):
+                self._show_channel_history_dialog()
+
+        for h in history:
+            row = ctk.CTkFrame(scroll, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            row.grid_columnconfigure(0, weight=1)
+            login = h["login"]
+            display = h.get("display_name") or login
+            label = f"{display}" if display.lower() == login else f"{display}  ({login})"
+            ctk.CTkButton(row, text=label, anchor="w", fg_color="#1E293B", hover_color="#334155",
+                          command=lambda l=login: _select(l)).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+            ctk.CTkButton(row, text="削除", width=48, fg_color="#7F1D1D", hover_color="#991B1B",
+                          command=lambda l=login: _delete(l)).grid(row=0, column=1)
+
+        ctk.CTkButton(dlg, text="閉じる", command=dlg.destroy).pack(pady=(0, 10))
+
+    def on_channel_connected(self, login: str, display_name: str = "", user_id: str = ""):
+        """接続成功時に BOT から呼ばれる: 履歴を更新して UI を同期。"""
+        channel_manager.add_to_history(self.config, login, display_name, user_id)
+        save_config(self.config)
+        self._refresh_channel_entry_values()
+        self._set_channel_indicator("valid")
 
     def _copy_log_to_clipboard(self):
         """ログをクリップボードにコピー"""
@@ -849,7 +987,7 @@ class KototsunaApp:
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "viewers": "常連管理", "resources": "リソース監視", "commands": "コマンド管理"}
+        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "viewers": "常連管理", "resources": "リソース監視", "commands": "コマンド管理", "plugins": "プラグイン管理"}
         ctk.CTkLabel(header, text=titles.get(panel_id, ""), font=FONT_LABEL).pack(side="left", padx=12)
         ctk.CTkButton(header, text="✕", command=self._close_right_panel, width=32, height=32, fg_color="transparent", hover_color=BORDER).pack(side="right", padx=4)
 
@@ -865,6 +1003,7 @@ class KototsunaApp:
             "viewers": self._build_viewers_panel,
             "resources": self._build_resources_panel,
             "commands": self._build_commands_panel,
+            "plugins": self._build_plugins_panel,
         }
         builder = builders.get(panel_id)
         if builder:
@@ -940,11 +1079,22 @@ class KototsunaApp:
         )
         self.channel_manual_radio.pack(side="left")
 
-        self.channel_entry = ctk.CTkEntry(
-            manual_frame, textvariable=self.channel,
-            placeholder_text="チャンネル名", height=28, width=120
+        self.channel_entry = ctk.CTkComboBox(
+            manual_frame, variable=self.channel,
+            values=self._channel_history_values(),
+            height=28, width=120,
+            command=lambda v: None,
         )
-        self.channel_entry.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        self.channel_entry.pack(side="left", padx=(4, 0), fill="x", expand=True)
+
+        self.channel_indicator = ctk.CTkLabel(manual_frame, text="·", width=20, font=("Segoe UI", 14), text_color="#888888")
+        self.channel_indicator.pack(side="left", padx=(2, 0))
+
+        ctk.CTkButton(
+            manual_frame, text="履歴", width=44, height=28,
+            fg_color="#334155", hover_color="#475569",
+            command=self._show_channel_history_dialog
+        ).pack(side="left", padx=(4, 0))
 
         ctk.CTkLabel(parent, text="※ twitch.tv/○○○ の ○○○ 部分", font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 4))
 
@@ -1713,6 +1863,113 @@ class KototsunaApp:
                         font=("Consolas", 10), text_color=ACCENT, width=45, anchor="e"
                     ).pack(side="right", padx=(0, 4))
 
+    def _build_plugins_panel(self, parent):
+        """プラグインパネルのコンテンツ（わんコメ互換 plugin.js 管理）"""
+        import os
+        import subprocess
+        import sys
+        from src.plugin_manager import get_plugin_manager, get_plugins_dir
+
+        # ── プラグインフォルダ ──────────────────────────────────────
+        self._add_panel_section(parent, "プラグインフォルダ")
+
+        plugins_dir = get_plugins_dir()
+        dir_label = ctk.CTkLabel(
+            parent, text=str(plugins_dir),
+            font=("Consolas", 10), text_color=TEXT_SUBTLE, wraplength=320, anchor="w"
+        )
+        dir_label.pack(anchor="w", pady=(0, 4))
+
+        btn_row = ctk.CTkFrame(parent, fg_color="transparent")
+        btn_row.pack(fill="x", pady=(0, 4))
+
+        def open_plugins_folder():
+            try:
+                os.makedirs(plugins_dir, exist_ok=True)
+                if sys.platform == "win32":
+                    os.startfile(str(plugins_dir))
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(plugins_dir)])
+                else:
+                    subprocess.Popen(["xdg-open", str(plugins_dir)])
+            except Exception as e:
+                self.log_message(f"フォルダを開けません: {e}", log_type="system")
+
+        ctk.CTkButton(
+            btn_row, text="📂  フォルダを開く", command=open_plugins_folder,
+            height=32, fg_color=CARD_BG, hover_color=ACCENT
+        ).pack(side="left", fill="x", expand=True)
+
+        self._add_panel_divider(parent)
+
+        # ── 読み込み済みプラグイン ────────────────────────────────
+        self._add_panel_section(parent, "読み込み済みプラグイン")
+
+        self._plugin_list_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        self._plugin_list_frame.pack(fill="x")
+
+        def refresh_plugin_list():
+            for w in self._plugin_list_frame.winfo_children():
+                w.destroy()
+            manager = get_plugin_manager()
+            plugins = manager.plugins
+            if not plugins:
+                ctk.CTkLabel(
+                    self._plugin_list_frame,
+                    text="プラグインが見つかりません\nフォルダに plugin.js を配置してください",
+                    font=FONT_BODY, text_color=TEXT_SUBTLE, justify="left"
+                ).pack(anchor="w", pady=8)
+            else:
+                for p in plugins:
+                    card = ctk.CTkFrame(self._plugin_list_frame, fg_color=CARD_BG, corner_radius=6)
+                    card.pack(fill="x", pady=3)
+                    info_col = ctk.CTkFrame(card, fg_color="transparent")
+                    info_col.pack(fill="x", padx=10, pady=6)
+                    ctk.CTkLabel(
+                        info_col, text=p.name or p.path.parent.name,
+                        font=FONT_LABEL, anchor="w"
+                    ).pack(anchor="w")
+                    meta = f"v{p.version}  |  {p.uid}" if p.uid else f"v{p.version}"
+                    ctk.CTkLabel(
+                        info_col, text=meta,
+                        font=("Consolas", 10), text_color=TEXT_SUBTLE, anchor="w"
+                    ).pack(anchor="w")
+
+        refresh_plugin_list()
+
+        self._add_panel_divider(parent)
+
+        # ── 操作ボタン ───────────────────────────────────────────
+        def reload_plugins():
+            manager = get_plugin_manager()
+            manager.unload_all()
+            loaded = manager.load_plugins()
+            refresh_plugin_list()
+            self.log_message(f"プラグインを再読み込みしました（{loaded}件）", log_type="system")
+
+        ctk.CTkButton(
+            parent, text="🔄  再読み込み", command=reload_plugins,
+            height=36
+        ).pack(fill="x", pady=(0, 4))
+
+        # ── 説明 ─────────────────────────────────────────────────
+        self._add_panel_divider(parent)
+        self._add_panel_section(parent, "使い方")
+        ctk.CTkLabel(
+            parent,
+            text=(
+                "わんコメ互換の plugin.js をフォルダに配置すると\n"
+                "BOT 起動時に自動で読み込まれます。\n\n"
+                "対応フック:\n"
+                "  filterComment — コメントの変換・ブロック\n"
+                "  subscribe     — コメントイベント受信\n"
+                "  init / destroy\n\n"
+                "※ Node.js が必要です"
+            ),
+            font=("Segoe UI", 11), text_color=TEXT_SUBTLE,
+            justify="left", anchor="w", wraplength=320
+        ).pack(anchor="w")
+
     def _build_resources_panel(self, parent):
         """リソースパネルのコンテンツ"""
         # 監視トグル
@@ -2049,14 +2306,28 @@ class KototsunaApp:
         )
         self.channel_manual_radio.grid(row=3, column=0, sticky="w", pady=2)
 
-        # チャンネル入力欄
-        self.channel_entry = ctk.CTkEntry(
-            channel_frame,
-            textvariable=self.channel,
-            placeholder_text="配信チャンネル名（小文字）",
-            height=32
+        # チャンネル入力欄（ComboBox + 検証インジケータ + 履歴ボタン）
+        ch_input_frame = ctk.CTkFrame(channel_frame, fg_color="transparent")
+        ch_input_frame.grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=2)
+        ch_input_frame.grid_columnconfigure(0, weight=1)
+
+        self.channel_entry = ctk.CTkComboBox(
+            ch_input_frame,
+            variable=self.channel,
+            values=self._channel_history_values(),
+            height=32,
+            command=lambda v: None,
         )
-        self.channel_entry.grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=2)
+        self.channel_entry.grid(row=0, column=0, sticky="ew")
+
+        self.channel_indicator2 = ctk.CTkLabel(ch_input_frame, text="·", width=22, font=("Segoe UI", 15), text_color="#888888")
+        self.channel_indicator2.grid(row=0, column=1, padx=(4, 0))
+
+        ctk.CTkButton(
+            ch_input_frame, text="履歴", width=48, height=32,
+            fg_color="#334155", hover_color="#475569",
+            command=self._show_channel_history_dialog
+        ).grid(row=0, column=2, padx=(4, 0))
 
         # ヘルプテキスト
         help_text = "※ twitch.tv/○○○ の ○○○ 部分を入力"
@@ -4209,10 +4480,23 @@ window.onload = function() {{
             messagebox.showerror("エラー", "まずは「① トークン認証」を行ってください")
             return
 
-        channel = self.channel.get().strip()
+        channel = channel_manager.normalize_channel_name(self.channel.get())
         if not channel:
             messagebox.showerror("エラー", "チャンネル名を設定してください")
             return
+
+        # 接続前バリデーション（キャッシュ済みなら即時、未検証なら API 確認）
+        client_id = self.client_id.get().strip()
+        if client_id:
+            valid, display_name, user_data = channel_manager.validate_channel(self.token, client_id, channel)
+            if valid is False:
+                self._set_channel_indicator("invalid")
+                messagebox.showerror(
+                    "チャンネルが見つかりません",
+                    f"「{channel}」は Twitch に存在しないチャンネルです。\nチャンネル名を確認してください。"
+                )
+                return
+            # valid=None はレート制限/ネットワーク不可 → 警告のみで続行
 
         deepl_key = self.deepl_key.get().strip()
         if not deepl_key:
@@ -4222,7 +4506,6 @@ window.onload = function() {{
         self._ensure_tts_started()
 
         # BOT起動パラメータを準備（BOTインスタンスはスレッド内で作成）
-        client_id = self.client_id.get().strip()
         bot_params = (
             self.token,
             channel,
@@ -4538,6 +4821,14 @@ window.onload = function() {{
                 logger.info("Bot disconnected.")
         except Exception as e:
             logger.error(f"Failed to disconnect bot: {e}", exc_info=True)
+
+        try:
+            # チャットHTMLをリセット（終了時に空にしてOBSの残留表示を防ぐ）
+            self.chat_history.clear()
+            self._export_chat_html(force=True)
+            logger.info("Chat HTML cleared on exit.")
+        except Exception as e:
+            logger.error(f"Failed to clear chat HTML on exit: {e}", exc_info=True)
 
         try:
             # オーバーレイサーバーを停止

@@ -4,7 +4,7 @@
 """
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import ClassVar, Optional, Dict, Any
 from enum import Enum
 
 
@@ -103,6 +103,41 @@ class CommentData:
         badge_str = f"{self.badge_text} " if self.badge_text else ""
         translated_str = f"\n→ {self.translated}" if self.translated else ""
         return f"[{self.formatted_timestamp}] [{self.platform_name}] {badge_str}{self.display_username}: {self.message}{translated_str}"
+
+    # わんコメ platform.value → service 識別子マッピング
+    _PLATFORM_TO_SERVICE: ClassVar[Dict[str, str]] = {
+        "Twitch":    "twitch",
+        "YouTube":   "youtube",
+        "ニコ生":    "niconico",
+        "ツイキャス": "twitcasting",
+        "Kick":      "kick",
+        "SHOWROOM":  "showroom",
+        "ミクチャ":  "mixch",
+        "ミラティブ": "mirrativ",
+    }
+
+    def to_onecomme_dict(self) -> Dict[str, Any]:
+        """わんコメプラグイン互換フォーマットに変換する。
+
+        わんコメ plugin.js の filterComment(comment, service, userData) で
+        受け取る comment オブジェクトと同じ構造を返す。
+        """
+        service = self._PLATFORM_TO_SERVICE.get(self.platform.value, "unknown")
+        return {
+            "id": self.user_id or "",
+            "service": service,
+            "data": {
+                "userId": self.user_id or "",
+                "name": self.username,
+                "displayName": self.display_username,
+                "comment": self.message,
+                "profileImage": self.avatar_url or "",
+                "badges": self.badges,
+                "isOwner": self.is_vip,
+                "isModerator": self.is_moderator,
+                "timestamp": int(self.timestamp.timestamp() * 1000),
+            },
+        }
 
 
 def create_twitch_comment(username: str, message: str, tags: Dict[str, Any],

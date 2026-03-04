@@ -98,6 +98,8 @@ DEFAULT_CONFIG = {
     "previous_version": "",          # ロールバック可能な前バージョン (例: "v1.5.0-beta.3")
     "just_updated": False,           # アップデート直後フラグ
     "previous_installer_url": "",    # 前バージョンのインストーラーURL
+    # チャンネル履歴（接続成功順・最大20件）
+    "channel_history": [],           # [{"login": str, "display_name": str, "user_id": str, "last_connected_at": str}]
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
@@ -231,6 +233,30 @@ def validate_config(config_data):
 
     if not isinstance(validated.get("voice_allowed_speakers"), list):
         validated["voice_allowed_speakers"] = []
+        changed = True
+
+    # channel_history の正規化
+    if not isinstance(validated.get("channel_history"), list):
+        validated["channel_history"] = []
+        changed = True
+    else:
+        cleaned = []
+        for h in validated["channel_history"]:
+            if isinstance(h, dict) and h.get("login"):
+                cleaned.append({
+                    "login": str(h["login"]).lower(),
+                    "display_name": str(h.get("display_name") or h["login"]),
+                    "user_id": str(h.get("user_id") or ""),
+                    "last_connected_at": str(h.get("last_connected_at") or ""),
+                })
+        if cleaned != validated["channel_history"]:
+            validated["channel_history"] = cleaned
+            changed = True
+
+    # channel_name からの移行: channel_history が空かつ channel_name が存在する場合
+    if not validated.get("channel_history") and validated.get("channel_name"):
+        login = validated["channel_name"].lower()
+        validated["channel_history"] = [{"login": login, "display_name": login, "user_id": "", "last_connected_at": ""}]
         changed = True
 
     # ブール系

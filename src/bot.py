@@ -12,6 +12,7 @@ from src.commands import PermissionLevel, CooldownManager, check_permission, sub
 from src.commands_store import CommandStore
 from src.emote_provider import EmoteProvider
 from src.viewer_store import get_viewer_store
+from src.plugin_manager import get_plugin_manager
 
 
 class EventSubHandler:
@@ -239,6 +240,8 @@ class TranslateBot(commands.Bot):
         self._emote_provider = EmoteProvider()
         # Viewer store（視聴回数・ボイス割り当て）
         self._viewer_store = get_viewer_store()
+        # Plugin manager（わんコメ互換 plugin.js ホスト）
+        self._plugin_manager = get_plugin_manager()
 
     async def event_ready(self):
         # GUI側から run_coroutine_threadsafe で送信できるよう、実際に動いているループを保持
@@ -272,6 +275,23 @@ class TranslateBot(commands.Bot):
             self._emote_provider.set_channel_id(broadcaster_id)
         await asyncio.to_thread(self._emote_provider.load_emotes)
         logger.info(f"Third-party emotes loaded: {self._emote_provider.emote_count}")
+
+        # 接続成功: GUI に通知してチャンネル履歴を更新
+        if self.gui and hasattr(self.gui, 'on_channel_connected'):
+            try:
+                display_name = self.nick or self.channel_name
+                user_id = str(broadcaster_id) if broadcaster_id else ""
+                self.gui.master.after(0, lambda: self.gui.on_channel_connected(
+                    self.channel_name, display_name, user_id
+                ))
+            except Exception as e:
+                logger.debug(f"on_channel_connected callback failed: {e}")
+
+        # Kototsuna プラグインを読み込む（わんコメ互換 plugin.js）
+        self._plugin_manager = get_plugin_manager()
+        await asyncio.to_thread(self._plugin_manager.load_plugins)
+        if self._plugin_manager.count > 0:
+            logger.info(f"Kototsuna plugins loaded: {self._plugin_manager.count}")
 
     def _on_follow_event(self, follower_name: str):
         """フォローイベントのコールバック"""
@@ -422,6 +442,27 @@ class TranslateBot(commands.Bot):
             return
 
         # ここから通常の翻訳処理
+        # プラグインの filterComment を通す
+        if self._plugin_manager.count > 0:
+            plugin_comment = create_twitch_comment(
+                username=message.author.name,
+                message=message.content,
+                tags=message.tags,
+                display_name=message.author.display_name if hasattr(message.author, 'display_name') else message.author.name,
+            )
+            filtered = await asyncio.to_thread(
+                self._plugin_manager.filter_comment,
+                plugin_comment.to_onecomme_dict(),
+                "twitch",
+            )
+            if filtered is None:
+                logger.debug(f"Comment blocked by plugin: {message.author.name}")
+                return
+            # プラグインがコメント本文を書き換えた場合は content を更新
+            new_text = filtered.get("data", {}).get("comment")
+            if new_text and new_text != message.content:
+                content = new_text
+
         # チャット翻訳が無効の場合は翻訳をスキップ
         config = load_config()
         if not config.get("chat_translation_enabled", False):
@@ -1010,5 +1051,10 @@ class TranslateBot(commands.Bot):
         # クリーンアップ
         self._running_loop = None
         self._processed_message_ids.clear()
+        # プラグインを停止
+        try:
+            self._plugin_manager.unload_all()
+        except Exception as e:
+            logger.warning(f"Exception unloading plugins: {e}")
         logger.info("Bot.stop() completed")
 

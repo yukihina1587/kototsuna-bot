@@ -10,9 +10,35 @@ import threading
 import queue
 import tempfile
 import os
+import sys
+from datetime import datetime
+from pathlib import Path
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 from typing import Optional, Tuple
 from src.logger import logger
+
+
+def _get_tts_log_path() -> Path:
+    """TTSログファイルのパスを返す（logger.py と同じディレクトリ規則）"""
+    if getattr(sys, 'frozen', False):
+        base_dir = Path(sys.executable).parent
+    else:
+        base_dir = Path(__file__).parent.parent / "dist"
+    log_dir = base_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    return log_dir / f"tts_{today}.txt"
+
+
+def _append_tts_log(text: str) -> None:
+    """読み上げテキストをタイムスタンプ付きでファイルに追記する"""
+    try:
+        log_path = _get_tts_log_path()
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {text}\n")
+    except Exception as e:
+        logger.warning(f"TTSログ書き込み失敗: {e}")
 
 # Try to import pygame for audio playback (init is deferred to avoid startup hangs)
 pygame = None
@@ -749,6 +775,9 @@ class VoicevoxTTS:
 
         logger.info(f"🔊 TTSキューに追加: {cleaned_text}")
         logger.debug(f"エンジンモード: {self.engine_mode}, キューサイズ: {self.synthesis_queue.qsize()}")
+
+        # 読み上げテキストをタイムスタンプ付きでログファイルに追記
+        _append_tts_log(cleaned_text)
 
         # Add to synthesis queue as (text, speaker_id) tuple
         self.synthesis_queue.put((cleaned_text, speaker_id))
