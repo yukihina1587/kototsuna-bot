@@ -1647,31 +1647,13 @@ class KototsunaApp:
             self._add_panel_divider(parent)
 
             # =====================================
-            # セクション2: ボイス割り当て（クイック操作）
+            # セクション2: ボイス割り当て
             # =====================================
             self._add_panel_section(parent, "ボイス割り当て")
             ctk.CTkLabel(
-                parent, text="ユーザー名とボイスIDを入力",
-                font=("Segoe UI", 10), text_color=TEXT_SUBTLE
+                parent, text="📋 下のランキングの名前をクリックするとボイスを設定できます",
+                font=("Segoe UI", 10), text_color=TEXT_SUBTLE, wraplength=260, justify="left"
             ).pack(anchor="w", pady=(0, 4))
-
-            assign_row = ctk.CTkFrame(parent, fg_color="transparent")
-            assign_row.pack(fill="x", pady=(0, 4))
-
-            self._viewer_assign_user_entry = ctk.CTkEntry(
-                assign_row, placeholder_text="ユーザー名", height=28
-            )
-            self._viewer_assign_user_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
-
-            self._viewer_assign_voice_entry = ctk.CTkEntry(
-                assign_row, placeholder_text="ID", height=28, width=50
-            )
-            self._viewer_assign_voice_entry.pack(side="left", padx=(0, 4))
-
-            ctk.CTkButton(
-                assign_row, text="設定", command=self._assign_voice_from_panel,
-                width=50, height=28, fg_color=ACCENT
-            ).pack(side="right")
 
             # 割り当て済み一覧
             self._viewer_voice_list_frame = ctk.CTkScrollableFrame(
@@ -1728,43 +1710,85 @@ class KototsunaApp:
         save_config(config)
         logger.info("セルフ設定の最低視聴回数変更: %d", val)
 
-    def _assign_voice_from_panel(self) -> None:
-        """パネルからボイスを割り当てる"""
-        username = self._viewer_assign_user_entry.get().strip().lstrip("@").lower()
-        voice_str = self._viewer_assign_voice_entry.get().strip()
-
-        if not username or not voice_str:
-            return
-
-        try:
-            speaker_id = int(voice_str)
-        except ValueError:
-            self.log_message("ボイスIDは数値で入力してください", log_type="system")
-            return
-
-        # スピーカー名を取得
+    def _show_voice_select_dialog(self, username: str, display_name: str) -> None:
+        """ランキングの名前クリック時にボイス選択ダイアログを表示"""
         tts = get_tts_instance()
-        speaker_name = None
-        for s in tts.get_speakers_list():
-            if s.get("id") == speaker_id:
-                speaker_name = s.get("display", s.get("name", f"Speaker {speaker_id}"))
-                break
-
-        if not speaker_name:
-            self.log_message(f"ボイスID {speaker_id} が見つかりません", log_type="system")
+        speakers = tts.get_speakers_list()
+        if not speakers:
+            self.log_message("VOICEVOX が起動していていません。先に起動してください。", log_type="system")
             return
 
         viewer_store = get_viewer_store()
-        viewer_store.assign_voice(username, speaker_id, speaker_name, "GUI")
+        current_voice_id = None
+        with viewer_store._lock:
+            v = viewer_store._viewers.get(username)
+            if v and v.assigned_voice:
+                current_voice_id = v.assigned_voice.get("speaker_id")
 
-        # 入力欄をクリア
-        self._viewer_assign_user_entry.delete(0, "end")
-        self._viewer_assign_voice_entry.delete(0, "end")
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"ボイス設定: {display_name}")
+        dialog.geometry("320x500")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.focus_set()
+        dialog.resizable(False, True)
 
-        self._refresh_viewers_panel()
-        self.log_message(
-            f"@{username} のボイスを {speaker_name} に設定しました", log_type="system"
-        )
+        ctk.CTkLabel(
+            dialog, text=f"{display_name} のボイスを選択",
+            font=("Segoe UI Semibold", 13)
+        ).pack(pady=(16, 4), padx=16)
+        ctk.CTkLabel(
+            dialog, text="選択して「設定」を押してください",
+            font=("Segoe UI", 10), text_color=TEXT_SUBTLE
+        ).pack(pady=(0, 8), padx=16)
+
+        selected_var = tk.IntVar(value=current_voice_id if current_voice_id is not None else -1)
+
+        scroll = ctk.CTkScrollableFrame(dialog, fg_color=CARD_BG)
+        scroll.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+
+        for s in speakers:
+            sid = s.get("id")
+            sname = s.get("display", s.get("name", f"Speaker {sid}"))
+            ctk.CTkRadioButton(
+                scroll, text=sname, variable=selected_var, value=sid,
+                font=FONT_BODY
+            ).pack(anchor="w", pady=2, padx=8)
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=16, pady=(0, 16))
+
+        def on_set():
+            sid = selected_var.get()
+            if sid == -1:
+                return
+            speaker_name = None
+            for s in speakers:
+                if s.get("id") == sid:
+                    speaker_name = s.get("display", s.get("name", f"Speaker {sid}"))
+                    break
+            viewer_store.assign_voice(username, sid, speaker_name, "GUI")
+            self._refresh_viewers_panel()
+            self.log_message(f"@{display_name} のボイスを {speaker_name} に設定しました", log_type="system")
+            dialog.destroy()
+
+        def on_remove():
+            viewer_store.remove_voice(username)
+            self._refresh_viewers_panel()
+            self.log_message(f"@{display_name} のボイスを解除しました", log_type="system")
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_frame, text="設定", command=on_set, fg_color=ACCENT, height=32
+        ).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ctk.CTkButton(
+            btn_frame, text="解除", command=on_remove,
+            fg_color="#EF4444", hover_color="#DC2626", height=32
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            btn_frame, text="✕", command=dialog.destroy,
+            fg_color=CARD_BG, width=36, height=32
+        ).pack(side="left")
 
     def _remove_voice_from_panel(self, username: str) -> None:
         """パネルからボイス割り当てを解除"""
@@ -1844,18 +1868,14 @@ class KototsunaApp:
                         width=30, anchor="e"
                     ).pack(side="left", padx=(0, 6))
 
-                    # 名前
-                    ctk.CTkLabel(
-                        row, text=viewer.display_name,
-                        font=("Segoe UI", 10), anchor="w"
+                    # 名前（クリックでボイス設定ダイアログ）
+                    voice_icon = "🎙️ " if viewer.assigned_voice else ""
+                    ctk.CTkButton(
+                        row, text=f"{voice_icon}{viewer.display_name}",
+                        font=("Segoe UI", 10), anchor="w",
+                        fg_color="transparent", hover_color=PANEL_BG,
+                        command=lambda u=username, d=viewer.display_name: self._show_voice_select_dialog(u, d)
                     ).pack(side="left", fill="x", expand=True)
-
-                    # ボイスアイコン
-                    if viewer.assigned_voice:
-                        ctk.CTkLabel(
-                            row, text="🎙️",
-                            font=("Segoe UI", 10), width=20
-                        ).pack(side="left", padx=(0, 2))
 
                     # 回数
                     ctk.CTkLabel(
@@ -3391,7 +3411,16 @@ class KototsunaApp:
         
         # 基本スタイル
         base = f"""
-            body {{ margin:0; padding:12px; background-color:{bg}; color:{fg}; font-family:{font}; font-size:14px; overflow-x: hidden; word-wrap: break-word; }}
+            html, body {{
+                margin: 0;
+                padding: 0;
+                overflow-x: hidden;
+                overflow-y: auto;
+                scrollbar-width: none;
+                -ms-overflow-style: none;
+            }}
+            body::-webkit-scrollbar {{ display: none; }}
+            body {{ padding:12px; background-color:{bg}; color:{fg}; font-family:{font}; font-size:14px; word-wrap: break-word; }}
             .msg {{ margin-bottom:12px; animation: fadein 0.3s; display: flex; flex-direction: column; }}
             .meta {{ display: flex; align-items: baseline; margin-bottom: 4px; font-size: 0.85em; opacity: 0.8; }}
             .time {{ margin-right: 8px; font-size: 0.9em; }}
