@@ -28,7 +28,7 @@ except Exception as e:
     pygame = None
     PYGAME_AVAILABLE = False
 
-from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info
+from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info, get_effective_client_id, APP_DEFAULT_CLIENT_ID
 from src.bot import TranslateBot
 from src.config import load_config, save_config, validate_deepl_api_key, validate_twitch_client_id
 from src.commands_store import CommandStore, CustomCommand
@@ -762,7 +762,7 @@ class KototsunaApp:
         """バックグラウンドスレッドで Twitch API 検証を実行。"""
         import threading
         token = self.token or self.config.get("twitch_access_token", "")
-        client_id = self.client_id.get().strip() or self.config.get("twitch_client_id", "")
+        client_id = get_effective_client_id(self.client_id.get() or self.config.get("twitch_client_id", ""))
         if not token or not client_id:
             self._set_channel_indicator("unknown")
             return
@@ -1127,9 +1127,11 @@ class KototsunaApp:
         # 初期化時にマイクリストを取得
         self.master.after(500, self._refresh_mic_list)
 
-        ctk.CTkLabel(parent, text="Twitch Client ID（Twitchアプリ登録で取得）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
-        ctk.CTkEntry(parent, textvariable=self.client_id, height=32).pack(fill="x", pady=(0, 4))
-        ctk.CTkButton(parent, text="↗ Twitchデベロッパー登録", command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps"),
+        ctk.CTkLabel(parent, text="Twitch Client ID（空欄OK・省略可）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
+        ctk.CTkEntry(parent, textvariable=self.client_id, height=32).pack(fill="x", pady=(0, 2))
+        hint_text = "空欄の場合はアプリ同梱のClient IDを使用します" if APP_DEFAULT_CLIENT_ID else "空欄の場合は下のリンクから取得してください"
+        ctk.CTkLabel(parent, text=hint_text, font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 2))
+        ctk.CTkButton(parent, text="↗ 自分のClient IDを取得（任意）", command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps"),
                       fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
 
         self._add_panel_divider(parent)
@@ -4573,9 +4575,9 @@ window.onload = function() {{
             logger.info("Chat log cleared by user")
 
     def start_auth(self):
-        client_id = self.client_id.get().strip()
-        if not client_id:
-            messagebox.showerror("エラー", "Client ID が設定されていません。\n「設定」タブで入力してください。")
+        effective_id = get_effective_client_id(self.client_id.get())
+        if not effective_id:
+            messagebox.showerror("エラー", "Client ID が設定されていません。\n「設定」パネルで入力してください。")
             return
 
         # 既に有効なトークンがある場合はスキップ
@@ -4596,7 +4598,7 @@ window.onload = function() {{
 
         # 有効なトークンがない場合のみブラウザ認証を開始
         self._set_status("トークン認証を開始します。ブラウザを開いてください。", "info")
-        threading.Thread(target=self.run_auth_flow, args=(client_id,), daemon=True).start()
+        threading.Thread(target=self.run_auth_flow, args=(effective_id,), daemon=True).start()
 
     def _check_saved_token(self):
         """起動時に保存されたトークンをチェックして自動ログイン"""
@@ -4878,9 +4880,9 @@ window.onload = function() {{
             return
 
         # 接続前バリデーション（キャッシュ済みなら即時、未検証なら API 確認）
-        client_id = self.client_id.get().strip()
-        if client_id:
-            valid, display_name, user_data = channel_manager.validate_channel(self.token, client_id, channel)
+        effective_client_id = get_effective_client_id(self.client_id.get())
+        if effective_client_id:
+            valid, display_name, user_data = channel_manager.validate_channel(self.token, effective_client_id, channel)
             if valid is False:
                 self._set_channel_indicator("invalid")
                 messagebox.showerror(
@@ -4906,7 +4908,7 @@ window.onload = function() {{
             deepl_key,
             lambda: True,  # tts_enabled_getter
             lambda: self.tts_include_name_var.get(),  # tts_include_name_getter
-            client_id  # フォロー検知用
+            effective_client_id  # フォロー検知用
         )
 
         # 新しいイベントループでBOTを実行（スレッド内でBOTインスタンス作成）

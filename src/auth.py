@@ -5,8 +5,24 @@ import requests
 import time
 from src.logger import logger
 
+load_dotenv()
+
 REDIRECT_URI = 'http://localhost:8787/redirect.html'
 SCOPES = ['chat:read', 'chat:edit', 'moderator:read:followers']
+
+# アプリ同梱のデフォルトClient ID（.env の TWITCH_CLIENT_ID から読み込む）
+# リポジトリオーナーが dev.twitch.tv でアプリ登録して .env に設定しておく
+APP_DEFAULT_CLIENT_ID: str = os.environ.get("TWITCH_CLIENT_ID", "")
+
+
+def get_effective_client_id(user_client_id: str = "") -> str:
+    """
+    有効なClient IDを返す。
+    ユーザーが設定している場合はそちらを優先し、
+    空欄の場合はアプリ同梱のデフォルトClient IDにフォールバックする。
+    """
+    cid = (user_client_id or "").strip()
+    return cid if cid else APP_DEFAULT_CLIENT_ID
 
 token_result = {}
 
