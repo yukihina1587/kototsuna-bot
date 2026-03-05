@@ -3,6 +3,7 @@ import socketserver
 import json
 import threading
 import os
+from datetime import datetime
 from functools import partial
 from src.logger import logger
 
@@ -13,6 +14,13 @@ _httpd_instance = None
 _server_thread = None
 _overlay_port = DEFAULT_PORT
 _chat_html_path = None
+_subtitle_html_path = None
+_subtitle_state = {
+    "id": 0, "enabled": False,
+    "original": "", "translated": "", "speaker": "", "timestamp": "",
+    "config": {}
+}
+_subtitle_lock = threading.Lock()
 
 
 class RequestHandler(http.server.SimpleHTTPRequestHandler):
@@ -29,6 +37,16 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(history).encode('utf-8'))
+        elif self.path == '/api/subtitle':
+            with _subtitle_lock:
+                payload = dict(_subtitle_state)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+        elif self.path.startswith('/subtitle'):
+            self._serve_subtitle_html()
         elif self.path.startswith('/chat'):
             self._serve_chat_html()
         else:
@@ -51,6 +69,24 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(500, f"Error reading chat HTML: {e}")
         else:
             self.send_error(404, "Chat HTML not available")
+
+
+    def _serve_subtitle_html(self):
+        """字幕HTMLを配信"""
+        if _subtitle_html_path and os.path.exists(_subtitle_html_path):
+            try:
+                with open(_subtitle_html_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.end_headers()
+                self.wfile.write(content.encode('utf-8'))
+            except Exception as e:
+                self.send_error(500, f"Error reading subtitle HTML: {e}")
+        else:
+            self.send_error(404, "Subtitle HTML not available")
 
 
 def _find_free_port(start_port: int = DEFAULT_PORT, max_tries: int = 10) -> int:
@@ -83,6 +119,7 @@ def start_server():
         _httpd_instance = httpd
         logger.info(f"Overlay server started on port {port}")
         logger.info(f"  Chat HTML: http://localhost:{port}/chat")
+        logger.info(f"  Subtitle:  http://localhost:{port}/subtitle")
         logger.info(f"  Overlay:   http://localhost:{port}/overlay.html")
         httpd.serve_forever()
     except OSError as e:
@@ -101,6 +138,35 @@ def update_translation(text):
         history.append(text)
         if len(history) > 50:
             history.pop(0)
+
+
+def update_subtitle(original: str, translated: str, speaker: str = "", config: dict = None) -> None:
+    """字幕状態を更新する（gui.py の on_comment_received / voice_callback から呼ぶ）"""
+    global _subtitle_state
+    with _subtitle_lock:
+        if not _subtitle_state.get("enabled"):
+            return
+        _subtitle_state["id"] += 1
+        _subtitle_state["original"] = original or ""
+        _subtitle_state["translated"] = translated or ""
+        _subtitle_state["speaker"] = speaker or ""
+        _subtitle_state["timestamp"] = datetime.now().strftime("%H:%M:%S")
+        if config is not None:
+            _subtitle_state["config"] = config
+
+
+def set_subtitle_enabled(enabled: bool) -> None:
+    """字幕のON/OFFを切り替える"""
+    global _subtitle_state
+    with _subtitle_lock:
+        _subtitle_state["enabled"] = enabled
+
+
+def set_subtitle_html_path(path: str) -> None:
+    """字幕HTMLのファイルパスを設定"""
+    global _subtitle_html_path
+    _subtitle_html_path = path
+    logger.info(f"Subtitle HTML path set to: {path}")
 
 
 def run_server_thread():

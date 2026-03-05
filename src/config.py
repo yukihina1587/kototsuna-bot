@@ -100,6 +100,19 @@ DEFAULT_CONFIG = {
     "previous_installer_url": "",    # 前バージョンのインストーラーURL
     # チャンネル履歴（接続成功順・最大20件）
     "channel_history": [],           # [{"login": str, "display_name": str, "user_id": str, "last_connected_at": str}]
+    # 字幕オーバーレイ設定
+    "subtitle_enabled": False,
+    "subtitle_show_original": True,
+    "subtitle_show_translated": True,
+    "subtitle_show_speaker": False,
+    "subtitle_show_timestamp": False,
+    "subtitle_font_family": "Noto Sans JP",
+    "subtitle_font_size": 32,
+    "subtitle_text_color": "#FFFFFF",
+    "subtitle_stroke_color": "#000000",
+    "subtitle_stroke_width": 3,
+    "subtitle_display_seconds": 5.0,
+    "subtitle_max_lines": 3,
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
@@ -279,6 +292,47 @@ def validate_config(config_data):
     if normalized_dict != validated.get("translation_dictionary", []):
         validated["translation_dictionary"] = normalized_dict
         changed = True
+
+    # subtitle_font_size (int, 8-200)
+    try:
+        validated["subtitle_font_size"] = max(8, min(200, int(validated.get("subtitle_font_size", 32))))
+    except (TypeError, ValueError):
+        validated["subtitle_font_size"] = 32
+        changed = True
+
+    # subtitle_stroke_width (int, 0-20)
+    try:
+        validated["subtitle_stroke_width"] = max(0, min(20, int(validated.get("subtitle_stroke_width", 3))))
+    except (TypeError, ValueError):
+        validated["subtitle_stroke_width"] = 3
+        changed = True
+
+    # subtitle_display_seconds (float, 1.0-60.0)
+    try:
+        validated["subtitle_display_seconds"] = max(1.0, min(60.0, float(validated.get("subtitle_display_seconds", 5.0))))
+    except (TypeError, ValueError):
+        validated["subtitle_display_seconds"] = 5.0
+        changed = True
+
+    # subtitle_max_lines (int, 1-10)
+    try:
+        validated["subtitle_max_lines"] = max(1, min(10, int(validated.get("subtitle_max_lines", 3))))
+    except (TypeError, ValueError):
+        validated["subtitle_max_lines"] = 3
+        changed = True
+
+    # subtitle bool フラグ
+    for key in ["subtitle_enabled", "subtitle_show_original", "subtitle_show_translated",
+                "subtitle_show_speaker", "subtitle_show_timestamp"]:
+        if not isinstance(validated.get(key), bool):
+            validated[key] = bool(validated.get(key))
+            changed = True
+
+    # subtitle 文字列系
+    for key in ["subtitle_font_family", "subtitle_text_color", "subtitle_stroke_color"]:
+        if not isinstance(validated.get(key), str):
+            validated[key] = DEFAULT_CONFIG.get(key, "")
+            changed = True
 
     return validated, changed
 

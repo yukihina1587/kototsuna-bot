@@ -33,7 +33,7 @@ from src.bot import TranslateBot
 from src.config import load_config, save_config, validate_deepl_api_key, validate_twitch_client_id
 from src.commands_store import CommandStore, CustomCommand
 from src.voice_listener import VoiceTranslator
-from src.overlay_server import update_translation, run_server_thread
+from src.overlay_server import update_translation, update_subtitle, set_subtitle_enabled, set_subtitle_html_path, run_server_thread
 from src.logger import logger, set_log_level
 from src.tts import get_tts_instance
 import src.channel_manager as channel_manager
@@ -598,6 +598,7 @@ class KototsunaApp:
             ("resources", "📊  リソース"),
             ("commands", "💬  コマンド"),
             ("plugins", "🧩  プラグイン"),
+            ("subtitle", "🗒  字幕設定"),
         ]
         for panel_id, label in nav_items:
             btn = ctk.CTkButton(
@@ -1004,6 +1005,7 @@ class KototsunaApp:
             "resources": self._build_resources_panel,
             "commands": self._build_commands_panel,
             "plugins": self._build_plugins_panel,
+            "subtitle": self._build_subtitle_panel,
         }
         builder = builders.get(panel_id)
         if builder:
@@ -1882,6 +1884,346 @@ class KototsunaApp:
                         row, text=f"{viewer.visit_count}回",
                         font=("Consolas", 10), text_color=ACCENT, width=45, anchor="e"
                     ).pack(side="right", padx=(0, 4))
+
+    def _build_subtitle_panel(self, parent):
+        """字幕設定パネル"""
+        from src.overlay_server import get_overlay_port
+        config = load_config()
+
+        # =====================================
+        # ON/OFF トグル
+        # =====================================
+        self._add_panel_section(parent, "字幕設定")
+
+        toggle_row = ctk.CTkFrame(parent, fg_color="transparent")
+        toggle_row.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(toggle_row, text="字幕表示", font=FONT_BODY).pack(side="left")
+
+        self._subtitle_enabled_var = tk.BooleanVar(value=config.get("subtitle_enabled", False))
+        ctk.CTkSwitch(
+            toggle_row, text="", variable=self._subtitle_enabled_var,
+            command=self._on_subtitle_enabled_changed,
+            width=50,
+        ).pack(side="right")
+
+        self._add_panel_divider(parent)
+
+        # =====================================
+        # 表示項目
+        # =====================================
+        self._add_panel_section(parent, "表示項目")
+
+        self._subtitle_show_original_var = tk.BooleanVar(value=config.get("subtitle_show_original", True))
+        self._subtitle_show_translated_var = tk.BooleanVar(value=config.get("subtitle_show_translated", True))
+        self._subtitle_show_speaker_var = tk.BooleanVar(value=config.get("subtitle_show_speaker", False))
+        self._subtitle_show_timestamp_var = tk.BooleanVar(value=config.get("subtitle_show_timestamp", False))
+
+        for var, label in [
+            (self._subtitle_show_original_var, "原文（コメント/音声認識テキスト）"),
+            (self._subtitle_show_translated_var, "翻訳文"),
+            (self._subtitle_show_speaker_var, "話者名"),
+            (self._subtitle_show_timestamp_var, "タイムスタンプ"),
+        ]:
+            ctk.CTkCheckBox(
+                parent, text=label, variable=var,
+                command=self._on_subtitle_setting_changed,
+                font=("Segoe UI", 10),
+            ).pack(anchor="w", pady=2)
+
+        self._add_panel_divider(parent)
+
+        # =====================================
+        # スタイル設定
+        # =====================================
+        self._add_panel_section(parent, "スタイル")
+
+        fonts = ["Noto Sans JP", "メイリオ", "游ゴシック", "Arial", "Impact", "Segoe UI"]
+        self._subtitle_font_family_var = tk.StringVar(value=config.get("subtitle_font_family", "Noto Sans JP"))
+        font_row = ctk.CTkFrame(parent, fg_color="transparent")
+        font_row.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(font_row, text="フォント", font=("Segoe UI", 10), width=60, anchor="w").pack(side="left")
+        ctk.CTkOptionMenu(
+            font_row, variable=self._subtitle_font_family_var,
+            values=fonts, width=160, height=28,
+            command=lambda _: self._on_subtitle_setting_changed()
+        ).pack(side="right")
+
+        def _make_int_row(label_text, config_key, default, min_v, max_v):
+            var = tk.StringVar(value=str(config.get(config_key, default)))
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(row, text=label_text, font=("Segoe UI", 10), width=60, anchor="w").pack(side="left")
+            entry = ctk.CTkEntry(row, textvariable=var, width=60, height=28)
+            entry.pack(side="right")
+            def on_change(_e=None, v=var, k=config_key, mn=min_v, mx=max_v):
+                try:
+                    val = max(mn, min(mx, int(v.get())))
+                    v.set(str(val))
+                except (ValueError, TypeError):
+                    v.set(str(default))
+                self._on_subtitle_setting_changed()
+            entry.bind("<FocusOut>", on_change)
+            entry.bind("<Return>", on_change)
+            return var
+
+        self._subtitle_font_size_var = _make_int_row("サイズ (px)", "subtitle_font_size", 32, 8, 200)
+        self._subtitle_stroke_width_var = _make_int_row("縁取り幅 (px)", "subtitle_stroke_width", 3, 0, 20)
+
+        def _make_float_row(label_text, config_key, default):
+            var = tk.StringVar(value=str(config.get(config_key, default)))
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(row, text=label_text, font=("Segoe UI", 10), width=60, anchor="w").pack(side="left")
+            entry = ctk.CTkEntry(row, textvariable=var, width=60, height=28)
+            entry.pack(side="right")
+            def on_change(_e=None, v=var, k=config_key, dv=default):
+                try:
+                    val = max(1.0, min(60.0, float(v.get())))
+                    v.set(str(val))
+                except (ValueError, TypeError):
+                    v.set(str(dv))
+                self._on_subtitle_setting_changed()
+            entry.bind("<FocusOut>", on_change)
+            entry.bind("<Return>", on_change)
+            return var
+
+        self._subtitle_display_seconds_var = _make_float_row("表示秒数", "subtitle_display_seconds", 5.0)
+
+        def _make_color_row(label_text, config_key, default):
+            var = tk.StringVar(value=config.get(config_key, default))
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(row, text=label_text, font=("Segoe UI", 10), width=60, anchor="w").pack(side="left")
+            entry = ctk.CTkEntry(row, textvariable=var, width=90, height=28)
+            entry.pack(side="right")
+            def on_change(_e=None, v=var):
+                self._on_subtitle_setting_changed()
+            entry.bind("<FocusOut>", on_change)
+            entry.bind("<Return>", on_change)
+            return var
+
+        self._subtitle_text_color_var = _make_color_row("文字色", "subtitle_text_color", "#FFFFFF")
+        self._subtitle_stroke_color_var = _make_color_row("縁取り色", "subtitle_stroke_color", "#000000")
+
+        self._add_panel_divider(parent)
+
+        # =====================================
+        # OBS URL
+        # =====================================
+        port = get_overlay_port()
+        self._add_panel_section(parent, "OBS Browser Source")
+        url_label = ctk.CTkLabel(
+            parent, text=f"http://localhost:{port}/subtitle",
+            font=("Consolas", 10), text_color=ACCENT
+        )
+        url_label.pack(anchor="w", pady=(0, 4))
+        ctk.CTkButton(
+            parent, text="📋 URLコピー",
+            command=lambda: self._copy_text_to_clipboard(f"http://localhost:{port}/subtitle"),
+            height=28,
+        ).pack(fill="x", pady=(0, 4))
+
+        # 初回ビルド（有効かどうかに関わらずHTMLを生成しておく）
+        self._build_subtitle_html()
+
+    def _copy_text_to_clipboard(self, text: str) -> None:
+        """任意テキストをクリップボードにコピー"""
+        self.master.clipboard_clear()
+        self.master.clipboard_append(text)
+        self.log_message(f"クリップボードにコピーしました: {text}", log_type="system")
+
+    def _on_subtitle_enabled_changed(self) -> None:
+        """字幕ON/OFFトグル変更時"""
+        enabled = self._subtitle_enabled_var.get()
+        set_subtitle_enabled(enabled)
+        cfg = load_config()
+        cfg["subtitle_enabled"] = enabled
+        save_config(cfg)
+        self._build_subtitle_html()
+        self.log_message(f"字幕: {'ON' if enabled else 'OFF'}", log_type="system")
+
+    def _on_subtitle_setting_changed(self) -> None:
+        """字幕スタイル/表示項目の設定変更時に保存してHTMLを再生成"""
+        cfg = load_config()
+        cfg["subtitle_enabled"] = self._subtitle_enabled_var.get()
+        cfg["subtitle_show_original"] = self._subtitle_show_original_var.get()
+        cfg["subtitle_show_translated"] = self._subtitle_show_translated_var.get()
+        cfg["subtitle_show_speaker"] = self._subtitle_show_speaker_var.get()
+        cfg["subtitle_show_timestamp"] = self._subtitle_show_timestamp_var.get()
+        cfg["subtitle_font_family"] = self._subtitle_font_family_var.get()
+        try:
+            cfg["subtitle_font_size"] = int(self._subtitle_font_size_var.get())
+        except (ValueError, TypeError):
+            cfg["subtitle_font_size"] = 32
+        try:
+            cfg["subtitle_stroke_width"] = int(self._subtitle_stroke_width_var.get())
+        except (ValueError, TypeError):
+            cfg["subtitle_stroke_width"] = 3
+        try:
+            cfg["subtitle_display_seconds"] = float(self._subtitle_display_seconds_var.get())
+        except (ValueError, TypeError):
+            cfg["subtitle_display_seconds"] = 5.0
+        cfg["subtitle_text_color"] = self._subtitle_text_color_var.get()
+        cfg["subtitle_stroke_color"] = self._subtitle_stroke_color_var.get()
+        save_config(cfg)
+        self._build_subtitle_html()
+
+    def _build_subtitle_html(self) -> None:
+        """subtitle.html を生成してサーバーに登録する"""
+        import os
+        import sys
+        # 出力先: chat_html と同ディレクトリ (デフォルトは dist/subtitle.html)
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.join(os.path.dirname(__file__), '..', 'dist')
+        os.makedirs(base_dir, exist_ok=True)
+        path = os.path.join(base_dir, 'subtitle.html')
+
+        cfg = load_config()
+        font_family = cfg.get("subtitle_font_family", "Noto Sans JP")
+        font_size = int(cfg.get("subtitle_font_size", 32))
+        text_color = cfg.get("subtitle_text_color", "#FFFFFF")
+        stroke_color = cfg.get("subtitle_stroke_color", "#000000")
+        stroke_width = int(cfg.get("subtitle_stroke_width", 3))
+        display_seconds = float(cfg.get("subtitle_display_seconds", 5.0))
+
+        # Google Fonts のURLを組み立て（スペースを+に変換）
+        font_url_name = font_family.replace(" ", "+")
+
+        html = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family={font_url_name}&display=swap" rel="stylesheet">
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: transparent; overflow: hidden; width: 100vw; height: 100vh; }}
+  #subtitle-box {{
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 80%;
+    min-width: 200px;
+    text-align: center;
+    background: rgba(0,0,0,0.55);
+    border-radius: 10px;
+    padding: 12px 24px;
+    display: none;
+    font-family: '{font_family}', 'Noto Sans JP', sans-serif;
+    font-size: {font_size}px;
+    color: {text_color};
+    text-shadow: {stroke_width}px {stroke_width}px 0 {stroke_color},
+                 -{stroke_width}px {stroke_width}px 0 {stroke_color},
+                 {stroke_width}px -{stroke_width}px 0 {stroke_color},
+                 -{stroke_width}px -{stroke_width}px 0 {stroke_color};
+    word-break: break-word;
+    line-height: 1.4;
+  }}
+  .sub-speaker {{
+    font-size: 0.65em;
+    opacity: 0.8;
+    margin-bottom: 4px;
+    text-shadow: none;
+    color: #FFD700;
+  }}
+  .sub-original {{ margin-bottom: 2px; }}
+  .sub-translated {{ opacity: 0.92; }}
+  .sub-timestamp {{
+    font-size: 0.55em;
+    opacity: 0.65;
+    margin-top: 4px;
+    text-shadow: none;
+  }}
+  @keyframes fadeIn  {{
+    from {{ opacity: 0; transform: translateX(-50%) translateY(10px); }}
+    to   {{ opacity: 1; transform: translateX(-50%) translateY(0); }}
+  }}
+  @keyframes fadeOut {{
+    from {{ opacity: 1; }}
+    to   {{ opacity: 0; }}
+  }}
+</style>
+</head>
+<body>
+<div id="subtitle-box"></div>
+<script>
+(function() {{
+  var lastId = -1;
+  var hideTimer = null;
+  var box = document.getElementById('subtitle-box');
+
+  function show(data) {{
+    if (hideTimer) {{ clearTimeout(hideTimer); hideTimer = null; }}
+    var cfg = data.config || {{}};
+    var html = '';
+    if (cfg.show_speaker && data.speaker) {{
+      html += '<div class="sub-speaker">\u2756 ' + esc(data.speaker) + '</div>';
+    }}
+    if (cfg.show_original && data.original) {{
+      html += '<div class="sub-original">' + esc(data.original) + '</div>';
+    }}
+    if (cfg.show_translated && data.translated) {{
+      html += '<div class="sub-translated">' + esc(data.translated) + '</div>';
+    }}
+    if (cfg.show_timestamp && data.timestamp) {{
+      html += '<div class="sub-timestamp">' + esc(data.timestamp) + '</div>';
+    }}
+    if (!html) {{ hide(); return; }}
+    box.innerHTML = html;
+    box.style.display = 'block';
+    box.style.animation = 'fadeIn 0.3s ease forwards';
+    var secs = (cfg.display_seconds || {display_seconds}) * 1000;
+    hideTimer = setTimeout(function() {{
+      box.style.animation = 'fadeOut 0.5s ease forwards';
+      setTimeout(hide, 500);
+    }}, secs);
+  }}
+
+  function hide() {{
+    box.style.display = 'none';
+    box.innerHTML = '';
+    box.style.animation = '';
+  }}
+
+  function esc(s) {{
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }}
+
+  async function poll() {{
+    try {{
+      var r = await fetch('/api/subtitle');
+      var data = await r.json();
+      if (!data.enabled) {{ hide(); return; }}
+      if (data.id !== lastId) {{
+        lastId = data.id;
+        show(data);
+      }}
+    }} catch(e) {{ /* ignore */ }}
+  }}
+
+  setInterval(poll, 1000);
+  poll();
+}})();
+</script>
+</body>
+</html>"""
+
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(html)
+            set_subtitle_html_path(path)
+            # サーバーの enabled フラグも同期
+            set_subtitle_enabled(cfg.get("subtitle_enabled", False))
+            logger.info(f"subtitle.html generated: {path}")
+        except Exception as e:
+            logger.error(f"subtitle.html 生成失敗: {e}")
 
     def _build_plugins_panel(self, parent):
         """プラグインパネルのコンテンツ（わんコメ互換 plugin.js 管理）"""
@@ -3933,6 +4275,27 @@ window.onload = function() {{
             # オーバーレイ更新
         if comment.translated:
             update_translation(comment.translated)
+
+        # 字幕更新
+        cfg = load_config()
+        if cfg.get("subtitle_enabled"):
+            update_subtitle(
+                original=comment.message,
+                translated=comment.translated or "",
+                speaker=comment.display_username,
+                config={
+                    "show_original": cfg.get("subtitle_show_original", True),
+                    "show_translated": cfg.get("subtitle_show_translated", True),
+                    "show_speaker": cfg.get("subtitle_show_speaker", False),
+                    "show_timestamp": cfg.get("subtitle_show_timestamp", False),
+                    "font_family": cfg.get("subtitle_font_family", "Noto Sans JP"),
+                    "font_size": cfg.get("subtitle_font_size", 32),
+                    "text_color": cfg.get("subtitle_text_color", "#FFFFFF"),
+                    "stroke_color": cfg.get("subtitle_stroke_color", "#000000"),
+                    "stroke_width": cfg.get("subtitle_stroke_width", 3),
+                    "display_seconds": cfg.get("subtitle_display_seconds", 5.0),
+                }
+            )
 
         # エモートがある場合: 画像DL完了後にUI更新（画像がインライン表示される）
         # エモートがない場合: 即座にUI更新
@@ -6242,6 +6605,27 @@ window.onload = function() {{
 
         # オーバーレイ更新
         update_translation(translated)
+
+        # 字幕更新（音声認識）
+        cfg = load_config()
+        if cfg.get("subtitle_enabled"):
+            update_subtitle(
+                original=text,
+                translated=translated,
+                speaker="",
+                config={
+                    "show_original": cfg.get("subtitle_show_original", True),
+                    "show_translated": cfg.get("subtitle_show_translated", True),
+                    "show_speaker": False,
+                    "show_timestamp": cfg.get("subtitle_show_timestamp", False),
+                    "font_family": cfg.get("subtitle_font_family", "Noto Sans JP"),
+                    "font_size": cfg.get("subtitle_font_size", 32),
+                    "text_color": cfg.get("subtitle_text_color", "#FFFFFF"),
+                    "stroke_color": cfg.get("subtitle_stroke_color", "#000000"),
+                    "stroke_width": cfg.get("subtitle_stroke_width", 3),
+                    "display_seconds": cfg.get("subtitle_display_seconds", 5.0),
+                }
+            )
 
         # 音声翻訳結果をチャット送信（音声翻訳機能がONなら送信）
         if self.voice_var.get() and translated and translated != "(No API Key)":
