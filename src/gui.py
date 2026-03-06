@@ -1678,6 +1678,14 @@ class KototsunaApp:
                 parent, height=200, fg_color=CARD_BG
             )
             self._viewer_ranking_frame.pack(fill="x", pady=(0, 8))
+            # CTkScrollableFrame の内側Canvasが最初のクリックをフォーカス取得に
+            # 消費してボタンコマンドが発火しない問題を修正
+            try:
+                self._viewer_ranking_frame._parent_canvas.bind(
+                    "<Button-1>", lambda e: None
+                )
+            except Exception:
+                pass
 
             # ボタン行
             btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
