@@ -9,6 +9,7 @@ pytest-asyncio
 twitchio
 requests
 aiohttp
+obsws-python
 python-dotenv
 websockets
 tenacity

@@ -4,6 +4,7 @@ twitchio>=2.9.0,<3.0.0
 # HTTP Requests
 requests>=2.31.0,<3.0.0
 aiohttp>=3.9.0,<4.0.0
+obsws-python>=1.7.0,<2.0.0
 
 # Retry with exponential backoff
 tenacity>=8.2.0

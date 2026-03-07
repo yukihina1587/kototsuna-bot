@@ -113,6 +113,16 @@ DEFAULT_CONFIG = {
     "subtitle_stroke_width": 3,
     "subtitle_display_seconds": 5.0,
     "subtitle_max_lines": 3,
+    # OBS連携
+    "obs_enabled": False,
+    "obs_host": "127.0.0.1",
+    "obs_port": 4455,
+    "obs_password": "",
+    "obs_poll_interval_sec": 1.0,
+    "obs_auto_control_enabled": True,
+    "obs_auto_start_bot": True,
+    "obs_auto_stop_bot": True,
+    "obs_scene_rules": [],  # [{"scene": "休憩", "tts_mute": True, "show_sources": [], "hide_sources": []}]
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
@@ -328,10 +338,75 @@ def validate_config(config_data):
             validated[key] = bool(validated.get(key))
             changed = True
 
+    # OBS bool フラグ
+    for key in ["obs_enabled", "obs_auto_control_enabled", "obs_auto_start_bot", "obs_auto_stop_bot"]:
+        if not isinstance(validated.get(key), bool):
+            validated[key] = bool(validated.get(key))
+            changed = True
+
     # subtitle 文字列系
     for key in ["subtitle_font_family", "subtitle_text_color", "subtitle_stroke_color"]:
         if not isinstance(validated.get(key), str):
             validated[key] = DEFAULT_CONFIG.get(key, "")
+            changed = True
+
+    # OBS 文字列系
+    for key in ["obs_host", "obs_password"]:
+        if validated.get(key) is None:
+            validated[key] = DEFAULT_CONFIG.get(key, "")
+            changed = True
+        elif not isinstance(validated.get(key), str):
+            validated[key] = str(validated.get(key))
+            changed = True
+
+    # OBS ポート (int, 1-65535)
+    try:
+        validated["obs_port"] = max(1, min(65535, int(validated.get("obs_port", 4455))))
+    except (TypeError, ValueError):
+        validated["obs_port"] = 4455
+        changed = True
+
+    # OBS ポーリング間隔 (float, 0.2-10.0)
+    try:
+        validated["obs_poll_interval_sec"] = max(0.2, min(10.0, float(validated.get("obs_poll_interval_sec", 1.0))))
+    except (TypeError, ValueError):
+        validated["obs_poll_interval_sec"] = 1.0
+        changed = True
+
+    # OBS シーンルール正規化
+    rules = validated.get("obs_scene_rules", [])
+    if not isinstance(rules, list):
+        validated["obs_scene_rules"] = []
+        changed = True
+    else:
+        normalized_rules = []
+        for rule in rules:
+            if not isinstance(rule, dict):
+                changed = True
+                continue
+            scene_name = str(rule.get("scene", "")).strip()
+            if not scene_name:
+                changed = True
+                continue
+            tts_mute = rule.get("tts_mute", None)
+            if tts_mute is not None:
+                tts_mute = bool(tts_mute)
+            show_sources = rule.get("show_sources", [])
+            hide_sources = rule.get("hide_sources", [])
+            if not isinstance(show_sources, list):
+                show_sources = []
+                changed = True
+            if not isinstance(hide_sources, list):
+                hide_sources = []
+                changed = True
+            normalized_rules.append({
+                "scene": scene_name,
+                "tts_mute": tts_mute,
+                "show_sources": [str(x).strip() for x in show_sources if str(x).strip()],
+                "hide_sources": [str(x).strip() for x in hide_sources if str(x).strip()],
+            })
+        if normalized_rules != rules:
+            validated["obs_scene_rules"] = normalized_rules
             changed = True
 
     return validated, changed

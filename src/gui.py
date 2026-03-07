@@ -45,6 +45,7 @@ from src.comment_data import CommentData
 from src import translator, __version__
 from src.resource_monitor import get_monitor
 from src.gui_helpers import DifferentialListManager, create_participant_row, create_simple_list_row
+from src.obs_integration import ObsController, find_matching_scene_rule
 from src.updater import (
     check_for_updates, download_update, apply_update, restart_app,
     ReleaseInfo, UpdateError, format_file_size,
@@ -252,6 +253,9 @@ class KototsunaApp:
         self.tts_speed_var = tk.DoubleVar(value=self.config.get("tts_speed", 1.0))
         self.voice_var = tk.BooleanVar(value=False)  # 音声認識トグル
         self.tts_include_name_var = tk.BooleanVar(value=self.config.get("tts_include_name", False))  # 名前読み上げ
+        self._obs_tts_forced_muted = False
+        self._obs_tts_prev_enabled = False
+        self.obs_controller: Optional[ObsController] = None
 
         # 設定変更は即時保存（全変数の初期化後に呼ぶ）
         self._setup_auto_save()
@@ -303,8 +307,90 @@ class KototsunaApp:
         self.master.after(100, lambda: self._update_auth_button_states(authenticated=False))
         # 起動時に保存されたトークンをチェックして自動ログイン
         self.master.after(1000, self._check_saved_token)
+        # OBS連携を初期化
+        self.master.after(1200, self._init_obs_controller)
         # 起動時にアップデートを確認
         self.master.after(3000, self._check_for_updates_on_startup)
+
+    def _init_obs_controller(self) -> None:
+        if self.obs_controller is not None:
+            return
+        self.obs_controller = ObsController(
+            config_getter=lambda: self.config,
+            on_stream_state_change=self._on_obs_stream_state_change,
+            on_scene_change=self._on_obs_scene_change,
+            on_connection_change=self._on_obs_connection_change,
+        )
+        if self.config.get("obs_enabled", False):
+            self.obs_controller.start()
+            self.log_message("OBS連携を開始しました", log_type="system")
+
+    def _on_obs_connection_change(self, connected: bool) -> None:
+        self.master.after(0, lambda: self._handle_obs_connection_change(connected))
+
+    def _handle_obs_connection_change(self, connected: bool) -> None:
+        msg = "OBS WebSocket 接続済み" if connected else "OBS WebSocket 未接続"
+        logger.info(msg)
+
+    def _on_obs_stream_state_change(self, is_active: bool) -> None:
+        self.master.after(0, lambda: self._handle_obs_stream_state_change(is_active))
+
+    def _handle_obs_stream_state_change(self, is_active: bool) -> None:
+        if not self.config.get("obs_auto_control_enabled", True):
+            return
+        if is_active and self.config.get("obs_auto_start_bot", True):
+            if self.bot_instance:
+                return
+            if not self.token:
+                self.log_message("OBS配信開始を検知しましたが、未認証のためBOT自動起動をスキップしました")
+                return
+            self.log_message("OBS配信開始を検知: BOTを自動起動します")
+            self.start_bot()
+        elif (not is_active) and self.config.get("obs_auto_stop_bot", True):
+            if not self.bot_instance:
+                return
+            self.log_message("OBS配信終了を検知: BOTを自動停止します")
+            self.stop_bot()
+
+    def _on_obs_scene_change(self, scene_name: str) -> None:
+        self.master.after(0, lambda: self._handle_obs_scene_change(scene_name))
+
+    def _handle_obs_scene_change(self, scene_name: str) -> None:
+        rules = self.config.get("obs_scene_rules", [])
+        if not isinstance(rules, list):
+            return
+        rule = find_matching_scene_rule(scene_name, rules)
+        if not rule:
+            if self._obs_tts_forced_muted:
+                self._apply_obs_tts_mute(False)
+            return
+
+        tts_mute = rule.get("tts_mute", None)
+        if tts_mute is not None:
+            self._apply_obs_tts_mute(bool(tts_mute))
+
+        if self.obs_controller is None:
+            return
+        for source_name in rule.get("show_sources", []):
+            self.obs_controller.set_source_visible(str(source_name), True, scene_name=scene_name)
+        for source_name in rule.get("hide_sources", []):
+            self.obs_controller.set_source_visible(str(source_name), False, scene_name=scene_name)
+
+    def _apply_obs_tts_mute(self, mute: bool) -> None:
+        if mute:
+            if self._obs_tts_forced_muted:
+                return
+            self._obs_tts_prev_enabled = bool(self.tts.enabled)
+            self.tts.enabled = False
+            self._obs_tts_forced_muted = True
+            self.log_message("OBSシーンルール: TTSをミュートしました")
+            return
+
+        if not self._obs_tts_forced_muted:
+            return
+        self.tts.enabled = self._obs_tts_prev_enabled
+        self._obs_tts_forced_muted = False
+        self.log_message("OBSシーンルール: TTSミュートを解除しました")
 
     def _init_chat_html(self):
         """起動時にチャットHTML出力パスを設定する"""
@@ -5198,6 +5284,12 @@ window.onload = function() {{
         logger.info("Starting cleanup_resources...")
 
         try:
+            # OBS連携を停止
+            if self.obs_controller:
+                logger.info("Stopping OBS controller...")
+                self.obs_controller.stop()
+                logger.info("OBS controller stopped.")
+
             # リソース監視を停止
             if hasattr(self, 'resource_monitor'):
                 logger.info("Stopping resource monitor...")
@@ -5350,6 +5442,13 @@ window.onload = function() {{
             elif self.tts.engine_mode == 'pyttsx3':
                 self.log_message("✅ pyttsx3フォールバックエンジンで読み上げを開始しました (VOICEVOXが利用不可)")
                 logger.info("TTS起動成功: pyttsx3")
+
+            # OBSシーンルールでミュート中なら、起動直後に再適用する
+            # TTS再起動は「ユーザーが明示的に有効にした」ではないため
+            # _obs_tts_prev_enabled を False にリセットして stale 状態を防ぐ
+            if self._obs_tts_forced_muted:
+                self._obs_tts_prev_enabled = False
+                self.tts.enabled = False
 
     def build_dictionary_tab(self):
         """読み上げ辞書タブの構築"""
