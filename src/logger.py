@@ -1,12 +1,20 @@
 """
 Logging configuration for KototsunaBot
-Provides centralized logging setup with daily rotating file handler.
+Provides centralized logging setup with size-based rotating file handler.
 """
 import logging
+import time
 import sys
 from pathlib import Path
 from datetime import datetime
-from logging.handlers import TimedRotatingFileHandler
+from logging.handlers import RotatingFileHandler
+
+# ログローテーション設定
+_LOG_MAX_BYTES = 10 * 1024 * 1024  # 10MB
+_LOG_BACKUP_COUNT = 7               # 最大7世代保持
+_LOG_RETENTION_DAYS = 7             # 7日より古いログを削除
+
+_LOGGER_NAME = "KototsunaBot"
 
 
 def _get_log_directory() -> Path:
@@ -26,9 +34,20 @@ def _get_log_directory() -> Path:
     return base_dir / "logs"
 
 
-def setup_logger(name: str = "KototsunaBot", level: str = "INFO") -> logging.Logger:
+def _cleanup_old_logs(log_dir: Path, retention_days: int = _LOG_RETENTION_DAYS) -> None:
+    """指定日数より古いログファイルを削除する。"""
+    cutoff = time.time() - retention_days * 86400
+    for log_file in log_dir.glob("bot_*.log*"):
+        try:
+            if log_file.stat().st_mtime < cutoff:
+                log_file.unlink()
+        except OSError:
+            pass
+
+
+def setup_logger(name: str = _LOGGER_NAME, level: str = "INFO") -> logging.Logger:
     """
-    Setup and configure logger with daily rotating file handler.
+    Setup and configure logger with size-based rotating file handler.
     Console output is disabled - all logs go to file only.
 
     Args:
@@ -44,32 +63,29 @@ def setup_logger(name: str = "KototsunaBot", level: str = "INFO") -> logging.Log
     if logger.handlers:
         return logger
 
-    # Set logging level
-    log_level = getattr(logging, level.upper(), logging.INFO)
     logger.setLevel(logging.DEBUG)  # Logger itself captures all levels
 
     # Create logs directory if it doesn't exist
     log_dir = _get_log_directory()
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Daily rotating file handler
-    # File format: bot_YYYY-MM-DD.log
+    # 古いログファイルをクリーンアップ
+    _cleanup_old_logs(log_dir)
+
+    # サイズベースローテーション（10MB上限、7世代保持）
     today = datetime.now().strftime("%Y-%m-%d")
     log_file = log_dir / f"bot_{today}.log"
 
-    file_handler = TimedRotatingFileHandler(
+    file_handler = RotatingFileHandler(
         log_file,
-        when='midnight',      # Rotate at midnight
-        interval=1,           # Every 1 day
-        backupCount=7,        # Keep 7 days of logs
+        maxBytes=_LOG_MAX_BYTES,
+        backupCount=_LOG_BACKUP_COUNT,
         encoding='utf-8'
     )
-    # Set suffix for rotated files (e.g., bot_2026-01-28.log.2026-01-27)
-    file_handler.suffix = "%Y-%m-%d"
     file_handler.setLevel(logging.DEBUG)
 
     file_formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
+        '%(asctime)s [%(levelname)-8s] [%(filename)s:%(lineno)d] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     file_handler.setFormatter(file_formatter)
@@ -95,14 +111,13 @@ def set_log_level(level: str) -> None:
     }
     log_level = level_map.get(level.upper(), logging.INFO)
 
-    # ルートロガーとすべてのハンドラのレベルを変更
-    root_logger = logging.getLogger("TwitchTranslateBOT")
+    root_logger = logging.getLogger(_LOGGER_NAME)
     root_logger.setLevel(log_level)
 
     for handler in root_logger.handlers:
         handler.setLevel(log_level)
 
-    root_logger.info(f"Log level changed to: {level.upper()}")
+    root_logger.info(f"[Logger] Log level changed to: {level.upper()}")
 
 
 def get_log_level() -> str:
@@ -118,7 +133,7 @@ def get_log_level() -> str:
         logging.WARNING: "WARNING",
         logging.ERROR: "ERROR",
     }
-    root_logger = logging.getLogger("TwitchTranslateBOT")
+    root_logger = logging.getLogger(_LOGGER_NAME)
     return level_names.get(root_logger.level, "INFO")
 
 

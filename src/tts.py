@@ -773,7 +773,7 @@ class VoicevoxTTS:
             logger.debug(f"クリーニング後のテキストが空です: {text[:50]}...")
             return
 
-        logger.info(f"🔊 TTSキューに追加: {cleaned_text}")
+        logger.debug(f"🔊 TTSキューに追加: {cleaned_text}")
         logger.debug(f"エンジンモード: {self.engine_mode}, キューサイズ: {self.synthesis_queue.qsize()}")
 
         # 読み上げテキストをタイムスタンプ付きでログファイルに追記

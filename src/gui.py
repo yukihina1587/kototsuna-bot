@@ -1708,7 +1708,7 @@ class KototsunaApp:
         config = load_config()
         config["voice_assign_mode"] = mode
         save_config(config)
-        logger.info("ボイス割り当てモード変更: %s", mode)
+        logger.debug("ボイス割り当てモード変更: %s", mode)
 
     def _on_voice_min_visits_changed(self) -> None:
         """最低視聴回数を変更して保存"""
@@ -3371,7 +3371,7 @@ class KototsunaApp:
             else:
                 self.mic_device_var.set("デフォルト")
 
-            logger.info(f"Microphone devices found: {len(devices)}")
+            logger.debug(f"Microphone devices found: {len(devices)}")
         except Exception as e:
             logger.error(f"Failed to refresh mic list: {e}")
             self.mic_selector.configure(values=["デフォルト"])
@@ -3674,8 +3674,8 @@ class KototsunaApp:
             import platform
 
             icon_path = self._get_icon_path()
-            logger.info(f"アイコンパス: {icon_path}")
-            logger.info(f"アイコンファイル存在: {os.path.exists(icon_path)}")
+            logger.debug(f"アイコンパス: {icon_path}")
+            logger.debug(f"アイコンファイル存在: {os.path.exists(icon_path)}")
 
             if icon_path and os.path.exists(icon_path):
                 # Windowsの場合はiconbitmap()を使用（より確実）
@@ -3687,17 +3687,17 @@ class KototsunaApp:
                     # .icoファイルが存在しない、または古い場合は再生成
                     if not os.path.exists(ico_path) or os.path.getmtime(icon_path) > os.path.getmtime(ico_path):
                         from PIL import Image
-                        logger.info("マルチサイズ.icoファイルを生成中...")
+                        logger.debug("マルチサイズ.icoファイルを生成中...")
 
                         # PNGからマルチサイズの.icoを生成
                         img = Image.open(icon_path)
                         icon_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
                         img.save(ico_path, format='ICO', sizes=icon_sizes)
-                        logger.info(f".icoファイルを生成しました: {ico_path}")
+                        logger.debug(f".icoファイルを生成しました: {ico_path}")
 
                     # iconbitmap()で設定
                     self.master.iconbitmap(ico_path)
-                    logger.info(f"ウィンドウアイコンを設定しました (iconbitmap): {ico_path}")
+                    logger.debug(f"ウィンドウアイコンを設定しました (iconbitmap): {ico_path}")
                 else:
                     # Linux/Mac の場合は iconphoto() を使用
                     from PIL import Image, ImageTk
@@ -3715,7 +3715,7 @@ class KototsunaApp:
 
                     self.master.iconphoto(True, *photo_images)
                     self.master._icon_photos = photo_images
-                    logger.info("ウィンドウアイコンを設定しました (iconphoto)")
+                    logger.debug("ウィンドウアイコンを設定しました (iconphoto)")
             else:
                 logger.warning(f"アイコンファイルが見つかりません: {icon_path}")
         except Exception as e:

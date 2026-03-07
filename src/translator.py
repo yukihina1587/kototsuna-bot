@@ -305,9 +305,9 @@ def _translate_local(text: str, mode: str) -> str | None:
         direction = "en-ja"
 
     _stats["local_requests"] += 1
-    logger.info(f"Local translate: text='{text[:50]}' direction={direction}")
+    logger.debug(f"Local translate: text='{text[:50]}' direction={direction}")
     result = translator.translate(text, direction)
-    logger.info(f"Local translate result: '{result[:100]}'")
+    logger.debug(f"Local translate result: '{result[:100]}'")
     if result == text:
         logger.warning(f"Local translation returned same text (direction={direction})")
         _stats["local_errors"] += 1
@@ -440,7 +440,7 @@ async def translate_text(text, mode, api_key):
     # フィルタチェック
     if should_filter(text):
         _stats["filtered"] += 1
-        logger.info("Translation skipped by filter")
+        logger.debug("Translation skipped by filter")
         return ""
 
     # 辞書置換
@@ -512,7 +512,7 @@ def translate_text_sync(text, mode, api_key):
 
     if should_filter(text):
         _stats["filtered"] += 1
-        logger.info("Translation skipped by filter")
+        logger.debug("Translation skipped by filter")
         return ""
 
     text = apply_translation_dictionary(text)
