@@ -61,3 +61,33 @@ def test_gladia_keys_removed():
     ]
     for key in gladia_keys:
         assert key not in DEFAULT_CONFIG, f"{key} should not exist in DEFAULT_CONFIG"
+
+
+def test_obs_defaults_present():
+    validated, _ = validate_config({})
+    assert validated["obs_enabled"] is False
+    assert validated["obs_host"] == "127.0.0.1"
+    assert validated["obs_port"] == 4455
+    assert validated["obs_auto_control_enabled"] is True
+
+
+def test_obs_values_are_normalized():
+    validated, changed = validate_config(
+        {
+            "obs_enabled": 1,
+            "obs_port": "70000",
+            "obs_poll_interval_sec": "0.01",
+            "obs_scene_rules": [
+                {"scene": "休憩", "tts_mute": "yes", "show_sources": ["Alert"], "hide_sources": "bad"},
+                {"scene": "", "tts_mute": True},
+                "invalid",
+            ],
+        }
+    )
+    assert changed is True
+    assert validated["obs_enabled"] is True
+    assert validated["obs_port"] == 65535
+    assert validated["obs_poll_interval_sec"] == 0.2
+    assert validated["obs_scene_rules"] == [
+        {"scene": "休憩", "tts_mute": True, "show_sources": ["Alert"], "hide_sources": []}
+    ]
