@@ -685,6 +685,7 @@ class KototsunaApp:
             ("commands", "💬  コマンド"),
             ("plugins", "🧩  プラグイン"),
             ("subtitle", "🗒  字幕設定"),
+            ("obs", "🎬  OBS連携"),
         ]
         for panel_id, label in nav_items:
             btn = ctk.CTkButton(
@@ -1092,6 +1093,7 @@ class KototsunaApp:
             "commands": self._build_commands_panel,
             "plugins": self._build_plugins_panel,
             "subtitle": self._build_subtitle_panel,
+            "obs": self._build_obs_panel,
         }
         builder = builders.get(panel_id)
         if builder:
@@ -2320,6 +2322,295 @@ class KototsunaApp:
             logger.info(f"subtitle.html generated: {path}")
         except Exception as e:
             logger.error(f"subtitle.html 生成失敗: {e}")
+
+    def _build_obs_panel(self, parent):
+        """OBS連携設定パネル"""
+        config = load_config()
+
+        # =====================================
+        # 接続設定
+        # =====================================
+        self._add_panel_section(parent, "OBS接続設定")
+
+        # 有効/無効トグル
+        enabled_row = ctk.CTkFrame(parent, fg_color="transparent")
+        enabled_row.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(enabled_row, text="OBS連携を有効にする", font=FONT_BODY).pack(side="left")
+        self._obs_enabled_var = tk.BooleanVar(value=config.get("obs_enabled", False))
+        ctk.CTkSwitch(
+            enabled_row, text="", variable=self._obs_enabled_var,
+            command=self._on_obs_enabled_changed, width=50,
+        ).pack(side="right")
+
+        # ホスト
+        host_row = ctk.CTkFrame(parent, fg_color="transparent")
+        host_row.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(host_row, text="ホスト", font=("Segoe UI", 10), width=80, anchor="w").pack(side="left")
+        self._obs_host_var = tk.StringVar(value=config.get("obs_host", "127.0.0.1"))
+        ctk.CTkEntry(host_row, textvariable=self._obs_host_var, height=28).pack(
+            side="right", fill="x", expand=True
+        )
+
+        # ポート
+        port_row = ctk.CTkFrame(parent, fg_color="transparent")
+        port_row.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(port_row, text="ポート", font=("Segoe UI", 10), width=80, anchor="w").pack(side="left")
+        self._obs_port_var = tk.StringVar(value=str(config.get("obs_port", 4455)))
+        ctk.CTkEntry(port_row, textvariable=self._obs_port_var, height=28, width=80).pack(side="right")
+
+        # パスワード
+        pw_row = ctk.CTkFrame(parent, fg_color="transparent")
+        pw_row.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(pw_row, text="パスワード", font=("Segoe UI", 10), width=80, anchor="w").pack(side="left")
+        self._obs_password_var = tk.StringVar(value=config.get("obs_password", ""))
+        ctk.CTkEntry(pw_row, textvariable=self._obs_password_var, height=28, show="*").pack(
+            side="right", fill="x", expand=True
+        )
+
+        # ポーリング間隔
+        poll_row = ctk.CTkFrame(parent, fg_color="transparent")
+        poll_row.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(poll_row, text="監視間隔(秒)", font=("Segoe UI", 10), width=80, anchor="w").pack(side="left")
+        self._obs_poll_var = tk.StringVar(value=str(config.get("obs_poll_interval_sec", 1.0)))
+        ctk.CTkEntry(poll_row, textvariable=self._obs_poll_var, height=28, width=60).pack(side="right")
+
+        # 保存ボタン
+        ctk.CTkButton(
+            parent, text="接続設定を保存", height=30,
+            command=self._save_obs_connection_settings,
+            fg_color=ACCENT, hover_color=ACCENT_SECONDARY, text_color="#000000",
+        ).pack(fill="x", pady=(4, 0))
+
+        self._add_panel_divider(parent)
+
+        # =====================================
+        # 自動制御
+        # =====================================
+        self._add_panel_section(parent, "自動制御")
+
+        auto_ctrl_row = ctk.CTkFrame(parent, fg_color="transparent")
+        auto_ctrl_row.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(auto_ctrl_row, text="OBS連動の自動制御", font=FONT_BODY).pack(side="left")
+        self._obs_auto_ctrl_var = tk.BooleanVar(value=config.get("obs_auto_control_enabled", True))
+        ctk.CTkSwitch(
+            auto_ctrl_row, text="", variable=self._obs_auto_ctrl_var,
+            command=self._save_obs_auto_settings, width=50,
+        ).pack(side="right")
+
+        self._obs_auto_start_var = tk.BooleanVar(value=config.get("obs_auto_start_bot", True))
+        ctk.CTkCheckBox(
+            parent, text="配信開始時にBOTを自動起動",
+            variable=self._obs_auto_start_var,
+            command=self._save_obs_auto_settings,
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=2)
+
+        self._obs_auto_stop_var = tk.BooleanVar(value=config.get("obs_auto_stop_bot", True))
+        ctk.CTkCheckBox(
+            parent, text="配信終了時にBOTを自動停止",
+            variable=self._obs_auto_stop_var,
+            command=self._save_obs_auto_settings,
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=2)
+
+        self._add_panel_divider(parent)
+
+        # =====================================
+        # シーンルール
+        # =====================================
+        self._add_panel_section(parent, "シーンルール")
+
+        ctk.CTkLabel(
+            parent,
+            text="シーンが切り替わったときの動作を設定します。",
+            font=("Segoe UI", 10), text_color=TEXT_SUBTLE, wraplength=260,
+        ).pack(anchor="w", pady=(0, 6))
+
+        # ルール一覧
+        self._obs_rules_list_frame = ctk.CTkScrollableFrame(parent, height=160, fg_color=CARD_BG)
+        self._obs_rules_list_frame.pack(fill="x", pady=(0, 8))
+        self._refresh_obs_rules_list()
+
+        # ルール追加フォーム
+        self._add_panel_section(parent, "ルールを追加")
+
+        scene_row = ctk.CTkFrame(parent, fg_color="transparent")
+        scene_row.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(scene_row, text="シーン名", font=("Segoe UI", 10), width=80, anchor="w").pack(side="left")
+        self._obs_new_scene_var = tk.StringVar()
+        ctk.CTkEntry(scene_row, textvariable=self._obs_new_scene_var, height=28, placeholder_text="例: 休憩").pack(
+            side="right", fill="x", expand=True
+        )
+
+        mute_row = ctk.CTkFrame(parent, fg_color="transparent")
+        mute_row.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(mute_row, text="TTSミュート", font=("Segoe UI", 10), width=80, anchor="w").pack(side="left")
+        self._obs_new_tts_mute_var = tk.BooleanVar(value=False)
+        ctk.CTkSwitch(mute_row, text="", variable=self._obs_new_tts_mute_var, width=50).pack(side="right")
+
+        show_row = ctk.CTkFrame(parent, fg_color="transparent")
+        show_row.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(show_row, text="表示ソース", font=("Segoe UI", 10), width=80, anchor="w").pack(side="left")
+        self._obs_new_show_var = tk.StringVar()
+        ctk.CTkEntry(
+            show_row, textvariable=self._obs_new_show_var, height=28, placeholder_text="カンマ区切り"
+        ).pack(side="right", fill="x", expand=True)
+
+        hide_row = ctk.CTkFrame(parent, fg_color="transparent")
+        hide_row.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(hide_row, text="非表示ソース", font=("Segoe UI", 10), width=80, anchor="w").pack(side="left")
+        self._obs_new_hide_var = tk.StringVar()
+        ctk.CTkEntry(
+            hide_row, textvariable=self._obs_new_hide_var, height=28, placeholder_text="カンマ区切り"
+        ).pack(side="right", fill="x", expand=True)
+
+        ctk.CTkButton(
+            parent, text="＋ ルールを追加", height=30,
+            command=self._add_obs_scene_rule,
+            fg_color=ACCENT, hover_color=ACCENT_SECONDARY, text_color="#000000",
+        ).pack(fill="x")
+
+    def _refresh_obs_rules_list(self):
+        """シーンルール一覧を再描画する。"""
+        if not hasattr(self, "_obs_rules_list_frame"):
+            return
+        for w in self._obs_rules_list_frame.winfo_children():
+            w.destroy()
+
+        config = load_config()
+        rules = config.get("obs_scene_rules", [])
+
+        if not rules:
+            ctk.CTkLabel(
+                self._obs_rules_list_frame, text="ルールが未設定です",
+                font=("Segoe UI", 10), text_color=TEXT_SUBTLE,
+            ).pack(anchor="w", padx=8, pady=8)
+            return
+
+        for i, rule in enumerate(rules):
+            row = ctk.CTkFrame(self._obs_rules_list_frame, fg_color="transparent")
+            row.pack(fill="x", pady=2, padx=4)
+
+            # ルール概要テキスト
+            scene = rule.get("scene", "")
+            parts = [f"🎬 {scene}"]
+            if rule.get("tts_mute"):
+                parts.append("🔇TTS")
+            shows = rule.get("show_sources", [])
+            hides = rule.get("hide_sources", [])
+            if shows:
+                parts.append(f"👁 {','.join(shows)}")
+            if hides:
+                parts.append(f"🚫 {','.join(hides)}")
+            summary = "  ".join(parts)
+
+            ctk.CTkLabel(
+                row, text=summary, font=("Segoe UI", 10), anchor="w", wraplength=200,
+            ).pack(side="left", fill="x", expand=True)
+
+            ctk.CTkButton(
+                row, text="削除", width=40, height=24,
+                fg_color="#CC3333", hover_color="#AA1111",
+                command=lambda idx=i: self._delete_obs_scene_rule(idx),
+                font=("Segoe UI", 10),
+            ).pack(side="right", padx=(4, 0))
+
+    def _add_obs_scene_rule(self):
+        """入力フォームからシーンルールを追加して保存する。"""
+        scene_name = self._obs_new_scene_var.get().strip()
+        if not scene_name:
+            return
+
+        def _split(val: str) -> list:
+            return [s.strip() for s in val.split(",") if s.strip()]
+
+        new_rule = {
+            "scene": scene_name,
+            "tts_mute": self._obs_new_tts_mute_var.get(),
+            "show_sources": _split(self._obs_new_show_var.get()),
+            "hide_sources": _split(self._obs_new_hide_var.get()),
+        }
+
+        config = load_config()
+        rules = config.get("obs_scene_rules", [])
+        rules.append(new_rule)
+        config["obs_scene_rules"] = rules
+        save_config(config)
+        self.config = config
+
+        # フォームリセット
+        self._obs_new_scene_var.set("")
+        self._obs_new_tts_mute_var.set(False)
+        self._obs_new_show_var.set("")
+        self._obs_new_hide_var.set("")
+
+        self._refresh_obs_rules_list()
+        logger.debug(f"[OBS] Scene rule added: {new_rule}")
+
+    def _delete_obs_scene_rule(self, index: int):
+        """指定インデックスのシーンルールを削除する。"""
+        config = load_config()
+        rules = config.get("obs_scene_rules", [])
+        if 0 <= index < len(rules):
+            removed = rules.pop(index)
+            config["obs_scene_rules"] = rules
+            save_config(config)
+            self.config = config
+            logger.debug(f"[OBS] Scene rule deleted: {removed}")
+        self._refresh_obs_rules_list()
+
+    def _save_obs_connection_settings(self):
+        """OBS接続設定を保存する。"""
+        try:
+            port = max(1, min(65535, int(self._obs_port_var.get())))
+        except ValueError:
+            port = 4455
+        try:
+            interval = max(0.2, min(10.0, float(self._obs_poll_var.get())))
+        except ValueError:
+            interval = 1.0
+
+        config = load_config()
+        config.update({
+            "obs_host": self._obs_host_var.get().strip() or "127.0.0.1",
+            "obs_port": port,
+            "obs_password": self._obs_password_var.get(),
+            "obs_poll_interval_sec": interval,
+        })
+        save_config(config)
+        self.config = config
+        self._obs_port_var.set(str(port))
+        self._obs_poll_var.set(str(interval))
+        logger.debug("[OBS] Connection settings saved.")
+
+    def _on_obs_enabled_changed(self):
+        """OBS有効スイッチ変更時の処理。"""
+        enabled = self._obs_enabled_var.get()
+        config = load_config()
+        config["obs_enabled"] = enabled
+        save_config(config)
+        self.config = config
+
+        if self.obs_controller is None:
+            return
+        if enabled:
+            self.obs_controller.start()
+            self.log_message("OBS連携を有効にしました", log_type="system")
+        else:
+            self.obs_controller.stop()
+            self.log_message("OBS連携を無効にしました", log_type="system")
+
+    def _save_obs_auto_settings(self):
+        """OBS自動制御設定を保存する。"""
+        config = load_config()
+        config.update({
+            "obs_auto_control_enabled": self._obs_auto_ctrl_var.get(),
+            "obs_auto_start_bot": self._obs_auto_start_var.get(),
+            "obs_auto_stop_bot": self._obs_auto_stop_var.get(),
+        })
+        save_config(config)
+        self.config = config
+        logger.debug("[OBS] Auto control settings saved.")
 
     def _build_plugins_panel(self, parent):
         """プラグインパネルのコンテンツ（わんコメ互換 plugin.js 管理）"""
