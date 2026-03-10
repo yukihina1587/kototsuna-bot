@@ -6226,6 +6226,7 @@ window.onload = function() {{
                 parent, p, i,
                 on_edit=self.edit_participant,
                 on_delete=self.remove_participant,
+                on_played=self.mark_participant_as_played,
                 on_drag_start=self.start_drag,
                 on_drag_motion=self.on_drag,
                 on_drag_end=self.end_drag,
@@ -6738,6 +6739,12 @@ window.onload = function() {{
         if success:
             self.log_message(f"参加者削除: {username}")
             self.refresh_participant_list()
+
+    def mark_participant_as_played(self, username):
+        """参加者を参加済みにマーク（待機リストから除去 → 参加済みセットへ）"""
+        self.tracker.mark_as_participated(username)
+        self.log_message(f"✅ 参加済みマーク: {username}")
+        self.refresh_participant_list()
 
     def edit_participant(self, username):
         """参加者名を編集"""

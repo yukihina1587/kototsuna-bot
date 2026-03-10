@@ -400,3 +400,40 @@ class TestParticipantCommands:
         assert "!leave" in sent
         assert "!nextround" in sent
         assert "!roundreset" in sent
+        assert "!played" in sent
+
+    def test_played_marks_user_as_participated(self):
+        tracker = self._make_tracker()
+        tracker.add_participant("Alice", "参加", "参加")
+        tracker.add_participant("Bob", "参加", "参加")
+        bot = _make_bot()
+        bot.tracker = tracker
+        message = _make_message("!played Alice", _make_author(is_mod=True))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        # Aliceは待機リストから消えて参加済みになる
+        assert "Alice" not in tracker.get_participant_names()
+        assert tracker.get_participated_count() == 1
+        # Bobはまだ待機リストにいる
+        assert "Bob" in tracker.get_participant_names()
+        sent = message.channel.send.await_args.args[0]
+        assert "参加済み" in sent
+
+    def test_played_requires_mod(self):
+        bot = _make_bot()
+        bot.tracker = self._make_tracker()
+        message = _make_message("!played alice", _make_author(is_mod=False))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        sent = message.channel.send.await_args.args[0]
+        assert "モデレーター" in sent
+
+    def test_played_then_cannot_rejoin_until_roundreset(self):
+        tracker = self._make_tracker()
+        tracker.add_participant("Alice", "参加", "参加")
+        tracker.mark_as_participated("Alice")
+        # 参加済みなので再登録できない
+        assert not tracker.add_participant("Alice", "参加", "参加")
+        # ラウンドリセット後は再登録できる
+        tracker.reset_participated()
+        assert tracker.add_participant("Alice", "参加", "参加")

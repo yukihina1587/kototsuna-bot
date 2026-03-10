@@ -613,6 +613,7 @@ class TranslateBot(commands.Bot):
             "nextround": self._cmd_nextround,
             "roundreset": self._cmd_roundreset,
             "leave": self._cmd_leave,
+            "played": self._cmd_played,
         }
 
         handler = builtin_handlers.get(cmd_name)
@@ -628,7 +629,7 @@ class TranslateBot(commands.Bot):
 
     async def _cmd_help(self, message, args: str) -> None:
         """!help — 使用可能なコマンド一覧を表示"""
-        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!dict", "!voice", "!myvoice", "!visits", "!leave", "!remove", "!clearall", "!nextround", "!roundreset"]
+        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!dict", "!voice", "!myvoice", "!visits", "!leave", "!remove", "!clearall", "!played", "!nextround", "!roundreset"]
         custom_cmds = [
             f"!{c.name}" for c in self._command_store.list_all() if c.enabled
         ]
@@ -1068,6 +1069,23 @@ class TranslateBot(commands.Bot):
                 self.gui.refresh_participant_list()
         else:
             await message.channel.send(f"@{participant_name} 参加リストに登録されていません" + '\u200B')
+
+    async def _cmd_played(self, message, args: str) -> None:
+        """!played <username> — 指定ユーザーを参加済みにマーク（待機リストから除去）（モデレーター限定）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        username = args.strip().lstrip("@")
+        if not username:
+            await message.channel.send("使い方: !played <ユーザー名>" + '\u200B')
+            return
+        self.tracker.mark_as_participated(username)
+        participated_count = self.tracker.get_participated_count()
+        await message.channel.send(
+            f"@{username} を参加済みにしました（参加済み累計: {participated_count}人）" + '\u200B'
+        )
+        if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+            self.gui.refresh_participant_list()
 
     async def event_raw_usernotice(self, channel, tags: dict):
         """サブスクやギフトなどのUSERNOTICEイベントを処理（twitchio 2.x準拠）"""

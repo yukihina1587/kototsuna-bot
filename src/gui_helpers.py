@@ -112,6 +112,7 @@ def create_participant_row(
     index: int,
     on_edit: Optional[Callable[[str], None]] = None,
     on_delete: Optional[Callable[[str], None]] = None,
+    on_played: Optional[Callable[[str], None]] = None,
     on_drag_start: Optional[Callable] = None,
     on_drag_motion: Optional[Callable] = None,
     on_drag_end: Optional[Callable] = None,
@@ -126,6 +127,7 @@ def create_participant_row(
         index: 表示順インデックス
         on_edit: 編集コールバック
         on_delete: 削除コールバック
+        on_played: 参加済みマークコールバック
         on_drag_start/motion/end: ドラッグ&ドロップ用
         on_hover: ホバー時コールバック
 
@@ -156,10 +158,22 @@ def create_participant_row(
     if on_hover:
         entry_frame.bind("<Enter>", lambda e, idx=index: on_hover(e, idx))
 
-    # ボタン（編集・削除がある場合のみ）
-    if on_edit or on_delete:
+    # ボタン（編集・削除・参加済みがある場合のみ）
+    if on_edit or on_delete or on_played:
         button_container = ctk.CTkFrame(entry_frame, fg_color="transparent")
         button_container.grid(row=0, column=1, sticky="e")
+
+        if on_played:
+            ctk.CTkButton(
+                button_container,
+                text="✅",
+                command=lambda u=username: on_played(u),
+                width=35,
+                height=26,
+                font=("Arial", 14),
+                fg_color="#10B981",
+                hover_color="#059669",
+            ).pack(side="left", padx=1)
 
         if on_edit:
             ctk.CTkButton(
