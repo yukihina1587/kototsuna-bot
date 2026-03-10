@@ -425,12 +425,89 @@ def load_config():
         logger.error(f"Failed to load config: {e}", exc_info=True)
         return DEFAULT_CONFIG.copy()
 
+def _rotate_backups() -> None:
+    """config.json の自動バックアップを最大3世代ローテーションする。
+
+    世代: config.json.bak → config.json.bak.2 → config.json.bak.3
+    """
+    import shutil
+    bak1 = CONFIG_FILE + ".bak"
+    bak2 = CONFIG_FILE + ".bak.2"
+    bak3 = CONFIG_FILE + ".bak.3"
+    try:
+        if os.path.exists(bak2):
+            shutil.copy2(bak2, bak3)
+        if os.path.exists(bak1):
+            shutil.copy2(bak1, bak2)
+        if os.path.exists(CONFIG_FILE):
+            shutil.copy2(CONFIG_FILE, bak1)
+    except Exception as e:
+        logger.warning(f"Failed to rotate config backups: {e}")
+
+
 def save_config(config_data):
+    _rotate_backups()
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config_data, f, indent=4, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Failed to save config: {e}", exc_info=True)
+
+
+def backup_config(dst_path: str) -> bool:
+    """現在の設定ファイルを指定パスにバックアップする。
+
+    Args:
+        dst_path: 保存先ファイルパス。
+
+    Returns:
+        成功した場合 True。
+    """
+    import shutil
+    try:
+        if os.path.exists(CONFIG_FILE):
+            shutil.copy2(CONFIG_FILE, dst_path)
+        else:
+            with open(dst_path, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_CONFIG.copy(), f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to backup config: {e}", exc_info=True)
+        return False
+
+
+def restore_config(src_path: str) -> bool:
+    """バックアップファイルから設定を復元する。
+
+    src_path の JSON を読み込んで validate_config() を通し、
+    CONFIG_FILE に保存する。
+
+    Args:
+        src_path: 復元元ファイルパス。
+
+    Returns:
+        成功した場合 True。
+    """
+    try:
+        with open(src_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        validated, _ = validate_config(raw)
+        save_config(validated)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to restore config: {e}", exc_info=True)
+        return False
+
+
+def reset_config() -> dict:
+    """設定をデフォルト値にリセットして保存する。
+
+    Returns:
+        リセット後の設定辞書。
+    """
+    defaults = DEFAULT_CONFIG.copy()
+    save_config(defaults)
+    return defaults
 
 def validate_deepl_api_key(key: str) -> tuple[bool, str]:
     """

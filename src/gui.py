@@ -30,7 +30,7 @@ except Exception as e:
 
 from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info, get_effective_client_id, APP_DEFAULT_CLIENT_ID
 from src.bot import TranslateBot
-from src.config import load_config, save_config, validate_deepl_api_key, validate_twitch_client_id
+from src.config import load_config, save_config, backup_config, restore_config, reset_config, validate_deepl_api_key, validate_twitch_client_id
 from src.commands_store import CommandStore, CustomCommand
 from src.voice_listener import VoiceTranslator
 from src.overlay_server import update_translation, update_subtitle, set_subtitle_enabled, set_subtitle_html_path, run_server_thread
@@ -3519,6 +3519,115 @@ class KototsunaApp:
                       command=lambda: self.play_event_sound("follow")).grid(row=0, column=3)
 
         ctk.CTkLabel(frm_set, text="※ 設定は自動保存されます。", text_color="gray").grid(row=event_row+6, column=0, columnspan=3, pady=(20, 0))
+
+        # ─── 設定バックアップ / リストア / リセット ───
+        ctk.CTkLabel(frm_set, text="設定ファイル管理", font=ctk.CTkFont(weight="bold")).grid(
+            row=event_row+7, column=0, columnspan=3, pady=(20, 6), sticky="w"
+        )
+        backup_btns_frame = ctk.CTkFrame(frm_set, fg_color="transparent")
+        backup_btns_frame.grid(row=event_row+8, column=0, columnspan=3, sticky="ew")
+        backup_btns_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        ctk.CTkButton(
+            backup_btns_frame, text="📤 設定をエクスポート",
+            command=self.export_config
+        ).grid(row=0, column=0, padx=(0, 4), sticky="ew")
+        ctk.CTkButton(
+            backup_btns_frame, text="📥 設定をインポート",
+            command=self.import_config
+        ).grid(row=0, column=1, padx=4, sticky="ew")
+        ctk.CTkButton(
+            backup_btns_frame, text="🔄 デフォルトにリセット",
+            fg_color="#8B1A1A", hover_color="#B22222",
+            command=self.reset_config_to_default
+        ).grid(row=0, column=2, padx=(4, 0), sticky="ew")
+
+    def _apply_config_to_gui(self):
+        """self.config の値を GUI の各変数に反映する（import / reset 後に呼ぶ）"""
+        cfg = self.config
+        try:
+            self.client_id.set(cfg.get("twitch_client_id", ""))
+            self.deepl_key.set(cfg.get("deepl_api_key", ""))
+            self.voicevox_path.set(cfg.get("voicevox_engine_path", ""))
+            self.voicevox_auto_start.set(cfg.get("voicevox_auto_start", True))
+            self.voicevox_speaker_id.set(cfg.get("voicevox_speaker_id", 14))
+            self.voicevox_speaker_name.set(cfg.get("voicevox_speaker_name", "冥鳴ひまり / ノーマル"))
+            self.channel.set(cfg.get("channel_name", ""))
+            self.channel_mode.set(cfg.get("channel_mode", "manual"))
+            self.lang_mode.set(cfg.get("translate_mode", "自動"))
+            self.translation_engine.set(cfg.get("translation_engine", "deepl"))
+            self.bits_sound_path.set(cfg.get("bits_sound_path", ""))
+            self.bits_volume_var.set(cfg.get("bits_sound_volume", 80))
+            self.sub_sound_path.set(cfg.get("subscription_sound_path", ""))
+            self.sub_volume_var.set(cfg.get("subscription_sound_volume", 80))
+            self.gift_sub_sound_path.set(cfg.get("gift_sub_sound_path", ""))
+            self.gift_sub_volume_var.set(cfg.get("gift_sub_sound_volume", 80))
+            self.follow_sound_path.set(cfg.get("follow_sound_path", ""))
+            self.follow_volume_var.set(cfg.get("follow_sound_volume", 80))
+            self.comment_bg.set(cfg.get("comment_log_bg", "#0E1728"))
+            self.comment_fg.set(cfg.get("comment_log_fg", "#E8F0FF"))
+            self.comment_font.set(cfg.get("comment_log_font", "Consolas 11"))
+            self.comment_bubble_style.set(cfg.get("comment_bubble_style", "classic"))
+            self.chat_html_path.set(self._default_chat_html_path(cfg.get("chat_html_path", "")))
+            self.chat_html_newest_first.set(cfg.get("chat_html_newest_first", False))
+            self.tts_volume_var.set(cfg.get("tts_volume", 80))
+            self.tts_speed_var.set(cfg.get("tts_speed", 1.0))
+            self.tts_include_name_var.set(cfg.get("tts_include_name", False))
+            self.auto_update_check.set(cfg.get("auto_update_check", True))
+            self.include_prerelease.set(cfg.get("include_prerelease", False))
+        except Exception as e:
+            logger.error(f"Failed to apply config to GUI: {e}", exc_info=True)
+
+    def export_config(self):
+        """現在の設定を JSON ファイルとしてエクスポートする"""
+        from datetime import datetime
+        dst = filedialog.asksaveasfilename(
+            parent=self.master,
+            title="設定をエクスポート",
+            defaultextension=".json",
+            filetypes=[("JSON ファイル", "*.json"), ("すべてのファイル", "*.*")],
+            initialfile=f"kototsuna_config_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        if not dst:
+            return
+        if backup_config(dst):
+            self.log_message(f"✅ 設定をエクスポートしました: {dst}")
+        else:
+            messagebox.showerror("エラー", "設定のエクスポートに失敗しました", parent=self.master)
+
+    def import_config(self):
+        """JSON ファイルから設定をインポートして適用する"""
+        src = filedialog.askopenfilename(
+            parent=self.master,
+            title="設定をインポート",
+            filetypes=[("JSON ファイル", "*.json"), ("すべてのファイル", "*.*")]
+        )
+        if not src:
+            return
+        if not messagebox.askyesno(
+            "確認",
+            "インポートすると現在の設定が上書きされます。\n続けますか？",
+            parent=self.master
+        ):
+            return
+        if restore_config(src):
+            self.config = load_config()
+            self._apply_config_to_gui()
+            self.log_message(f"✅ 設定をインポートしました: {src}")
+        else:
+            messagebox.showerror("エラー", "設定のインポートに失敗しました。\nファイルが有効な JSON か確認してください。", parent=self.master)
+
+    def reset_config_to_default(self):
+        """設定をデフォルト値にリセットする"""
+        if not messagebox.askyesno(
+            "確認",
+            "すべての設定をデフォルト値にリセットします。\nこの操作は取り消せません。続けますか？",
+            parent=self.master
+        ):
+            return
+        self.config = reset_config()
+        self._apply_config_to_gui()
+        self.log_message("🔄 設定をデフォルト値にリセットしました")
 
     def diagnose_tts(self):
         """TTS（読み上げ）システムの診断を実行"""
