@@ -72,6 +72,7 @@ DEFAULT_CONFIG = {
     "chat_html_output": False,
     "chat_html_path": "",
     "chat_html_newest_first": False,  # True: 上が新しい, False: 下が新しい
+    "chat_html_max_entries": 200,     # HTML に表示するコメントの最大件数 (1-5000)
     "chat_html_window_geometry": "350x900+50+50",  # HTMLウィンドウのサイズと位置
     # コマンド機能
     "commands_enabled": True,
@@ -243,6 +244,14 @@ def validate_config(config_data):
         validated["stt_vad_threshold"] = max(0.01, min(1.0, vad_threshold))
     except (TypeError, ValueError):
         validated["stt_vad_threshold"] = 0.3
+        changed = True
+
+    # chat_html_max_entries (int, 1-5000)
+    try:
+        max_entries = int(validated.get("chat_html_max_entries", 200))
+        validated["chat_html_max_entries"] = max(1, min(5000, max_entries))
+    except (TypeError, ValueError):
+        validated["chat_html_max_entries"] = 200
         changed = True
 
     # リスト系

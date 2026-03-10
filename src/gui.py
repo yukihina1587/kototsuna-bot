@@ -187,7 +187,7 @@ class KototsunaApp:
 
         # ログ履歴（時系列で記録、上限付きdeque）
         self._log_history_limit = self.config.get("chat_log_history_limit", 1000)
-        self._chat_history_limit = 200
+        self._chat_history_limit = self.config.get("chat_html_max_entries", 200)
         self.log_history = deque(maxlen=self._log_history_limit)
         self.chat_history = deque(maxlen=self._chat_history_limit)
 
@@ -230,6 +230,7 @@ class KototsunaApp:
         # チャットHTML出力
         self.chat_html_path = tk.StringVar(value=self._default_chat_html_path(self.config.get("chat_html_path", "")))
         self.chat_html_newest_first = tk.BooleanVar(value=self.config.get("chat_html_newest_first", False))
+        self.chat_html_max_entries_var = tk.IntVar(value=self.config.get("chat_html_max_entries", 200))
         # アップデート設定
         self.auto_update_check = tk.BooleanVar(value=self.config.get("auto_update_check", True))
         self.include_prerelease = tk.BooleanVar(value=self.config.get("include_prerelease", False))
@@ -3470,6 +3471,13 @@ class KototsunaApp:
         ctk.CTkLabel(frm_set, text="コメント表示順序", font=("Arial", 12)).grid(row=row_base+7, column=0, sticky="w", pady=(8, 2))
         ctk.CTkSwitch(frm_set, text="上が新しいコメント（オフ＝下が新しい）", variable=self.chat_html_newest_first, font=("Arial", 11)).grid(row=row_base+7, column=1, sticky="w", pady=(8, 2))
 
+        # HTML出力の最大表示件数
+        ctk.CTkLabel(frm_set, text="最大表示件数", font=("Arial", 12)).grid(row=row_base+8, column=0, sticky="w", pady=(4, 2))
+        max_entries_frame = ctk.CTkFrame(frm_set, fg_color="transparent")
+        max_entries_frame.grid(row=row_base+8, column=1, sticky="w", pady=(4, 2))
+        ctk.CTkEntry(max_entries_frame, textvariable=self.chat_html_max_entries_var, width=80).pack(side="left")
+        ctk.CTkLabel(max_entries_frame, text="件（1〜5000）", font=("Arial", 11), text_color="gray").pack(side="left", padx=(6, 0))
+
         # イベント効果音
         event_row = 27
         ctk.CTkLabel(frm_set, text="イベント効果音 (TTS前に再生):", font=("Arial", 14, "bold")).grid(row=event_row, column=0, sticky="w", pady=(16, 0))
@@ -3570,6 +3578,7 @@ class KototsunaApp:
             self.comment_bubble_style.set(cfg.get("comment_bubble_style", "classic"))
             self.chat_html_path.set(self._default_chat_html_path(cfg.get("chat_html_path", "")))
             self.chat_html_newest_first.set(cfg.get("chat_html_newest_first", False))
+            self.chat_html_max_entries_var.set(cfg.get("chat_html_max_entries", 200))
             self.tts_volume_var.set(cfg.get("tts_volume", 80))
             self.tts_speed_var.set(cfg.get("tts_speed", 1.0))
             self.tts_include_name_var.set(cfg.get("tts_include_name", False))
@@ -3962,6 +3971,7 @@ class KototsunaApp:
             self.comment_bubble_style,
             self.chat_html_path,
             self.chat_html_newest_first,
+            self.chat_html_max_entries_var,
             self.tts_volume_var,
             self.tts_speed_var,
             self.tts_include_name_var,
@@ -4002,6 +4012,12 @@ class KototsunaApp:
             self.config["comment_bubble_style"] = self.comment_bubble_style.get()
             self.config["chat_html_path"] = self.chat_html_path.get().strip()
             self.config["chat_html_newest_first"] = self.chat_html_newest_first.get()
+            new_max = max(1, min(5000, self.chat_html_max_entries_var.get()))
+            self.config["chat_html_max_entries"] = new_max
+            if new_max != self._chat_history_limit:
+                self._chat_history_limit = new_max
+                old_items = list(self.chat_history)[-new_max:]
+                self.chat_history = deque(old_items, maxlen=new_max)
             self.config["tts_volume"] = int(self.tts_volume_var.get())
             self.config["tts_speed"] = round(self.tts_speed_var.get(), 2)
             self.config["tts_include_name"] = self.tts_include_name_var.get()
@@ -4399,7 +4415,8 @@ class KototsunaApp:
             logger.error(f"Failed to load custom.css: {e}")
 
         # コメントの表示順序を設定に応じて変更
-        chat_list = list(self.chat_history)
+        max_entries = self.config.get("chat_html_max_entries", 200)
+        chat_list = list(self.chat_history)[-max_entries:]
         newest_first = self.chat_html_newest_first.get()
         if newest_first:
             chat_list.reverse()  # 上が新しい（逆順）

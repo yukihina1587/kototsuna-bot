@@ -188,3 +188,32 @@ def test_save_config_rotates_backups(tmp_path, monkeypatch):
     bak2 = tmp_path / "config.json.bak.2"
     assert bak2.exists()
     assert json.loads(bak2.read_text(encoding="utf-8"))["translate_mode"] == "自動"
+
+
+# --- chat_html_max_entries tests ---
+
+
+def test_chat_html_max_entries_default():
+    validated, _ = validate_config({})
+    assert validated["chat_html_max_entries"] == 200
+
+
+def test_chat_html_max_entries_clamped_upper():
+    validated, _ = validate_config({"chat_html_max_entries": 9999})
+    assert validated["chat_html_max_entries"] == 5000
+
+
+def test_chat_html_max_entries_clamped_lower():
+    validated, _ = validate_config({"chat_html_max_entries": 0})
+    assert validated["chat_html_max_entries"] == 1
+
+
+def test_chat_html_max_entries_valid():
+    validated, _ = validate_config({"chat_html_max_entries": 500})
+    assert validated["chat_html_max_entries"] == 500
+
+
+def test_chat_html_max_entries_invalid_type():
+    validated, changed = validate_config({"chat_html_max_entries": "many"})
+    assert validated["chat_html_max_entries"] == 200
+    assert changed is True
