@@ -288,3 +288,115 @@ class TestBotCommands:
         assert consumed is True
         sent = message.channel.send.await_args.args[0]
         assert "!dict add" in sent and "!dict list" in sent and "!dict remove" in sent
+
+
+class TestParticipantCommands:
+    """参加者管理コマンドのテスト"""
+
+    def _make_tracker(self):
+        from src.participant_tracker import ParticipantTracker
+        t = ParticipantTracker()
+        t.enable()
+        return t
+
+    def test_leave_removes_self_from_list(self):
+        tracker = self._make_tracker()
+        tracker.add_participant("Alice", "参加", "参加")
+        bot = _make_bot()
+        bot.tracker = tracker
+        message = _make_message("!leave", _make_author(name="alice", display_name="Alice"))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        assert "Alice" not in tracker.get_participant_names()
+        sent = message.channel.send.await_args.args[0]
+        assert "退出" in sent
+
+    def test_leave_when_not_in_list(self):
+        tracker = self._make_tracker()
+        bot = _make_bot()
+        bot.tracker = tracker
+        message = _make_message("!leave", _make_author(name="nobody", display_name="Nobody"))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        sent = message.channel.send.await_args.args[0]
+        assert "登録されていません" in sent
+
+    def test_remove_requires_mod(self):
+        bot = _make_bot()
+        bot.tracker = self._make_tracker()
+        message = _make_message("!remove alice", _make_author(is_mod=False))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        sent = message.channel.send.await_args.args[0]
+        assert "モデレーター" in sent
+
+    def test_remove_removes_user(self):
+        tracker = self._make_tracker()
+        tracker.add_participant("alice", "参加", "参加")
+        bot = _make_bot()
+        bot.tracker = tracker
+        message = _make_message("!remove alice", _make_author(is_mod=True))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        assert "alice" not in tracker.get_participant_names()
+        sent = message.channel.send.await_args.args[0]
+        assert "削除" in sent
+
+    def test_clearall_requires_mod(self):
+        bot = _make_bot()
+        bot.tracker = self._make_tracker()
+        message = _make_message("!clearall", _make_author(is_mod=False))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        sent = message.channel.send.await_args.args[0]
+        assert "モデレーター" in sent
+
+    def test_clearall_clears_list(self):
+        tracker = self._make_tracker()
+        tracker.add_participant("alice", "参加", "参加")
+        tracker.add_participant("bob", "参加", "参加")
+        bot = _make_bot()
+        bot.tracker = tracker
+        message = _make_message("!clearall", _make_author(is_mod=True))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        assert tracker.get_count() == 0
+        sent = message.channel.send.await_args.args[0]
+        assert "クリア" in sent
+
+    def test_nextround_moves_to_participated(self):
+        tracker = self._make_tracker()
+        tracker.add_participant("alice", "参加", "参加")
+        tracker.add_participant("bob", "参加", "参加")
+        bot = _make_bot()
+        bot.tracker = tracker
+        message = _make_message("!nextround", _make_author(is_mod=True))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        assert tracker.get_count() == 0
+        assert tracker.get_participated_count() == 2
+        # alice と bob は再参加できない
+        assert not tracker.add_participant("alice", "参加", "参加")
+
+    def test_roundreset_allows_rejoin(self):
+        tracker = self._make_tracker()
+        tracker.add_participant("alice", "参加", "参加")
+        tracker.mark_all_as_participated()
+        assert not tracker.add_participant("alice", "参加", "参加")
+        bot = _make_bot()
+        bot.tracker = tracker
+        message = _make_message("!roundreset", _make_author(is_mod=True))
+        consumed = asyncio.run(bot._handle_command(message))
+        assert consumed is True
+        assert tracker.get_participated_count() == 0
+        # リセット後は再参加可能
+        assert tracker.add_participant("alice", "参加", "参加")
+
+    def test_help_includes_participant_commands(self):
+        bot = _make_bot()
+        message = _make_message("!help", _make_author())
+        asyncio.run(bot._handle_command(message))
+        sent = message.channel.send.await_args.args[0]
+        assert "!leave" in sent
+        assert "!nextround" in sent
+        assert "!roundreset" in sent

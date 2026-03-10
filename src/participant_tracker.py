@@ -26,6 +26,8 @@ class ParticipantTracker:
         self.participants: List[Dict[str, str]] = []
         self.max_participants = max_participants or self.DEFAULT_MAX_PARTICIPANTS
         self.enabled = False
+        # ラウンド内で既に試合に参加済みのユーザー名セット
+        self.participated: set = set()
 
     def set_keywords(self, keywords: List[str]):
         """
@@ -97,6 +99,11 @@ class ParticipantTracker:
             logger.debug(f"Already registered: {username}")
             return False
 
+        # 参加済み（今ラウンドで試合に出た）かチェック
+        if username.lower() in self.participated:
+            logger.debug(f"Already participated this round: {username}")
+            return False
+
         # 上限チェック
         if len(self.participants) >= self.max_participants:
             logger.warning(f"参加者数上限({self.max_participants})に達しています: {username}")
@@ -163,6 +170,59 @@ class ParticipantTracker:
         count = len(self.participants)
         self.participants.clear()
         logger.info(f"参加者リストをクリア ({count}人)")
+
+    def mark_as_participated(self, username: str) -> bool:
+        """
+        指定ユーザーを参加済みとしてマーク（待機リストから除去 → participated に追加）
+
+        Args:
+            username: ユーザー名
+
+        Returns:
+            成功した場合True（待機リストに存在した場合）
+        """
+        found = self.remove_participant(username)
+        self.participated.add(username.lower())
+        logger.info(f"参加済みマーク: {username}")
+        return found
+
+    def mark_all_as_participated(self):
+        """
+        現在の待機参加者を全員参加済みとしてマークし、待機リストをクリアする。
+        （ラウンド開始時に呼び出す: 今の待機者を全員「出場済み」へ移動）
+        """
+        for p in self.participants:
+            self.participated.add(p['username'].lower())
+        count = len(self.participants)
+        self.participants.clear()
+        logger.info(f"全員参加済みマーク＆待機リストクリア ({count}人)")
+
+    def reset_participated(self):
+        """
+        参加済みセットをリセットする。
+        全員が1周した後など、次のラウンドで再参加を許可したい場合に呼び出す。
+        """
+        count = len(self.participated)
+        self.participated.clear()
+        logger.info(f"参加済みセットをリセット ({count}人分)")
+
+    def get_participated_names(self) -> List[str]:
+        """
+        参加済みユーザー名のリストを取得
+
+        Returns:
+            参加済みユーザー名のリスト（小文字）
+        """
+        return sorted(self.participated)
+
+    def get_participated_count(self) -> int:
+        """
+        参加済みユーザー数を取得
+
+        Returns:
+            参加済みユーザー数
+        """
+        return len(self.participated)
 
     def move_participant(self, from_index: int, to_index: int) -> bool:
         """

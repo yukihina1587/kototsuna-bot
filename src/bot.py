@@ -608,6 +608,11 @@ class TranslateBot(commands.Bot):
             "voice": self._cmd_voice,
             "myvoice": self._cmd_myvoice,
             "visits": self._cmd_visits,
+            "remove": self._cmd_remove,
+            "clearall": self._cmd_clearall,
+            "nextround": self._cmd_nextround,
+            "roundreset": self._cmd_roundreset,
+            "leave": self._cmd_leave,
         }
 
         handler = builtin_handlers.get(cmd_name)
@@ -623,7 +628,7 @@ class TranslateBot(commands.Bot):
 
     async def _cmd_help(self, message, args: str) -> None:
         """!help — 使用可能なコマンド一覧を表示"""
-        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!dict", "!voice", "!myvoice", "!visits"]
+        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!dict", "!voice", "!myvoice", "!visits", "!leave", "!remove", "!clearall", "!nextround", "!roundreset"]
         custom_cmds = [
             f"!{c.name}" for c in self._command_store.list_all() if c.enabled
         ]
@@ -993,6 +998,76 @@ class TranslateBot(commands.Bot):
         """コマンド機能の有効/無効を切り替える"""
         self._commands_enabled = enabled
         logger.info("コマンド機能: %s", "有効" if enabled else "無効")
+
+    # ------------------------------------------------------------------
+    # 参加者管理コマンド
+    # ------------------------------------------------------------------
+
+    async def _cmd_remove(self, message, args: str) -> None:
+        """!remove <username> — 参加者を待機リストから削除（モデレーター限定）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        username = args.strip().lstrip("@")
+        if not username:
+            await message.channel.send("使い方: !remove <ユーザー名>" + '\u200B')
+            return
+        success = self.tracker.remove_participant(username)
+        if success:
+            await message.channel.send(f"@{username} を参加者リストから削除しました" + '\u200B')
+            if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+                self.gui.refresh_participant_list()
+        else:
+            await message.channel.send(f"@{username} は参加者リストに見つかりません" + '\u200B')
+
+    async def _cmd_clearall(self, message, args: str) -> None:
+        """!clearall — 待機参加者リストを全件クリア（モデレーター限定）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        count = self.tracker.get_count()
+        self.tracker.clear()
+        await message.channel.send(f"参加者リストをクリアしました（{count}人）" + '\u200B')
+        if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+            self.gui.refresh_participant_list()
+
+    async def _cmd_nextround(self, message, args: str) -> None:
+        """!nextround — 現在の待機者を参加済みに移動しリストをクリア（モデレーター限定）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        count = self.tracker.get_count()
+        self.tracker.mark_all_as_participated()
+        participated_total = self.tracker.get_participated_count()
+        await message.channel.send(
+            f"ラウンド開始: {count}人を参加済みに移動しました（累計参加済み: {participated_total}人）" + '\u200B'
+        )
+        if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+            self.gui.refresh_participant_list()
+
+    async def _cmd_roundreset(self, message, args: str) -> None:
+        """!roundreset — 参加済みセットをリセットし全員再参加可能にする（モデレーター限定）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        count = self.tracker.get_participated_count()
+        self.tracker.reset_participated()
+        await message.channel.send(
+            f"ラウンドリセット: {count}人が再参加可能になりました" + '\u200B'
+        )
+        if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+            self.gui.refresh_participant_list()
+
+    async def _cmd_leave(self, message, args: str) -> None:
+        """!leave — 自分自身を待機リストから削除（全ユーザー）"""
+        participant_name = getattr(message.author, "display_name", None) or message.author.name
+        success = self.tracker.remove_participant(participant_name)
+        if success:
+            await message.channel.send(f"@{participant_name} 参加リストから退出しました" + '\u200B')
+            if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+                self.gui.refresh_participant_list()
+        else:
+            await message.channel.send(f"@{participant_name} 参加リストに登録されていません" + '\u200B')
 
     async def event_raw_usernotice(self, channel, tags: dict):
         """サブスクやギフトなどのUSERNOTICEイベントを処理（twitchio 2.x準拠）"""

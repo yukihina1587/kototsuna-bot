@@ -6215,7 +6215,7 @@ window.onload = function() {{
         self.participant_count_label.pack(pady=(10, 5))
 
         # スクロール可能な参加者リスト
-        self.participant_scroll_frame = ctk.CTkScrollableFrame(right_frame, label_text="参加者リスト（ドラッグで順序変更）")
+        self.participant_scroll_frame = ctk.CTkScrollableFrame(right_frame, label_text="参加者リスト（ドラッグで順序変更）", height=180)
         self.participant_scroll_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         # 差分更新マネージャー（参加者タブ用）
@@ -6236,6 +6236,18 @@ window.onload = function() {{
 
         # ドラッグアンドドロップ用の変数
         self.drag_data = {"item": None, "index": None}
+
+        # === 参加済み一覧 ===
+        self.participated_count_label = ctk.CTkLabel(
+            right_frame,
+            text="参加済み: 0人",
+            font=("Arial", 13, "bold"),
+            text_color="#F59E0B"
+        )
+        self.participated_count_label.pack(pady=(6, 2))
+
+        self.participated_scroll_frame = ctk.CTkScrollableFrame(right_frame, label_text="参加済み一覧（このラウンドで出場済み）", height=100)
+        self.participated_scroll_frame.pack(fill="x", padx=10, pady=(0, 5))
 
         # ボタンフレーム（右側の下部）
         button_frame = ctk.CTkFrame(right_frame)
@@ -6275,6 +6287,24 @@ window.onload = function() {{
             width=90,
             fg_color="#EF4444",
             hover_color="#DC2626"
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            button_frame,
+            text="⏩ 次ラウンド",
+            command=self.next_round_participants,
+            width=110,
+            fg_color="#7C3AED",
+            hover_color="#6D28D9"
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            button_frame,
+            text="🔓 ラウンドリセット",
+            command=self.reset_participated,
+            width=140,
+            fg_color="#D97706",
+            hover_color="#B45309"
         ).pack(side="left", padx=2)
 
         # 自動送信用のタイマー変数
@@ -6678,6 +6708,30 @@ window.onload = function() {{
                     on_delete=self.remove_participant,
                 )
 
+        # 参加済み一覧を更新
+        if hasattr(self, 'participated_count_label'):
+            p_count = self.tracker.get_participated_count()
+            self.participated_count_label.configure(text=f"参加済み: {p_count}人")
+        if hasattr(self, 'participated_scroll_frame'):
+            for widget in self.participated_scroll_frame.winfo_children():
+                widget.destroy()
+            names = self.tracker.get_participated_names()
+            if names:
+                for name in names:
+                    ctk.CTkLabel(
+                        self.participated_scroll_frame,
+                        text=f"✅ {name}",
+                        font=("Arial", 12),
+                        anchor="w"
+                    ).pack(fill="x", padx=6, pady=1)
+            else:
+                ctk.CTkLabel(
+                    self.participated_scroll_frame,
+                    text="（参加済みはいません）",
+                    font=("Arial", 12),
+                    text_color="gray"
+                ).pack(fill="x", padx=6, pady=4)
+
     def remove_participant(self, username):
         """参加者を削除"""
         success = self.tracker.remove_participant(username)
@@ -6836,6 +6890,36 @@ window.onload = function() {{
         if result:
             self.tracker.clear()
             self.log_message("参加者リストをクリアしました")
+            self.refresh_participant_list()
+
+    def next_round_participants(self):
+        """現在の待機参加者を全員参加済みに移動し次ラウンドの待機を開始"""
+        count = self.tracker.get_count()
+        if count == 0:
+            messagebox.showinfo("情報", "待機中の参加者はいません")
+            return
+        result = messagebox.askyesno(
+            "次ラウンド開始",
+            f"待機中の{count}人を参加済みに移動し、待機リストをクリアしますか？\n（参加済みセットはリセットされません）"
+        )
+        if result:
+            self.tracker.mark_all_as_participated()
+            self.log_message(f"⏩ 次ラウンド: {count}人を参加済みに移動しました")
+            self.refresh_participant_list()
+
+    def reset_participated(self):
+        """参加済みセットをリセット（全員が再参加可能になる）"""
+        count = self.tracker.get_participated_count()
+        if count == 0:
+            messagebox.showinfo("情報", "参加済みユーザーはいません")
+            return
+        result = messagebox.askyesno(
+            "ラウンドリセット",
+            f"参加済み{count}人をリセットしますか？\nリセット後は全員が再度参加登録できるようになります。"
+        )
+        if result:
+            self.tracker.reset_participated()
+            self.log_message(f"🔓 ラウンドリセット: {count}人が再参加可能になりました")
             self.refresh_participant_list()
 
     def toggle_customize_mode(self):
