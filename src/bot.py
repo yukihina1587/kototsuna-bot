@@ -11,6 +11,7 @@ from src.config import load_config
 from src.commands import PermissionLevel, CooldownManager, check_permission, substitute_variables
 from src.commands_store import CommandStore
 from src.emote_provider import EmoteProvider
+from src.tts_dictionary import get_dictionary
 from src.viewer_store import get_viewer_store
 from src.plugin_manager import get_plugin_manager
 
@@ -603,6 +604,7 @@ class TranslateBot(commands.Bot):
             "translate": self._cmd_translate,
             "lang": self._cmd_lang,
             "tts": self._cmd_tts,
+            "dict": self._cmd_dict,
             "voice": self._cmd_voice,
             "myvoice": self._cmd_myvoice,
             "visits": self._cmd_visits,
@@ -621,7 +623,7 @@ class TranslateBot(commands.Bot):
 
     async def _cmd_help(self, message, args: str) -> None:
         """!help — 使用可能なコマンド一覧を表示"""
-        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!voice", "!myvoice", "!visits"]
+        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!dict", "!voice", "!myvoice", "!visits"]
         custom_cmds = [
             f"!{c.name}" for c in self._command_store.list_all() if c.enabled
         ]
@@ -663,6 +665,81 @@ class TranslateBot(commands.Bot):
         else:
             status = "ON" if self.tts_enabled_getter() else "OFF"
             await message.channel.send(f"TTS: {status} (使い方: !tts on/off)" + '\u200B')
+
+    async def _cmd_dict(self, message, args: str) -> None:
+        """!dict — TTS辞書管理コマンド（モデレーター以上）
+
+        !dict add <単語> <読み>  - 単語を追加
+        !dict list               - 登録済み一覧を表示
+        !dict remove <単語>      - 単語を削除
+        """
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が必要です" + '\u200B')
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else ""
+        sub_args = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "add":
+            await self._cmd_dict_add(message, sub_args)
+        elif subcmd == "list":
+            await self._cmd_dict_list(message)
+        elif subcmd == "remove":
+            await self._cmd_dict_remove(message, sub_args)
+        else:
+            await message.channel.send(
+                "使い方: !dict add <単語> <読み> | !dict list | !dict remove <単語>" + '\u200B'
+            )
+
+    async def _cmd_dict_add(self, message, args: str) -> None:
+        """!dict add <単語> <読み> — TTS辞書に単語を追加"""
+        parts = args.strip().split(maxsplit=1)
+        if len(parts) != 2:
+            await message.channel.send("使い方: !dict add <単語> <読み>" + '\u200B')
+            return
+
+        word, reading = parts[0].strip(), parts[1].strip()
+        if not word or not reading:
+            await message.channel.send("使い方: !dict add <単語> <読み>" + '\u200B')
+            return
+
+        dictionary = get_dictionary()
+        success = dictionary.add_word(word, reading)
+        if success:
+            await message.channel.send(f"辞書に追加しました: {word} → {reading}" + '\u200B')
+        else:
+            await message.channel.send("辞書への追加に失敗しました" + '\u200B')
+
+    async def _cmd_dict_list(self, message) -> None:
+        """!dict list — 登録済み辞書エントリを一覧表示"""
+        dictionary = get_dictionary()
+        entries = dictionary.get_all_entries()
+        if not entries:
+            await message.channel.send("辞書は空です" + '\u200B')
+            return
+
+        items = [f"{w}→{r}" for w, r in sorted(entries)]
+        display = ", ".join(items[:10])
+        remaining = len(items) - 10
+        msg = f"辞書({len(items)}件): {display}"
+        if remaining > 0:
+            msg += f" ...他{remaining}件"
+        await message.channel.send(msg + '\u200B')
+
+    async def _cmd_dict_remove(self, message, args: str) -> None:
+        """!dict remove <単語> — TTS辞書から単語を削除"""
+        word = args.strip()
+        if not word:
+            await message.channel.send("使い方: !dict remove <単語>" + '\u200B')
+            return
+
+        dictionary = get_dictionary()
+        success = dictionary.remove_word(word)
+        if success:
+            await message.channel.send(f"辞書から削除しました: {word}" + '\u200B')
+        else:
+            await message.channel.send(f"辞書に「{word}」は登録されていません" + '\u200B')
 
     async def _cmd_voice(self, message, args: str) -> None:
         """!voice — ボイス管理コマンド (MOD+)
@@ -1057,4 +1134,3 @@ class TranslateBot(commands.Bot):
         except Exception as e:
             logger.warning(f"Exception unloading plugins: {e}")
         logger.info("Bot.stop() completed")
-

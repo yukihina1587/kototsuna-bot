@@ -1,6 +1,60 @@
 """TranslateBot クラスのテスト"""
+import asyncio
+import json
 import pytest
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
+
+
+def _make_author(
+    name: str = "testuser",
+    display_name: str = "TestUser",
+    is_mod: bool = False,
+) -> Mock:
+    author = Mock()
+    author.name = name
+    author.display_name = display_name
+    author.is_mod = is_mod
+    author.is_subscriber = False
+    author.badges = {}
+    return author
+
+
+def _make_message(content: str, author: Mock) -> Mock:
+    message = Mock()
+    message.content = content
+    message.author = author
+    message.channel = Mock()
+    message.channel.send = AsyncMock()
+    return message
+
+
+def _make_bot():
+    from src.bot import TranslateBot
+
+    command_store = Mock()
+    command_store.get.return_value = None
+    command_store.list_all.return_value = []
+
+    with patch("src.bot.commands.Bot.__init__", return_value=None), \
+         patch("src.bot.get_tts_instance", return_value=Mock()), \
+         patch("src.bot.get_tracker", return_value=Mock()), \
+         patch("src.bot.CommandStore", return_value=command_store), \
+         patch("src.bot.EmoteProvider", return_value=Mock()), \
+         patch("src.bot.get_viewer_store", return_value=Mock()), \
+         patch("src.bot.get_plugin_manager", return_value=Mock()), \
+         patch("src.bot.load_config", return_value={"commands_enabled": True}):
+        bot = TranslateBot(
+            token="oauth:test-token",
+            channel="testchannel",
+            get_lang_mode=lambda: "自動",
+            gui_ref=Mock(),
+            deepl_api_key="",
+            tts_enabled_getter=lambda: False,
+            tts_include_name_getter=lambda: False,
+            client_id=None,
+        )
+
+    return bot
 
 
 class TestTranslateBot:
@@ -92,3 +146,145 @@ class TestBotEventHandlers:
         # モックでの基本テストのみ
         from src.bot import TranslateBot
         assert TranslateBot is not None
+
+
+class TestBotCommands:
+    """TranslateBot のビルトインコマンドを検証する。"""
+
+    def test_help_includes_dict_command(self):
+        bot = _make_bot()
+        message = _make_message("!help", _make_author())
+
+        consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        sent_message = message.channel.send.await_args.args[0]
+        assert "!dict" in sent_message
+
+    def test_dict_add_command_persists_entry_for_moderator(self, tmp_path):
+        bot = _make_bot()
+        author = _make_author(is_mod=True)
+        message = _make_message("!dict add 漢字 かんじ", author)
+
+        from src.tts_dictionary import TTSDictionary
+
+        dictionary_path = tmp_path / "tts_dictionary.json"
+        dictionary = TTSDictionary(str(dictionary_path))
+
+        with patch("src.bot.get_dictionary", return_value=dictionary):
+            consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        assert dictionary.apply_dictionary("漢字の読み上げ") == "かんじの読み上げ"
+        saved = json.loads(dictionary_path.read_text(encoding="utf-8"))
+        assert saved == {"漢字": "かんじ"}
+        message.channel.send.assert_awaited_once_with(
+            "辞書に追加しました: 漢字 → かんじ" + '\u200B'
+        )
+
+    def test_dict_add_command_requires_moderator(self):
+        bot = _make_bot()
+        message = _make_message("!dict add 漢字 かんじ", _make_author(is_mod=False))
+
+        with patch("src.bot.get_dictionary") as mock_get_dictionary:
+            consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        mock_get_dictionary.assert_not_called()
+        message.channel.send.assert_awaited_once_with(
+            "このコマンドはモデレーター以上が必要です" + '\u200B'
+        )
+
+    def test_dict_add_command_requires_word_and_reading(self):
+        bot = _make_bot()
+        message = _make_message("!dict add 漢字", _make_author(is_mod=True))
+
+        with patch("src.bot.get_dictionary") as mock_get_dictionary:
+            consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        mock_get_dictionary.assert_not_called()
+        message.channel.send.assert_awaited_once_with(
+            "使い方: !dict add <単語> <読み>" + '\u200B'
+        )
+
+    def test_dict_list_command_shows_entries(self, tmp_path):
+        bot = _make_bot()
+        author = _make_author(is_mod=True)
+        message = _make_message("!dict list", author)
+
+        from src.tts_dictionary import TTSDictionary
+
+        dictionary_path = tmp_path / "tts_dictionary.json"
+        dictionary = TTSDictionary(str(dictionary_path))
+        dictionary.add_word("漢字", "かんじ")
+        dictionary.add_word("英語", "えいご")
+
+        with patch("src.bot.get_dictionary", return_value=dictionary):
+            consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        sent = message.channel.send.await_args.args[0]
+        assert "漢字→かんじ" in sent or "英語→えいご" in sent
+
+    def test_dict_list_command_empty(self, tmp_path):
+        bot = _make_bot()
+        author = _make_author(is_mod=True)
+        message = _make_message("!dict list", author)
+
+        from src.tts_dictionary import TTSDictionary
+
+        dictionary_path = tmp_path / "tts_dictionary.json"
+        dictionary = TTSDictionary(str(dictionary_path))
+
+        with patch("src.bot.get_dictionary", return_value=dictionary):
+            consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        message.channel.send.assert_awaited_once_with("辞書は空です" + '\u200B')
+
+    def test_dict_remove_command_removes_entry(self, tmp_path):
+        bot = _make_bot()
+        author = _make_author(is_mod=True)
+        message = _make_message("!dict remove 漢字", author)
+
+        from src.tts_dictionary import TTSDictionary
+
+        dictionary_path = tmp_path / "tts_dictionary.json"
+        dictionary = TTSDictionary(str(dictionary_path))
+        dictionary.add_word("漢字", "かんじ")
+
+        with patch("src.bot.get_dictionary", return_value=dictionary):
+            consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        message.channel.send.assert_awaited_once_with("辞書から削除しました: 漢字" + '\u200B')
+        assert dictionary.apply_dictionary("漢字") == "漢字"
+
+    def test_dict_remove_command_not_found(self, tmp_path):
+        bot = _make_bot()
+        author = _make_author(is_mod=True)
+        message = _make_message("!dict remove 存在しない", author)
+
+        from src.tts_dictionary import TTSDictionary
+
+        dictionary_path = tmp_path / "tts_dictionary.json"
+        dictionary = TTSDictionary(str(dictionary_path))
+
+        with patch("src.bot.get_dictionary", return_value=dictionary):
+            consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        sent = message.channel.send.await_args.args[0]
+        assert "登録されていません" in sent
+
+    def test_dict_unknown_subcommand_shows_usage(self):
+        bot = _make_bot()
+        message = _make_message("!dict foo", _make_author(is_mod=True))
+
+        with patch("src.bot.get_dictionary"):
+            consumed = asyncio.run(bot._handle_command(message))
+
+        assert consumed is True
+        sent = message.channel.send.await_args.args[0]
+        assert "!dict add" in sent and "!dict list" in sent and "!dict remove" in sent
