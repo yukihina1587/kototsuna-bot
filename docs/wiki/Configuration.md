@@ -136,6 +136,68 @@
 
 `classic`, `modern`, `box`, `bubble`, `neon`, `cute`, `minimal`
 
+## チャットHTML出力設定
+
+| キー | 説明 | デフォルト |
+|-----|------|-----------|
+| `chat_html_output` | チャットHTML出力の有効/無効 | `false` |
+| `chat_html_path` | HTML ファイルの出力先パス | `""` |
+| `chat_html_newest_first` | 最新コメントを上に表示するか | `false` |
+| `chat_html_max_entries` | HTML に表示する最大件数（1〜5000） | `200` |
+
+## 字幕オーバーレイ設定
+
+| キー | 説明 | デフォルト |
+|-----|------|-----------|
+| `subtitle_enabled` | 字幕オーバーレイの有効/無効 | `false` |
+| `subtitle_show_original` | 原文を表示するか | `true` |
+| `subtitle_show_translated` | 翻訳文を表示するか | `true` |
+| `subtitle_show_speaker` | 話者名を表示するか | `false` |
+| `subtitle_show_timestamp` | タイムスタンプを表示するか | `false` |
+| `subtitle_font_family` | フォント名 | `"Noto Sans JP"` |
+| `subtitle_font_size` | フォントサイズ（8〜200） | `32` |
+| `subtitle_text_color` | 文字色（16進数） | `"#FFFFFF"` |
+| `subtitle_stroke_color` | 縁取り色（16進数） | `"#000000"` |
+| `subtitle_stroke_width` | 縁取り幅（0〜20） | `3` |
+| `subtitle_display_seconds` | 表示持続時間（秒、1.0〜60.0） | `5.0` |
+| `subtitle_max_lines` | 最大行数（1〜10） | `3` |
+
+## OBS WebSocket 設定
+
+OBS WebSocket 連携の設定です。詳細は [OBS連携ガイド](OBS-Setup) を参照してください。
+
+| キー | 説明 | デフォルト |
+|-----|------|-----------|
+| `obs_enabled` | OBS WebSocket 連携の有効/無効 | `false` |
+| `obs_host` | OBS が動作しているホスト名または IP | `"127.0.0.1"` |
+| `obs_port` | OBS WebSocket のポート番号 | `4455` |
+| `obs_password` | OBS WebSocket のパスワード | `""` |
+| `obs_poll_interval_sec` | ポーリング間隔（秒、0.2〜10.0） | `1.0` |
+| `obs_auto_control_enabled` | 自動制御機能全体の有効/無効 | `true` |
+| `obs_auto_start_bot` | 配信開始時に BOT を自動起動 | `true` |
+| `obs_auto_stop_bot` | 配信終了時に BOT を自動停止 | `true` |
+| `obs_scene_rules` | シーンルールの配列（下記参照） | `[]` |
+
+### シーンルールの形式
+
+```json
+"obs_scene_rules": [
+  {
+    "scene": "休憩",
+    "tts_mute": true,
+    "show_sources": ["BreakCard"],
+    "hide_sources": ["AlertOverlay"]
+  }
+]
+```
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `scene` | string | OBS のシーン名（大文字小文字を区別しない） |
+| `tts_mute` | boolean | `true` で TTS をミュート、`false` で解除 |
+| `show_sources` | string[] | 表示するソース名の配列 |
+| `hide_sources` | string[] | 非表示にするソース名の配列 |
+
 ## アップデート設定
 
 | キー | 説明 | デフォルト |

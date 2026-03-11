@@ -53,6 +53,44 @@ BOT起動時に自動的にHTTPサーバーが起動し、オーバーレイ用�
 | `username` | string | ユーザー名 |
 | `timestamp` | string | タイムスタンプ（ISO 8601） |
 
+#### GET /api/subtitle
+
+現在の字幕データを取得します（音声翻訳の字幕オーバーレイ用）。
+
+**レスポンス例**:
+```json
+{
+  "id": 7,
+  "enabled": true,
+  "original": "Hello, how are you?",
+  "translated": "こんにちは、お元気ですか？",
+  "speaker": "",
+  "timestamp": "14:32:01",
+  "config": {
+    "subtitle_font_size": 32,
+    "subtitle_text_color": "#FFFFFF"
+  }
+}
+```
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `id` | number | 更新ID（変更検知用） |
+| `enabled` | boolean | 字幕機能が有効かどうか |
+| `original` | string | 原文テキスト |
+| `translated` | string | 翻訳テキスト |
+| `speaker` | string | 話者名（設定時のみ） |
+| `timestamp` | string | タイムスタンプ（HH:MM:SS） |
+| `config` | object | 現在の字幕スタイル設定 |
+
+#### GET /subtitle
+
+字幕オーバーレイ用の HTML ページを取得します。OBS ブラウザソースで使用します。
+
+#### GET /chat
+
+チャットログ用の HTML ページを取得します。OBS ブラウザソースで使用します。
+
 #### GET /overlay.html
 
 オーバーレイ用のHTMLページを取得します。
