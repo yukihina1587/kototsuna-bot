@@ -12,11 +12,18 @@
 
 ## ビルド・テスト・開発コマンド
 
-- `pip install -r requirements.txt` 依存関係をインストールします。
+- `uv sync --group dev` 全依存関係（開発ツール含む）をインストールします。
+- `uv sync` 本番依存のみインストールします。
 - `python main.py` GUIアプリを起動します。
 - `pytest` テストを実行します（`pytest.ini` を参照）。
 - `python -m PyInstaller --noconfirm Kototsuna.spec` 配布用ビルドを作成します
   （Windowsは `build.bat` を利用可）。
+
+### 依存関係管理
+- 全パッケージは **`pyproject.toml`** の `dependencies` / `[dependency-groups]` で一元管理します。
+- `requirements.txt` は `uv export --no-dev --no-hashes --format requirements-txt -o requirements.txt` で自動生成します。手動編集禁止。
+- `requirements-ci.txt` はCI用の軽量サブセット（重いSTT/TTS/翻訳パッケージを除外）。
+- 新パッケージの追加は `pyproject.toml` を編集 → `uv lock` → `uv export` の順で行います。
 
 ## コーディングスタイルと命名
 

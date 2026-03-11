@@ -1,5 +1,6 @@
-# Keep versions aligned with production constraints where defined.
--c requirements.txt
+# CI test dependencies (lightweight subset of production deps)
+# Full dependency list and version pins are managed via pyproject.toml + uv.lock
+# To regenerate requirements.txt: uv export --no-dev --no-hashes --format requirements-txt -o requirements.txt
 
 # Test runner
 pytest
@@ -11,6 +12,5 @@ requests
 aiohttp
 obsws-python
 python-dotenv
-websockets
 tenacity
 psutil
