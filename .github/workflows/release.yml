@@ -7,8 +7,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write  # SignPath.io OIDC verification
-  actions: read    # SignPath.io artifact access
 
 jobs:
   build-and-release:
@@ -138,42 +136,10 @@ jobs:
           Write-Host "Installer built: Kototsuna_Setup.exe ($([math]::Round($size, 2)) MB)"
         shell: pwsh
 
-      - name: Upload unsigned installer for signing
-        id: upload-unsigned
-        uses: actions/upload-artifact@v4
-        with:
-          name: unsigned-installer
-          path: installer_output/Kototsuna_Setup.exe
-
-      - name: Sign installer with SignPath.io
-        id: sign
-        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
-          project-slug: 'kototsuna-bot'
-          signing-policy-slug: 'release-signing'
-          github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
-          wait-for-completion: true
-          output-artifact-directory: 'installer_output_signed'
-
-      - name: Resolve installer path (signed or unsigned)
-        id: installer
-        run: |
-          if (Test-Path "installer_output_signed/Kototsuna_Setup.exe") {
-            "path=installer_output_signed/Kototsuna_Setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host "Using signed installer"
-          } else {
-            "path=installer_output/Kototsuna_Setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host "Using unsigned installer (SignPath.io not configured)"
-          }
-        shell: pwsh
-
       - name: Calculate SHA256 hash
         id: hash
         run: |
-          $hash = (Get-FileHash -Path "${{ steps.installer.outputs.path }}" -Algorithm SHA256).Hash
+          $hash = (Get-FileHash -Path "installer_output/Kototsuna_Setup.exe" -Algorithm SHA256).Hash
           Write-Host "SHA256: $hash"
           "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         shell: pwsh
@@ -191,7 +157,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.installer.outputs.path }}
+          files: installer_output/Kototsuna_Setup.exe
           prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           body: |
