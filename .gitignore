@@ -22,7 +22,6 @@ ngrok.exe
 .claude.json
 .mcp.json
 .claude/
-AGENTS.md
 
 # STT models (downloaded at build time)
 models/
