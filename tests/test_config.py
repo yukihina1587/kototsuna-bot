@@ -73,6 +73,24 @@ def test_obs_defaults_present():
     assert validated["obs_auto_control_enabled"] is True
 
 
+def test_window_geometry_default_is_none():
+    validated, _ = validate_config({})
+    assert validated["window_geometry"] is None
+
+
+def test_window_geometry_preserved_when_valid():
+    geom = "1200x800+100+50"
+    validated, changed = validate_config({"window_geometry": geom})
+    assert validated["window_geometry"] == geom
+    assert changed is False
+
+
+def test_window_geometry_cleared_when_invalid():
+    validated, changed = validate_config({"window_geometry": "not-a-geometry!"})
+    assert validated["window_geometry"] is None
+    assert changed is True
+
+
 def test_obs_values_are_normalized():
     validated, changed = validate_config(
         {

@@ -155,23 +155,29 @@ class KototsunaApp:
         # ウィンドウアイコンを設定（build_widgetsの後に移動）
         self._window_icon_path = None
 
-        # 画面サイズに応じて最適なサイズを設定
-        screen_width = self.master.winfo_screenwidth()
-        screen_height = self.master.winfo_screenheight()
-        # 画面の80%のサイズを使用（最大1400x950）
-        window_width = min(int(screen_width * 0.8), 1400)
-        window_height = min(int(screen_height * 0.85), 950)
-        self.master.geometry(f"{window_width}x{window_height}")
-        self.master.minsize(1000, 700)  # 最小ウィンドウサイズを縮小
-        self.master.configure(bg=APP_BG)
-        self.main_split_ratio = 0.75  # 左右分割の目標比率（左75%）
-        self._sash_lock = False  # 再配置ループ防止
-
-        # 設定読み込み
+        # 設定読み込み（ウィンドウジオメトリ復元のため先に実行）
         self.config = load_config()
         translator.set_translation_filters(self.config.get("translation_filters", []))
         translator.set_translation_dictionary(self.config.get("translation_dictionary", []))
         translator.set_translation_engine(self.config.get("translation_engine", "deepl"))
+
+        # ウィンドウサイズ・位置を復元（保存値があれば）、なければデフォルト計算
+        saved_geom = self.config.get("window_geometry")
+        if saved_geom:
+            try:
+                self.master.geometry(saved_geom)
+            except Exception:
+                screen_width = self.master.winfo_screenwidth()
+                screen_height = self.master.winfo_screenheight()
+                self.master.geometry(f"{min(int(screen_width * 0.8), 1400)}x{min(int(screen_height * 0.85), 950)}")
+        else:
+            screen_width = self.master.winfo_screenwidth()
+            screen_height = self.master.winfo_screenheight()
+            self.master.geometry(f"{min(int(screen_width * 0.8), 1400)}x{min(int(screen_height * 0.85), 950)}")
+        self.master.minsize(1000, 700)
+        self.master.configure(bg=APP_BG)
+        self.main_split_ratio = 0.75  # 左右分割の目標比率（左75%）
+        self._sash_lock = False  # 再配置ループ防止
 
         # テーマ適用（widgetビルド前に実行）
         saved_theme = self.config.get("ui_theme", "default")

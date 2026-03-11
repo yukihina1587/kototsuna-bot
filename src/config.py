@@ -124,6 +124,8 @@ DEFAULT_CONFIG = {
     "obs_auto_start_bot": True,
     "obs_auto_stop_bot": True,
     "obs_scene_rules": [],  # [{"scene": "休憩", "tts_mute": True, "show_sources": [], "hide_sources": []}]
+    # ウィンドウジオメトリ（例: "1200x800+100+50"）。None = 初回はデフォルト計算
+    "window_geometry": None,
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
@@ -416,6 +418,13 @@ def validate_config(config_data):
             })
         if normalized_rules != rules:
             validated["obs_scene_rules"] = normalized_rules
+            changed = True
+
+    # window_geometry: "WxH+X+Y" または "WxH" 形式のみ許可、それ以外は None にリセット
+    geom = validated.get("window_geometry")
+    if geom is not None:
+        if not re.match(r'^\d+x\d+([+-]\d+[+-]\d+)?$', str(geom)):
+            validated["window_geometry"] = None
             changed = True
 
     return validated, changed

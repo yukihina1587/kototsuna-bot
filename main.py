@@ -225,6 +225,15 @@ def create_splash_screen():
 
 def on_closing():
     """ウィンドウを閉じる際のクリーンアップ処理"""
+    # ウィンドウサイズ・位置を保存（最小化・最大化状態のときは保存しない）
+    try:
+        if root.state() == "normal":
+            from src.config import load_config, save_config
+            cfg = load_config()
+            cfg["window_geometry"] = root.geometry()
+            save_config(cfg)
+    except Exception as e:
+        logger.error(f"ウィンドウジオメトリの保存中のエラー: {e}", exc_info=True)
     try:
         # アプリケーションのリソースを解放
         app.cleanup_resources()
