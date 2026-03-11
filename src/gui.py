@@ -692,7 +692,7 @@ class KototsunaApp:
             ("commands", "💬  コマンド"),
             ("plugins", "🧩  プラグイン"),
             ("subtitle", "🗒  字幕設定"),
-            ("obs", "🎬  OBS連携"),
+            ("obs", "🎬  OBS連動"),
         ]
         for panel_id, label in nav_items:
             btn = ctk.CTkButton(
@@ -717,7 +717,15 @@ class KototsunaApp:
         bottom.pack(side="bottom", fill="x", padx=6, pady=(0, 6))
 
         ctk.CTkFrame(bottom, height=1, fg_color=BORDER).pack(fill="x", pady=(0, 4))
-        self._add_sidebar_section(bottom, "OBS連携")
+        self._add_sidebar_section(bottom, "OBS ブラウザソース")
+
+        ctk.CTkLabel(
+            bottom,
+            text="チャット翻訳をOBSに表示するURL",
+            font=("Segoe UI", 9),
+            text_color=TEXT_SUBTLE,
+            anchor="w"
+        ).pack(fill="x")
 
         self.obs_url_label = ctk.CTkLabel(
             bottom,
@@ -2342,7 +2350,7 @@ class KototsunaApp:
         # 有効/無効トグル
         enabled_row = ctk.CTkFrame(parent, fg_color="transparent")
         enabled_row.pack(fill="x", pady=(0, 8))
-        ctk.CTkLabel(enabled_row, text="OBS連携を有効にする", font=FONT_BODY).pack(side="left")
+        ctk.CTkLabel(enabled_row, text="OBS WebSocket接続を有効にする", font=FONT_BODY).pack(side="left")
         self._obs_enabled_var = tk.BooleanVar(value=config.get("obs_enabled", False))
         ctk.CTkSwitch(
             enabled_row, text="", variable=self._obs_enabled_var,
