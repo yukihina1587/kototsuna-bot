@@ -5960,6 +5960,35 @@ window.onload = function() {{
         self.filter_list_frame = ctk.CTkScrollableFrame(filter_frame, height=120, fg_color="transparent")
         self.filter_list_frame.pack(fill="both", expand=True, padx=8, pady=(4, 8))
 
+        # --- BOT 自動フィルタリング ---
+        bot_filter_frame = ctk.CTkFrame(frm_dict, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
+        bot_filter_frame.pack(fill="x", pady=(8, 6), padx=2)
+        ctk.CTkLabel(bot_filter_frame, text="BOT 自動フィルタリング", font=("Arial", 13, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
+        ctk.CTkLabel(
+            bot_filter_frame,
+            text="Nightbot・Streamlabs など既知 BOT の TTS 読み上げ・翻訳をスキップします",
+            font=("Arial", 11),
+            wraplength=380,
+        ).pack(anchor="w", padx=10, pady=(0, 4))
+        self.bot_filter_enabled_var = tk.BooleanVar(value=self.config.get("bot_filter_enabled", True))
+        ctk.CTkSwitch(
+            bot_filter_frame,
+            text="既知 BOT を自動フィルタリング",
+            variable=self.bot_filter_enabled_var,
+            command=self._on_bot_filter_toggle,
+        ).pack(anchor="w", padx=10, pady=(0, 6))
+
+        # カスタム BOT リスト
+        ctk.CTkLabel(bot_filter_frame, text="カスタム BOT リスト（追加ユーザー名）", font=("Arial", 11, "bold")).pack(anchor="w", padx=10, pady=(4, 2))
+        add_bot_row = ctk.CTkFrame(bot_filter_frame, fg_color="transparent")
+        add_bot_row.pack(fill="x", padx=10, pady=(0, 4))
+        self.bot_filter_entry = ctk.CTkEntry(add_bot_row, placeholder_text="例: mybot123", width=220)
+        self.bot_filter_entry.pack(side="left", padx=(0, 6))
+        ctk.CTkButton(add_bot_row, text="追加", command=self._add_bot_filter, width=80).pack(side="left")
+        self.bot_filter_list_frame = ctk.CTkScrollableFrame(bot_filter_frame, height=80, fg_color="transparent")
+        self.bot_filter_list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.refresh_bot_filter_list()
+
         # --- 翻訳カスタム辞書 ---
         trans_dict_frame = ctk.CTkFrame(frm_dict, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
         trans_dict_frame.pack(fill="x", pady=(8, 0), padx=2)
@@ -6097,6 +6126,67 @@ window.onload = function() {{
             ctk.CTkLabel(row, text=f, anchor="w").pack(side="left", padx=6)
             ctk.CTkButton(row, text="削除", width=60, fg_color="#ef4444", hover_color="#dc2626",
                           command=lambda w=f: self.remove_translation_filter(w)).pack(side="right", padx=4)
+
+    # --- BOT フィルター ---
+    def _on_bot_filter_toggle(self):
+        """BOT フィルターの有効/無効を切り替える。"""
+        from src.bot_filter import get_bot_filter, reset_bot_filter
+        enabled = self.bot_filter_enabled_var.get()
+        self.config["bot_filter_enabled"] = enabled
+        save_config(self.config)
+        reset_bot_filter()
+        state = "有効" if enabled else "無効"
+        self.log_message(f"BOT 自動フィルタリング: {state}")
+
+    def _add_bot_filter(self):
+        """カスタム BOT リストにエントリを追加する。"""
+        from src.bot_filter import get_bot_filter, reset_bot_filter
+        name = self.bot_filter_entry.get().strip()
+        if not name:
+            messagebox.showwarning("入力エラー", "BOT のユーザー名を入力してください")
+            return
+        custom = list(self.config.get("bot_filter_custom", []))
+        if name.lower() in [b.lower() for b in custom]:
+            messagebox.showinfo("情報", "すでに登録済みです")
+            return
+        custom.append(name.lower())
+        self.config["bot_filter_custom"] = custom
+        save_config(self.config)
+        reset_bot_filter()
+        self.bot_filter_entry.delete(0, "end")
+        self.refresh_bot_filter_list()
+        self.log_message(f"BOT フィルターに追加: {name}")
+
+    def _remove_bot_filter(self, name: str):
+        """カスタム BOT リストからエントリを削除する。"""
+        from src.bot_filter import reset_bot_filter
+        custom = list(self.config.get("bot_filter_custom", []))
+        lower = name.lower()
+        custom = [b for b in custom if b.lower() != lower]
+        self.config["bot_filter_custom"] = custom
+        save_config(self.config)
+        reset_bot_filter()
+        self.refresh_bot_filter_list()
+        self.log_message(f"BOT フィルターから削除: {name}")
+
+    def refresh_bot_filter_list(self):
+        """カスタム BOT リストの表示を更新する。"""
+        if not hasattr(self, "bot_filter_list_frame"):
+            return
+        for widget in self.bot_filter_list_frame.winfo_children():
+            widget.destroy()
+        custom = self.config.get("bot_filter_custom", [])
+        if not custom:
+            ctk.CTkLabel(self.bot_filter_list_frame, text="（カスタム BOT はありません）", text_color="gray").pack(pady=4)
+            return
+        for name in sorted(custom):
+            row = ctk.CTkFrame(self.bot_filter_list_frame, fg_color="transparent")
+            row.pack(fill="x", pady=1, padx=2)
+            ctk.CTkLabel(row, text=name, anchor="w").pack(side="left", padx=6)
+            ctk.CTkButton(
+                row, text="削除", width=60, fg_color="#ef4444", hover_color="#dc2626",
+                command=lambda n=name: self._remove_bot_filter(n),
+            ).pack(side="right", padx=4)
 
     def add_translation_dict_entry(self):
         src = self.translation_dict_src.get().strip()

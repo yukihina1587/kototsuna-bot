@@ -64,6 +64,9 @@ DEFAULT_CONFIG = {
     # 翻訳フィルタとカスタム辞書
     "translation_filters": [],
     "translation_dictionary": [],  # [{ "source": "原文", "target": "置換後" }]
+    # 既知BOTアカウントの自動フィルタリング（Issue #145）
+    "bot_filter_enabled": True,
+    "bot_filter_custom": [],  # ユーザーが追加したBOTアカウント名（小文字）リスト
     # コメント表示/出力設定
     "comment_log_bg": "#0E1728",
     "comment_log_fg": "#E8F0FF",

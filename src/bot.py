@@ -14,6 +14,7 @@ from src.emote_provider import EmoteProvider
 from src.tts_dictionary import get_dictionary
 from src.viewer_store import get_viewer_store
 from src.plugin_manager import get_plugin_manager
+from src.bot_filter import get_bot_filter
 
 
 class EventSubHandler:
@@ -340,6 +341,12 @@ class TranslateBot(commands.Bot):
         # 配信者の手入力（echo=False, 名前一致）は翻訳対象として処理を継続
         if self.nick and message.author.name.lower() == self.nick.lower():
             logger.debug(f"Processing broadcaster's own message: {message.author.name}")
+
+        # === BOT フィルタリング（既知BOTアカウントをスキップ） ===
+        author_name = message.author.name or ""
+        if get_bot_filter().is_bot(author_name):
+            logger.debug(f"BOT フィルター: {author_name} をスキップ")
+            return
 
         # === 視聴回数の記録 ===
         visit_display_name = (
