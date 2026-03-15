@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 844" width="390" height="844">
+  <defs>
+    <linearGradient id="header-grad2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#6366F1"/>
+      <stop offset="100%" style="stop-color:#8B5CF6"/>
+    </linearGradient>
+    <filter id="card-shadow2" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#00000015"/>
+    </filter>
+  </defs>
+
+  <!-- Phone Frame -->
+  <rect x="0" y="0" width="390" height="844" rx="40" fill="#F1F5F9"/>
+
+  <!-- Status Bar -->
+  <rect x="0" y="0" width="390" height="54" rx="40" fill="url(#header-grad2)"/>
+  <rect x="0" y="30" width="390" height="24" fill="url(#header-grad2)"/>
+  <text x="30" y="38" fill="white" font-family="system-ui, sans-serif" font-size="14" font-weight="500">15:40</text>
+  <text x="330" y="38" fill="white" font-family="system-ui, sans-serif" font-size="14">🔋 92%</text>
+
+  <!-- Header -->
+  <rect x="0" y="54" width="390" height="60" fill="url(#header-grad2)"/>
+  <text x="20" y="90" fill="white" font-family="system-ui, sans-serif" font-size="20" font-weight="700">💬 チャットログ</text>
+
+  <!-- Filter bar -->
+  <rect x="0" y="114" width="390" height="44" fill="white"/>
+  <line x1="0" y1="158" x2="390" y2="158" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="20" y="141" fill="#64748B" font-family="system-ui, sans-serif" font-size="13">表示: 最新20件 | 自動更新中 🟢</text>
+  <rect x="300" y="124" width="72" height="28" rx="14" fill="#EEF2FF"/>
+  <text x="312" y="143" fill="#6366F1" font-family="system-ui, sans-serif" font-size="12" font-weight="600">🔍 検索</text>
+
+  <!-- Chat Messages -->
+  <!-- Message 1 -->
+  <rect x="16" y="172" width="358" height="72" rx="12" fill="white" filter="url(#card-shadow2)"/>
+  <circle cx="36" cy="192" r="14" fill="#DBEAFE"/>
+  <text x="30" y="197" fill="#3B82F6" font-family="system-ui, sans-serif" font-size="14">👤</text>
+  <text x="58" y="196" fill="#6366F1" font-family="system-ui, sans-serif" font-size="14" font-weight="600">StreamFan42</text>
+  <text x="290" y="196" fill="#CBD5E1" font-family="system-ui, sans-serif" font-size="11">15:39:22</text>
+  <text x="58" y="216" fill="#1E293B" font-family="system-ui, sans-serif" font-size="13">This stream is so much fun! 🎉</text>
+  <text x="58" y="234" fill="#8B5CF6" font-family="system-ui, sans-serif" font-size="12">→ この配信すごく楽しい！🎉</text>
+
+  <!-- Message 2 -->
+  <rect x="16" y="256" width="358" height="72" rx="12" fill="white" filter="url(#card-shadow2)"/>
+  <circle cx="36" cy="276" r="14" fill="#FEF3C7"/>
+  <text x="30" y="281" fill="#F59E0B" font-family="system-ui, sans-serif" font-size="14">👤</text>
+  <text x="58" y="280" fill="#6366F1" font-family="system-ui, sans-serif" font-size="14" font-weight="600">日本語ユーザー</text>
+  <text x="290" y="280" fill="#CBD5E1" font-family="system-ui, sans-serif" font-size="11">15:39:18</text>
+  <text x="58" y="300" fill="#1E293B" font-family="system-ui, sans-serif" font-size="13">今日の配信も最高だね！</text>
+  <text x="58" y="318" fill="#8B5CF6" font-family="system-ui, sans-serif" font-size="12">→ Today's stream is also the best!</text>
+
+  <!-- Message 3 -->
+  <rect x="16" y="340" width="358" height="72" rx="12" fill="white" filter="url(#card-shadow2)"/>
+  <circle cx="36" cy="360" r="14" fill="#DCFCE7"/>
+  <text x="30" y="365" fill="#22C55E" font-family="system-ui, sans-serif" font-size="14">👤</text>
+  <text x="58" y="364" fill="#6366F1" font-family="system-ui, sans-serif" font-size="14" font-weight="600">GamerPro99</text>
+  <text x="290" y="364" fill="#CBD5E1" font-family="system-ui, sans-serif" font-size="11">15:39:05</text>
+  <text x="58" y="384" fill="#1E293B" font-family="system-ui, sans-serif" font-size="13">GG that was insane play!</text>
+  <text x="58" y="402" fill="#8B5CF6" font-family="system-ui, sans-serif" font-size="12">→ GGすごいプレイだった！</text>
+
+  <!-- Message 4 -->
+  <rect x="16" y="424" width="358" height="72" rx="12" fill="white" filter="url(#card-shadow2)"/>
+  <circle cx="36" cy="444" r="14" fill="#FCE7F3"/>
+  <text x="30" y="449" fill="#EC4899" font-family="system-ui, sans-serif" font-size="14">👤</text>
+  <text x="58" y="448" fill="#6366F1" font-family="system-ui, sans-serif" font-size="14" font-weight="600">초코맛쿠키</text>
+  <text x="290" y="448" fill="#CBD5E1" font-family="system-ui, sans-serif" font-size="11">15:38:51</text>
+  <text x="58" y="468" fill="#1E293B" font-family="system-ui, sans-serif" font-size="13">안녕하세요! 한국에서 봐요~</text>
+  <text x="58" y="486" fill="#8B5CF6" font-family="system-ui, sans-serif" font-size="12">→ こんにちは！韓国から見てます～</text>
+
+  <!-- Message 5 (no translation) -->
+  <rect x="16" y="508" width="358" height="58" rx="12" fill="white" filter="url(#card-shadow2)"/>
+  <circle cx="36" cy="528" r="14" fill="#E2E8F0"/>
+  <text x="30" y="533" fill="#94A3B8" font-family="system-ui, sans-serif" font-size="14">👤</text>
+  <text x="58" y="532" fill="#6366F1" font-family="system-ui, sans-serif" font-size="14" font-weight="600">bot_user</text>
+  <text x="290" y="532" fill="#CBD5E1" font-family="system-ui, sans-serif" font-size="11">15:38:40</text>
+  <text x="58" y="552" fill="#94A3B8" font-family="system-ui, sans-serif" font-size="13">!rank → ランク表示</text>
+
+  <!-- Message 6 (special event) -->
+  <rect x="16" y="578" width="358" height="58" rx="12" fill="#FFFBEB" filter="url(#card-shadow2)"/>
+  <rect x="16" y="578" width="358" height="58" rx="12" fill="none" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="32" y="602" fill="#F59E0B" font-family="system-ui, sans-serif" font-size="14" font-weight="700">🎉 新規フォロー</text>
+  <text x="32" y="624" fill="#92400E" font-family="system-ui, sans-serif" font-size="13">NewViewer2024 さんがフォローしました！</text>
+
+  <!-- Message 7 (bits event) -->
+  <rect x="16" y="648" width="358" height="58" rx="12" fill="#F0FDF4" filter="url(#card-shadow2)"/>
+  <rect x="16" y="648" width="358" height="58" rx="12" fill="none" stroke="#22C55E" stroke-width="1.5"/>
+  <text x="32" y="672" fill="#22C55E" font-family="system-ui, sans-serif" font-size="14" font-weight="700">💎 Bits 100</text>
+  <text x="32" y="694" fill="#166534" font-family="system-ui, sans-serif" font-size="13">SuperSupporter: がんばれ！</text>
+
+  <!-- Scroll indicator -->
+  <rect x="376" y="200" width="4" height="80" rx="2" fill="#CBD5E1"/>
+
+  <!-- Auto-scroll badge -->
+  <rect x="140" y="726" width="110" height="32" rx="16" fill="#6366F1" filter="url(#card-shadow2)"/>
+  <text x="155" y="747" fill="white" font-family="system-ui, sans-serif" font-size="12" font-weight="600">↓ 最新へ移動</text>
+
+  <!-- Bottom Navigation -->
+  <rect x="0" y="790" width="390" height="54" rx="0" fill="white"/>
+  <line x1="0" y1="790" x2="390" y2="790" stroke="#E2E8F0" stroke-width="1"/>
+
+  <text x="44" y="814" fill="#94A3B8" font-family="system-ui, sans-serif" font-size="18">📊</text>
+  <text x="32" y="832" fill="#94A3B8" font-family="system-ui, sans-serif" font-size="10">ダッシュボード</text>
+
+  <rect x="148" y="794" width="94" height="44" rx="10" fill="#EEF2FF"/>
+  <text x="175" y="814" fill="#6366F1" font-family="system-ui, sans-serif" font-size="18">💬</text>
+  <text x="157" y="832" fill="#6366F1" font-family="system-ui, sans-serif" font-size="10" font-weight="600">チャットログ</text>
+
+  <text x="305" y="814" fill="#94A3B8" font-family="system-ui, sans-serif" font-size="18">⚙️</text>
+  <text x="302" y="832" fill="#94A3B8" font-family="system-ui, sans-serif" font-size="10">設定</text>
+</svg>
