@@ -347,13 +347,16 @@ def _launch_installer_and_restart(installer_path: str, current_exe: str) -> None
     exe_name = os.path.basename(current_exe)
     app_exe = os.path.join(install_dir, exe_name)
 
+    log_path = os.path.join(tempfile.gettempdir(), "kototsuna_install.log")
     bat_content = (
         '@echo off\r\n'
         ':waitloop\r\n'
         'timeout /t 1 /nobreak >nul\r\n'
         f'tasklist /FI "IMAGENAME eq {exe_name}" 2>nul | findstr /I "{exe_name}" >nul\r\n'
         'if %ERRORLEVEL%==0 goto waitloop\r\n'
-        f'"{installer_path}" /SILENT /SUPPRESSMSGBOXES /DIR="{install_dir}" /NORESTART\r\n'
+        'rem Windows がファイルロックを解放するまで待機\r\n'
+        'timeout /t 5 /nobreak >nul\r\n'
+        f'"{installer_path}" /SILENT /SUPPRESSMSGBOXES /DIR="{install_dir}" /NORESTART /LOG="{log_path}"\r\n'
         f'start "" "{app_exe}"\r\n'
         f'del "{installer_path}" 2>nul\r\n'
         'del "%~f0" 2>nul\r\n'
@@ -363,7 +366,7 @@ def _launch_installer_and_restart(installer_path: str, current_exe: str) -> None
     with open(bat_path, "w", encoding="ascii", errors="replace") as f:
         f.write(bat_content)
 
-    logger.info(f"Launching update script: {bat_path}")
+    logger.info(f"Launching update script: {bat_path} (install log: {log_path})")
     # CREATE_NO_WINDOW: コンソールウィンドウを非表示
     # CREATE_NEW_PROCESS_GROUP: 親プロセスから独立
     # 注: DETACHED_PROCESSとCREATE_NO_WINDOWは併用不可（MSドキュメント）
