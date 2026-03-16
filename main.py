@@ -239,6 +239,102 @@ def on_closing():
         # ウィンドウを破棄
         root.destroy()
 
+def _show_safe_mode_dialog(master, crash_count: int) -> tuple[bool, bool]:
+    """セーフモード確認ダイアログを表示する。
+
+    Returns:
+        (safe_mode: bool, reset_config: bool)
+    """
+    result: dict[str, bool] = {"safe_mode": True, "reset_config": False}
+
+    dialog = ctk.CTkToplevel(master)
+    dialog.title("起動エラーを検出")
+    dialog.resizable(False, False)
+    dialog.attributes("-topmost", True)
+    dialog.grab_set()
+
+    w, h = 500, 340
+    dialog.update_idletasks()
+    x = (dialog.winfo_screenwidth() - w) // 2
+    y = (dialog.winfo_screenheight() - h) // 2
+    dialog.geometry(f"{w}x{h}+{x}+{y}")
+
+    ctk.CTkLabel(
+        dialog,
+        text="⚠️  起動エラーを検出しました",
+        font=("Segoe UI", 15, "bold"),
+        text_color="#EAB308",
+    ).pack(pady=(24, 6))
+
+    ctk.CTkLabel(
+        dialog,
+        text=(
+            f"直近の起動が {crash_count} 回連続で失敗しています。\n"
+            "セーフモードで起動すると、問題を引き起こす可能性のある\n"
+            "機能を無効化してアプリを安定した状態で起動できます。"
+        ),
+        font=("Segoe UI", 11),
+        justify="center",
+        wraplength=440,
+    ).pack(pady=6)
+
+    ctk.CTkLabel(
+        dialog,
+        text="セーフモードで無効化: OBS自動起動・VOICEVOX自動起動・自動アップデート確認",
+        font=("Segoe UI", 10),
+        text_color="#9BAEC6",
+        wraplength=460,
+    ).pack(pady=4)
+
+    def on_safe_mode() -> None:
+        result["safe_mode"] = True
+        result["reset_config"] = False
+        dialog.destroy()
+
+    def on_normal() -> None:
+        result["safe_mode"] = False
+        result["reset_config"] = False
+        dialog.destroy()
+
+    def on_reset() -> None:
+        result["safe_mode"] = True
+        result["reset_config"] = True
+        dialog.destroy()
+
+    btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+    btn_frame.pack(pady=20, fill="x", padx=20)
+
+    ctk.CTkButton(
+        btn_frame,
+        text="🛡️ セーフモードで起動",
+        command=on_safe_mode,
+        fg_color="#2563EB",
+        hover_color="#1D4ED8",
+        width=160,
+    ).pack(side="left", expand=True, padx=4)
+
+    ctk.CTkButton(
+        btn_frame,
+        text="▶ 通常起動",
+        command=on_normal,
+        fg_color="#374151",
+        hover_color="#4B5563",
+        width=130,
+    ).pack(side="left", expand=True, padx=4)
+
+    ctk.CTkButton(
+        btn_frame,
+        text="🔄 設定リセット",
+        command=on_reset,
+        fg_color="#DC2626",
+        hover_color="#B91C1C",
+        width=130,
+    ).pack(side="left", expand=True, padx=4)
+
+    dialog.wait_window()
+    return result["safe_mode"], result["reset_config"]
+
+
 if __name__ == '__main__':
     # 前回アップデート後のクリーンアップ
     if "--cleanup" in sys.argv:
@@ -247,10 +343,17 @@ if __name__ == '__main__':
         from src.updater import cleanup_old_exe
         cleanup_old_exe()
 
+    # 起動を記録（クラッシュカウンタ増加）
+    from src.safe_mode import record_startup, reset_crash_count, should_suggest_safe_mode
+    _crash_count = record_startup()
+
     # アップデート直後かどうか確認
     from src.config import load_config as _load_config
     _startup_config = _load_config()
     _just_updated = _startup_config.get("just_updated", False)
+
+    # セーフモード状態
+    _safe_mode_active = False
 
     # メインウィンドウを作成（非表示）
     try:
@@ -259,6 +362,14 @@ if __name__ == '__main__':
         raise
     root.withdraw()  # 最初は非表示
 
+    # セーフモード確認（クラッシュ閾値超過時はスプラッシュより先に表示）
+    if should_suggest_safe_mode(_crash_count):
+        _safe_mode_active, _reset_config = _show_safe_mode_dialog(root, _crash_count)
+        if _reset_config:
+            from src.config import reset_config as _reset_cfg
+            _reset_cfg()
+            logger.info("設定をデフォルトにリセットしました（セーフモード要求）")
+
     # スプラッシュスクリーンを表示
     splash = create_splash_screen()
 
@@ -266,13 +377,15 @@ if __name__ == '__main__':
     def init_app():
         global app
         try:
-            app = KototsunaApp(root)
+            app = KototsunaApp(root, safe_mode=_safe_mode_active)
             # ウィンドウを閉じる際のプロトコルを設定
             root.protocol("WM_DELETE_WINDOW", on_closing)
             # スプラッシュスクリーンを閉じる
             splash.destroy()
             # メインウィンドウを表示
             root.deiconify()
+            # 正常起動 → クラッシュカウンタをリセット
+            reset_crash_count()
             # アップデート直後ならチャットログに通知
             if _just_updated:
                 root.after(500, app._show_update_notification)

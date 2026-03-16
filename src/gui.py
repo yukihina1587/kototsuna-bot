@@ -148,8 +148,9 @@ FONT_LABEL = ("Segoe UI Semibold", 12)
 FONT_BODY = ("Segoe UI", 12)
 
 class KototsunaApp:
-    def __init__(self, master):
+    def __init__(self, master, safe_mode: bool = False):
         self.master = master
+        self.safe_mode = safe_mode
         self.master.title("ことつな！")
 
         # ウィンドウアイコンを設定（build_widgetsの後に移動）
@@ -308,10 +309,15 @@ class KototsunaApp:
         self.master.after(100, lambda: self._update_auth_button_states(authenticated=False))
         # 起動時に保存されたトークンをチェックして自動ログイン
         self.master.after(1000, self._check_saved_token)
-        # OBS連携を初期化
-        self.master.after(1200, self._init_obs_controller)
-        # 起動時にアップデートを確認
-        self.master.after(3000, self._check_for_updates_on_startup)
+        # OBS連携を初期化（セーフモードではスキップ）
+        if not self.safe_mode:
+            self.master.after(1200, self._init_obs_controller)
+        # 起動時にアップデートを確認（セーフモードではスキップ）
+        if not self.safe_mode:
+            self.master.after(3000, self._check_for_updates_on_startup)
+
+        if self.safe_mode:
+            logger.info("セーフモードで起動: OBS自動連携・VOICEVOX自動起動・アップデート確認を無効化")
 
     def _init_obs_controller(self) -> None:
         if self.obs_controller is not None:
@@ -512,6 +518,10 @@ class KototsunaApp:
         self.main_frame = ctk.CTkFrame(self.master, fg_color=APP_BG)
         self.main_frame.pack(fill="both", expand=True)
 
+        # セーフモードバナー（ヘッダーより前に配置）
+        if self.safe_mode:
+            self._build_safe_mode_banner()
+
         # === ヘッダー構築 ===
         self._build_header()
 
@@ -526,6 +536,34 @@ class KototsunaApp:
         self._build_main_content()
 
         # 右パネル（初期非表示）- 動的に作成される
+
+    def _build_safe_mode_banner(self) -> None:
+        """セーフモード警告バナーをウィンドウ最上部に表示する。"""
+        banner = ctk.CTkFrame(self.main_frame, fg_color="#7C2D12", height=38, corner_radius=0)
+        banner.pack(fill="x", side="top")
+        banner.pack_propagate(False)
+
+        ctk.CTkLabel(
+            banner,
+            text="🛡️ セーフモードで起動中 — OBS自動連携・VOICEVOX自動起動・アップデート確認を無効化しています",
+            font=("Segoe UI", 11),
+            text_color="#FED7AA",
+        ).pack(side="left", padx=12)
+
+        def _restart_normal() -> None:
+            from src.updater import restart_app
+            restart_app()
+
+        ctk.CTkButton(
+            banner,
+            text="× 通常モードで再起動",
+            command=_restart_normal,
+            fg_color="transparent",
+            hover_color="#991B1B",
+            text_color="#FED7AA",
+            width=160,
+            height=28,
+        ).pack(side="right", padx=8)
 
     # ========================================
     # 新レイアウトコンポーネント
@@ -5823,12 +5861,15 @@ window.onload = function() {{
 
         auto_start = self.config.get("voicevox_auto_start", True)
         if auto_start and not self.voicevox_manager.is_running():
-            self.log_message("⏳ VOICEVOX Engineを起動しています...")
-            threading.Thread(
-                target=self._start_voicevox_and_tts,
-                daemon=True
-            ).start()
-            return
+            if self.safe_mode:
+                self.log_message("⚠️ セーフモード: VOICEVOX自動起動を無効化しています（手動起動してください）")
+            else:
+                self.log_message("⏳ VOICEVOX Engineを起動しています...")
+                threading.Thread(
+                    target=self._start_voicevox_and_tts,
+                    daemon=True
+                ).start()
+                return
 
         self._start_tts()
 
