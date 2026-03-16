@@ -140,6 +140,11 @@ if sys.stderr is None:
 import tkinter as tk
 from dotenv import load_dotenv
 
+# concurrent.futures を事前インポート（遅延インポート時のPyInstallerアーカイブ再読込を回避）
+# BOTスレッドでasyncio.run_in_executor()が呼ばれた際、AVによる.exeロック下で
+# PyInstallerが.exeからバイトコード抽出に失敗する問題の対策
+import concurrent.futures  # noqa: F401
+
 # ロガーを最初にインポート（他のモジュールより先に初期化）
 from src.logger import logger  # noqa: E402
 

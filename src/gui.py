@@ -5367,6 +5367,8 @@ window.onload = function() {{
             bot.run()
         except Exception as e:
             logger.error(f"Bot thread error: {e}", exc_info=True)
+            # UIスレッドでリカバリー処理を実行
+            self.master.after(0, lambda err=e: self._on_bot_thread_error(err))
         finally:
             try:
                 loop.close()
@@ -5452,6 +5454,22 @@ window.onload = function() {{
         # ヘッダーUI更新
         self._update_header_bot_button(False)
         self._update_connection_badge(False)
+
+    def _on_bot_thread_error(self, error: Exception):
+        """BOTスレッドでエラーが発生した際のUIリカバリー（メインスレッドで実行）"""
+        self._update_header_bot_button(False)
+        self._update_connection_badge(False)
+        err_msg = str(error)
+        if "Invalid argument" in err_msg and ".exe" in err_msg:
+            self.log_message("⚠️ BOT起動失敗: ウイルス対策ソフトがアプリをブロックしている可能性があります")
+            self.log_message("💡 Windows Defenderの除外設定にアプリのフォルダを追加してください")
+            self._set_status("BOT起動失敗: AV除外設定を確認してください", "error")
+        elif "Cannot connect" in err_msg or "DNS" in err_msg:
+            self.log_message("⚠️ BOT起動失敗: ネットワーク接続を確認してください")
+            self._set_status("BOT起動失敗: ネットワークエラー", "error")
+        else:
+            self.log_message(f"⚠️ BOT起動失敗: {err_msg}")
+            self._set_status("BOT起動失敗", "error")
 
     # =========================================
     # アップデート関連メソッド

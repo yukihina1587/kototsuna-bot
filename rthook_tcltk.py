@@ -505,10 +505,11 @@ if _meipass:
         def _safe_open(file, mode='r', *args, **kwargs):
             try:
                 return _builtin_open(file, mode, *args, **kwargs)
-            except (FileNotFoundError, PermissionError):
+            except (FileNotFoundError, PermissionError, OSError):
                 _norm = os.path.normpath(str(file))
                 if _norm in _cached_files and 'r' in str(mode) and 'b' not in str(mode):
                     return _io.StringIO(_cached_files[_norm])
+                # OSError(errno=22) はAVロック/隔離で発生しうる
                 raise
 
         builtins.open = _safe_open
