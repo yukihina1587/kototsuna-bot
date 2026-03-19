@@ -154,15 +154,45 @@ jobs:
           Write-Host "Tag: $tag, Prerelease: $isPrerelease"
         shell: pwsh
 
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $content = Get-Content "CHANGELOG.md" -Raw -Encoding UTF8
+
+          # Extract section between ## [version] and next ## [
+          $escaped = [regex]::Escape($version)
+          $pattern = "(?s)## \[$escaped\].*?(?=\n## \[|\z)"
+          if ($content -match $pattern) {
+            $section = $Matches[0].Trim()
+          } else {
+            $section = "変更内容は [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) を参照してください。"
+          }
+
+          # Write release notes file
+          $notes = @"
+$section
+
+---
+
+📥 **インストール方法**: ``Kototsuna_Setup.exe`` をダウンロードして実行してください。
+
+<details><summary>🔒 SHA256（ファイル整合性確認用）</summary>
+
+``````
+${{ steps.hash.outputs.sha256 }}  Kototsuna_Setup.exe
+``````
+
+</details>
+"@
+          $notes | Out-File -FilePath "release_notes.md" -Encoding UTF8
+          Write-Host "Release notes generated for v$version"
+        shell: pwsh
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: installer_output/Kototsuna_Setup.exe
           prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
-          generate_release_notes: true
-          body: |
-            ## SHA256
-            ```
-            ${{ steps.hash.outputs.sha256 }}  Kototsuna_Setup.exe
-            ```
-          append_body: true
+          generate_release_notes: false
+          body_path: release_notes.md
