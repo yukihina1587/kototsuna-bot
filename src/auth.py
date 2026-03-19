@@ -8,7 +8,7 @@ from src.logger import logger
 load_dotenv()
 
 REDIRECT_URI = 'http://localhost:8787/redirect.html'
-SCOPES = ['chat:read', 'chat:edit', 'moderator:read:followers']
+SCOPES = ['chat:read', 'chat:edit', 'moderator:read:followers', 'channel:manage:broadcast']
 
 # アプリ同梱のデフォルトClient ID（.env の TWITCH_CLIENT_ID から読み込む）
 # リポジトリオーナーが dev.twitch.tv でアプリ登録して .env に設定しておく

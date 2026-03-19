@@ -1,5 +1,5 @@
 """
-チャンネル履歴の管理・入力正規化・Twitch API によるチャンネル存在確認。
+チャンネル履歴の管理・入力正規化・Twitch API によるチャンネル存在確認・配信情報更新。
 """
 import re
 import time
@@ -122,3 +122,79 @@ def clear_validation_cache(login: Optional[str] = None) -> None:
         _validation_cache.pop(login.lower(), None)
     else:
         _validation_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# 配信情報更新（Issue #173）
+# ---------------------------------------------------------------------------
+
+def search_game(token: str, client_id: str, query: str) -> tuple[str | None, str | None]:
+    """
+    Twitch /helix/search/categories でゲームを検索する。
+
+    Returns:
+        (game_id, game_name) または (None, None)
+    """
+    bearer = token.replace("oauth:", "")
+    try:
+        import requests as _requests
+        resp = _requests.get(
+            "https://api.twitch.tv/helix/search/categories",
+            params={"query": query, "first": 1},
+            headers={"Authorization": f"Bearer {bearer}", "Client-Id": client_id},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json().get("data", [])
+            if data:
+                return data[0]["id"], data[0]["name"]
+    except Exception as e:
+        logger.warning(f"Game search failed: {e}")
+    return None, None
+
+
+def update_channel_info(
+    token: str,
+    client_id: str,
+    broadcaster_id: str,
+    *,
+    title: str | None = None,
+    game_id: str | None = None,
+) -> tuple[bool, str]:
+    """
+    Twitch PATCH /helix/channels で配信タイトルまたはゲームカテゴリを更新する。
+
+    Returns:
+        (success: bool, message: str)
+    """
+    if not title and not game_id:
+        return False, "更新内容が指定されていません"
+
+    bearer = token.replace("oauth:", "")
+    payload: dict = {}
+    if title is not None:
+        payload["title"] = title
+    if game_id is not None:
+        payload["game_id"] = game_id
+
+    try:
+        import requests as _requests
+        resp = _requests.patch(
+            "https://api.twitch.tv/helix/channels",
+            params={"broadcaster_id": broadcaster_id},
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {bearer}",
+                "Client-Id": client_id,
+                "Content-Type": "application/json",
+            },
+            timeout=5,
+        )
+        if resp.status_code == 204:
+            return True, "更新しました"
+        if resp.status_code == 401:
+            return False, "認証エラー（channel:manage:broadcast スコープが必要です）"
+        return False, f"APIエラー: {resp.status_code}"
+    except Exception as e:
+        logger.warning(f"Channel info update failed: {e}")
+        return False, f"通信エラー: {e}"

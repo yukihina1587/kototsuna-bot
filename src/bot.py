@@ -13,7 +13,7 @@ from src.commands_store import CommandStore
 from src.emote_provider import EmoteProvider
 from src.tts_dictionary import get_dictionary
 from src.viewer_store import get_viewer_store
-from src.plugin_manager import get_plugin_manager
+from src.channel_manager import search_game, update_channel_info
 
 
 class EventSubHandler:
@@ -604,15 +604,20 @@ class TranslateBot(commands.Bot):
             "translate": self._cmd_translate,
             "lang": self._cmd_lang,
             "tts": self._cmd_tts,
+            "translation": self._cmd_translation,
+            "voicechat": self._cmd_voicechat,
             "dict": self._cmd_dict,
             "voice": self._cmd_voice,
             "myvoice": self._cmd_myvoice,
             "visits": self._cmd_visits,
+            "queue": self._cmd_queue,
+            "leave": self._cmd_leave,
+            "stream": self._cmd_stream,
+            # 後方互換エイリアス
             "remove": self._cmd_remove,
             "clearall": self._cmd_clearall,
             "nextround": self._cmd_nextround,
             "roundreset": self._cmd_roundreset,
-            "leave": self._cmd_leave,
             "played": self._cmd_played,
         }
 
@@ -629,7 +634,12 @@ class TranslateBot(commands.Bot):
 
     async def _cmd_help(self, message, args: str) -> None:
         """!help — 使用可能なコマンド一覧を表示"""
-        builtin_cmds = ["!help", "!translate", "!lang", "!tts", "!dict", "!voice", "!myvoice", "!visits", "!leave", "!remove", "!clearall", "!played", "!nextround", "!roundreset"]
+        builtin_cmds = [
+            "!help", "!translate", "!lang",
+            "!tts", "!translation", "!voicechat",
+            "!dict", "!voice", "!myvoice", "!visits",
+            "!queue", "!leave", "!stream",
+        ]
         custom_cmds = [
             f"!{c.name}" for c in self._command_store.list_all() if c.enabled
         ]
@@ -671,6 +681,57 @@ class TranslateBot(commands.Bot):
         else:
             status = "ON" if self.tts_enabled_getter() else "OFF"
             await message.channel.send(f"TTS: {status} (使い方: !tts on/off)" + '\u200B')
+
+    async def _cmd_translation(self, message, args: str) -> None:
+        """!translation on/off — チャット翻訳の有効/無効切替（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        arg = args.strip().lower()
+        if arg == "on":
+            if hasattr(self.gui, 'chat_translation_enabled') and hasattr(self.gui.chat_translation_enabled, 'set'):
+                self.gui.chat_translation_enabled.set(True)
+                if hasattr(self.gui, '_on_translation_toggle_changed'):
+                    self.gui._on_translation_toggle_changed()
+            await message.channel.send("チャット翻訳を有効にしました" + '\u200B')
+        elif arg == "off":
+            if hasattr(self.gui, 'chat_translation_enabled') and hasattr(self.gui.chat_translation_enabled, 'set'):
+                self.gui.chat_translation_enabled.set(False)
+                if hasattr(self.gui, '_on_translation_toggle_changed'):
+                    self.gui._on_translation_toggle_changed()
+            await message.channel.send("チャット翻訳を無効にしました" + '\u200B')
+        else:
+            enabled = False
+            if hasattr(self.gui, 'chat_translation_enabled') and hasattr(self.gui.chat_translation_enabled, 'get'):
+                enabled = self.gui.chat_translation_enabled.get()
+            status = "ON" if enabled else "OFF"
+            await message.channel.send(f"チャット翻訳: {status} (使い方: !translation on/off)" + '\u200B')
+
+    async def _cmd_voicechat(self, message, args: str) -> None:
+        """!voicechat on/off — 声→翻訳チャットの有効/無効切替（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        arg = args.strip().lower()
+        if arg in ("on", "off"):
+            target = arg == "on"
+            if hasattr(self.gui, 'voice_var') and hasattr(self.gui.voice_var, 'get'):
+                current = self.gui.voice_var.get()
+                if current == target:
+                    status = "ON" if target else "OFF"
+                    await message.channel.send(f"声→翻訳チャットは既に {status} です" + '\u200B')
+                    return
+                self.gui.voice_var.set(target)
+                if hasattr(self.gui, 'toggle_voice'):
+                    self.gui.toggle_voice()
+            status = "有効" if target else "無効"
+            await message.channel.send(f"声→翻訳チャットを{status}にしました" + '\u200B')
+        else:
+            enabled = False
+            if hasattr(self.gui, 'voice_var') and hasattr(self.gui.voice_var, 'get'):
+                enabled = self.gui.voice_var.get()
+            status = "ON" if enabled else "OFF"
+            await message.channel.send(f"声→翻訳チャット: {status} (使い方: !voicechat on/off)" + '\u200B')
 
     async def _cmd_dict(self, message, args: str) -> None:
         """!dict — TTS辞書管理コマンド（モデレーター以上）
@@ -1086,6 +1147,135 @@ class TranslateBot(commands.Bot):
         )
         if self.gui and hasattr(self.gui, 'refresh_participant_list'):
             self.gui.refresh_participant_list()
+
+    async def _cmd_queue(self, message, args: str) -> None:
+        """!queue <subcmd> [...] — 待機列の管理（モデレーター限定）
+
+        !queue remove <ユーザー名>  — 待機リストから削除
+        !queue clear               — 待機リストを全件クリア
+        !queue next                — 待機者全員を参加済みに移動してリストをクリア
+        !queue reset               — 参加済みセットをリセット（全員再参加可能に）
+        !queue played <ユーザー名>  — 指定ユーザーを参加済みにマーク
+        """
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else ""
+        sub_args = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "remove":
+            username = sub_args.strip().lstrip("@")
+            if not username:
+                await message.channel.send("使い方: !queue remove <ユーザー名>" + '\u200B')
+                return
+            success = self.tracker.remove_participant(username)
+            if success:
+                await message.channel.send(f"@{username} を参加者リストから削除しました" + '\u200B')
+                if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+                    self.gui.refresh_participant_list()
+            else:
+                await message.channel.send(f"@{username} は参加者リストに見つかりません" + '\u200B')
+
+        elif subcmd == "clear":
+            count = self.tracker.get_count()
+            self.tracker.clear()
+            await message.channel.send(f"参加者リストをクリアしました（{count}人）" + '\u200B')
+            if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+                self.gui.refresh_participant_list()
+
+        elif subcmd == "next":
+            count = self.tracker.get_count()
+            self.tracker.mark_all_as_participated()
+            participated_total = self.tracker.get_participated_count()
+            await message.channel.send(
+                f"ラウンド開始: {count}人を参加済みに移動しました（累計参加済み: {participated_total}人）" + '\u200B'
+            )
+            if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+                self.gui.refresh_participant_list()
+
+        elif subcmd == "reset":
+            count = self.tracker.get_participated_count()
+            self.tracker.reset_participated()
+            await message.channel.send(
+                f"ラウンドリセット: {count}人が再参加可能になりました" + '\u200B'
+            )
+            if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+                self.gui.refresh_participant_list()
+
+        elif subcmd == "played":
+            username = sub_args.strip().lstrip("@")
+            if not username:
+                await message.channel.send("使い方: !queue played <ユーザー名>" + '\u200B')
+                return
+            self.tracker.mark_as_participated(username)
+            participated_count = self.tracker.get_participated_count()
+            await message.channel.send(
+                f"@{username} を参加済みにしました（参加済み累計: {participated_count}人）" + '\u200B'
+            )
+            if self.gui and hasattr(self.gui, 'refresh_participant_list'):
+                self.gui.refresh_participant_list()
+
+        else:
+            await message.channel.send(
+                "使い方: !queue remove <user> | clear | next | reset | played <user>" + '\u200B'
+            )
+
+    async def _cmd_stream(self, message, args: str) -> None:
+        """!stream title/game [...] — 配信タイトル・ゲームカテゴリ変更（モデレーター限定、Twitch限定）
+
+        !stream title <タイトル>  — 配信タイトルを変更
+        !stream game <ゲーム名>   — ゲームカテゴリを変更
+        """
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else ""
+        value = parts[1].strip() if len(parts) > 1 else ""
+
+        if not subcmd or not value:
+            await message.channel.send(
+                "使い方: !stream title <タイトル> | !stream game <ゲーム名>" + '\u200B'
+            )
+            return
+
+        token = self.token
+        client_id = self.client_id or ""
+        broadcaster_id = None
+        if self._eventsub_handler:
+            broadcaster_id = getattr(self._eventsub_handler, '_broadcaster_id', None)
+
+        if not broadcaster_id:
+            await message.channel.send("配信者IDを取得できませんでした（Twitch接続を確認してください）" + '\u200B')
+            return
+
+        if subcmd == "title":
+            success, msg = update_channel_info(token, client_id, broadcaster_id, title=value)
+            if success:
+                await message.channel.send(f"配信タイトルを変更しました: {value}" + '\u200B')
+            else:
+                await message.channel.send(f"タイトル変更に失敗しました: {msg}" + '\u200B')
+
+        elif subcmd == "game":
+            game_id, game_name = await asyncio.to_thread(search_game, token, client_id, value)
+            if not game_id:
+                await message.channel.send(f"ゲーム「{value}」が見つかりませんでした" + '\u200B')
+                return
+            success, msg = await asyncio.to_thread(
+                update_channel_info, token, client_id, broadcaster_id, game_id=game_id
+            )
+            if success:
+                await message.channel.send(f"ゲームカテゴリを変更しました: {game_name}" + '\u200B')
+            else:
+                await message.channel.send(f"ゲーム変更に失敗しました: {msg}" + '\u200B')
+
+        else:
+            await message.channel.send(
+                "使い方: !stream title <タイトル> | !stream game <ゲーム名>" + '\u200B'
+            )
 
     async def event_raw_usernotice(self, channel, tags: dict):
         """サブスクやギフトなどのUSERNOTICEイベントを処理（twitchio 2.x準拠）"""
