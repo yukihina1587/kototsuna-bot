@@ -671,6 +671,8 @@ class TranslateBot(commands.Bot):
         translated = await translate_text_batched(args, lang_mode, self.deepl_api_key)
         if translated and translated != args:
             await message.channel.send(f"[翻訳] {translated}" + '\u200B')
+            if self.tts_enabled_getter():
+                self.tts.speak(translated)
         else:
             await message.channel.send("翻訳結果が同じか、翻訳できませんでした" + '\u200B')
 
