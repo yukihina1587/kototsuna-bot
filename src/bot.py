@@ -14,6 +14,7 @@ from src.emote_provider import EmoteProvider
 from src.tts_dictionary import get_dictionary
 from src.viewer_store import get_viewer_store
 from src.channel_manager import search_game, update_channel_info
+from src.plugin_manager import get_plugin_manager
 
 
 class EventSubHandler:
