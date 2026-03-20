@@ -169,23 +169,24 @@ jobs:
             $section = "変更内容は [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) を参照してください。"
           }
 
-          # Write release notes file
-          $notes = @"
-$section
-
----
-
-📥 **インストール方法**: ``Kototsuna_Setup.exe`` をダウンロードして実行してください。
-
-<details><summary>🔒 SHA256（ファイル整合性確認用）</summary>
-
-``````
-${{ steps.hash.outputs.sha256 }}  Kototsuna_Setup.exe
-``````
-
-</details>
-"@
-          $notes | Out-File -FilePath "release_notes.md" -Encoding UTF8
+          # Write release notes file (avoid heredoc to prevent YAML column-1 issues)
+          $sha256 = "${{ steps.hash.outputs.sha256 }}"
+          $lines = @(
+            $section,
+            "",
+            "---",
+            "",
+            "📥 **インストール方法**: ``Kototsuna_Setup.exe`` をダウンロードして実行してください。",
+            "",
+            "<details><summary>🔒 SHA256（ファイル整合性確認用）</summary>",
+            "",
+            '```',
+            "$sha256  Kototsuna_Setup.exe",
+            '```',
+            "",
+            "</details>"
+          )
+          $lines -join "`n" | Out-File -FilePath "release_notes.md" -Encoding UTF8 -NoNewline
           Write-Host "Release notes generated for v$version"
         shell: pwsh
 
