@@ -7,6 +7,7 @@
 ### 機能
 - [機能一覧](Features)
 - [コマンドリファレンス](Commands)
+- [TTS 読み上げルール](TTS-Rules)
 - [OBS連携](OBS-Setup)
 - [設定](Configuration)
 - [パフォーマンス](Performance)
