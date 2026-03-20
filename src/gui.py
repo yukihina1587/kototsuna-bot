@@ -147,6 +147,23 @@ FONT_SUBTITLE = ("Segoe UI", 13)
 FONT_LABEL = ("Segoe UI Semibold", 12)
 FONT_BODY = ("Segoe UI", 12)
 
+def _format_release_body_for_display(body: str) -> str:
+    """GitHubリリースノート本文をアプリ内テキスト表示用に整形する。
+
+    - <details>...</details> ブロック（SHA256等）を除去
+    - Markdown強調記号（**）を除去
+    - コードブロック記号（```）を除去
+    - 連続する空行を1行に正規化
+    """
+    import re
+    text = re.sub(r"<details[\s\S]*?</details>", "", body)
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"```[^\n]*\n?", "", text)
+    text = re.sub(r"`", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 class KototsunaApp:
     def __init__(self, master, safe_mode: bool = False):
         self.master = master
@@ -5607,7 +5624,8 @@ window.onload = function() {{
 
         changelog = ctk.CTkTextbox(dialog, height=200, font=("Segoe UI", 11))
         changelog.pack(fill="both", expand=True, padx=20, pady=(4, 8))
-        changelog.insert("1.0", release.body or "変更履歴なし")
+        body_text = _format_release_body_for_display(release.body) if release.body else "変更履歴なし"
+        changelog.insert("1.0", body_text)
         changelog.configure(state="disabled")
 
         # ダウンロードサイズ
