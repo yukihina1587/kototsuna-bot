@@ -28,11 +28,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "dist\Kototsuna\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "assets\icon_fullsize.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\ことつな！"; Filename: "{app}\Kototsuna.exe"; IconFilename: "{app}\_internal\assets\icon_fullsize.ico"
+Name: "{group}\ことつな！"; Filename: "{app}\Kototsuna.exe"; IconFilename: "{app}\icon_fullsize.ico"; IconIndex: 0
 Name: "{group}\ことつな！をアンインストール"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\ことつな！"; Filename: "{app}\Kototsuna.exe"; Tasks: desktopicon; IconFilename: "{app}\_internal\assets\icon_fullsize.ico"
+Name: "{userdesktop}\ことつな！"; Filename: "{app}\Kototsuna.exe"; Tasks: desktopicon; IconFilename: "{app}\icon_fullsize.ico"; IconIndex: 0
 
 [Run]
 Filename: "{app}\Kototsuna.exe"; Description: "{cm:LaunchProgram,ことつな！}"; Flags: nowait postinstall skipifsilent
