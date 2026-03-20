@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import asdict, dataclass, fields
 from typing import Optional
 
@@ -92,19 +93,31 @@ class CommandStore:
             self._commands = {}
 
     def save(self) -> None:
-        """現在のコマンドを JSON ファイルへアトミックに書き出す。"""
+        """現在のコマンドを JSON ファイルへアトミックに書き出す。
+
+        Windows でファイルがロック中でも最大 3 回リトライする。
+        """
         payload = {
             "version": _FILE_VERSION,
             "commands": [asdict(cmd) for cmd in self.list_all()],
         }
         tmp_path = self._filepath + ".tmp"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_path, self._filepath)
-            logger.debug("コマンドファイルを保存しました: %d 件", len(self._commands))
-        except Exception:
-            logger.error("コマンドファイルの保存に失敗", exc_info=True)
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_path, self._filepath)
+                logger.debug("コマンドファイルを保存しました: %d 件", len(self._commands))
+                return
+            except PermissionError as exc:
+                last_exc = exc
+                logger.warning("コマンドファイル保存リトライ (%d/3): %s", attempt + 1, exc)
+                time.sleep(0.2 * (attempt + 1))
+            except Exception as exc:
+                last_exc = exc
+                break
+        logger.error("コマンドファイルの保存に失敗: %s", last_exc, exc_info=True)
 
     # -- CRUD ---------------------------------------------------------------
 
