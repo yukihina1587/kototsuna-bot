@@ -124,6 +124,9 @@ DEFAULT_CONFIG = {
     "obs_auto_start_bot": True,
     "obs_auto_stop_bot": True,
     "obs_scene_rules": [],  # [{"scene": "休憩", "tts_mute": True, "show_sources": [], "hide_sources": []}]
+    # BOT フィルタリング
+    "bot_filter_enabled": True,     # 既知 BOT を TTS・翻訳から自動除外
+    "bot_filter_custom": [],        # ユーザー定義の追加 BOT リスト
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}

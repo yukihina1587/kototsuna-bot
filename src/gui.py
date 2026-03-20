@@ -1684,6 +1684,40 @@ class KototsunaApp:
             except Exception as e:
                 logger.error(f"_refresh_custom_dict_list error: {e}")
 
+            self._add_panel_divider(parent)
+
+            # =====================================
+            # セクション4: BOT フィルター
+            # =====================================
+            self._add_panel_section(parent, "BOT フィルター")
+            ctk.CTkLabel(parent, text="既知 BOT の TTS・翻訳をスキップ", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 4))
+
+            bot_toggle_row = ctk.CTkFrame(parent, fg_color="transparent")
+            bot_toggle_row.pack(fill="x", pady=(0, 6))
+            ctk.CTkLabel(bot_toggle_row, text="BOT 自動フィルタリング", font=FONT_LABEL).pack(side="left")
+            self._bot_filter_enabled_var = tk.BooleanVar(value=self.config.get("bot_filter_enabled", True))
+            ctk.CTkSwitch(
+                bot_toggle_row, text="", width=50,
+                variable=self._bot_filter_enabled_var,
+                command=self._on_bot_filter_toggle,
+            ).pack(side="right")
+
+            ctk.CTkLabel(parent, text="カスタム BOT リスト（ユーザー名を追加）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(2, 2))
+
+            bot_add_row = ctk.CTkFrame(parent, fg_color="transparent")
+            bot_add_row.pack(fill="x", pady=(0, 4))
+            self._bot_filter_entry = ctk.CTkEntry(bot_add_row, placeholder_text="ユーザー名", height=28)
+            self._bot_filter_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+            ctk.CTkButton(bot_add_row, text="+", command=self._add_custom_bot, width=28, height=28).pack(side="right")
+
+            self._bot_filter_list_frame = ctk.CTkFrame(parent, fg_color=CARD_BG, height=60)
+            self._bot_filter_list_frame.pack(fill="x", pady=(0, 6))
+            self._bot_filter_list_frame.pack_propagate(False)
+            try:
+                self._refresh_bot_filter_list()
+            except Exception as e:
+                logger.error(f"_refresh_bot_filter_list error: {e}")
+
         except Exception as e:
             logger.error(f"辞書パネル構築エラー: {e}")
             import traceback
@@ -2958,6 +2992,53 @@ class KototsunaApp:
             save_config(self.config)
             translator.set_translation_dictionary(custom)
         self._refresh_custom_dict_list()
+
+    # BOT フィルターパネル用ヘルパー
+    def _on_bot_filter_toggle(self):
+        enabled = self._bot_filter_enabled_var.get()
+        self.config["bot_filter_enabled"] = enabled
+        save_config(self.config)
+        if hasattr(self, 'bot_instance') and self.bot_instance:
+            self.bot_instance._bot_filter.enabled = enabled
+
+    def _add_custom_bot(self):
+        name = self._bot_filter_entry.get().strip()
+        if not name:
+            return
+        custom: list = list(self.config.get("bot_filter_custom", []))
+        lower = name.lower()
+        if lower not in [c.lower() for c in custom]:
+            custom.append(lower)
+            self.config["bot_filter_custom"] = sorted(custom)
+            save_config(self.config)
+            if hasattr(self, 'bot_instance') and self.bot_instance:
+                self.bot_instance._bot_filter.add_custom(lower)
+        self._bot_filter_entry.delete(0, "end")
+        self._refresh_bot_filter_list()
+
+    def _remove_custom_bot(self, name: str):
+        custom: list = list(self.config.get("bot_filter_custom", []))
+        custom = [c for c in custom if c.lower() != name.lower()]
+        self.config["bot_filter_custom"] = custom
+        save_config(self.config)
+        if hasattr(self, 'bot_instance') and self.bot_instance:
+            self.bot_instance._bot_filter.remove_custom(name)
+        self._refresh_bot_filter_list()
+
+    def _refresh_bot_filter_list(self):
+        if not hasattr(self, '_bot_filter_list_frame'):
+            return
+        for w in self._bot_filter_list_frame.winfo_children():
+            w.destroy()
+        custom = self.config.get("bot_filter_custom", [])
+        if not custom:
+            ctk.CTkLabel(self._bot_filter_list_frame, text="（カスタムリストは空です）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", padx=6, pady=4)
+            return
+        for name in sorted(custom):
+            row = ctk.CTkFrame(self._bot_filter_list_frame, fg_color="transparent")
+            row.pack(fill="x", pady=1, padx=4)
+            ctk.CTkLabel(row, text=name, font=("Segoe UI", 10)).pack(side="left")
+            ctk.CTkButton(row, text="×", width=24, height=24, command=lambda n=name: self._remove_custom_bot(n)).pack(side="right")
 
     # 参加者パネル用ヘルパー
     def _add_keyword(self):

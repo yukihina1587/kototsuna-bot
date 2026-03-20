@@ -15,6 +15,7 @@ from src.tts_dictionary import get_dictionary
 from src.viewer_store import get_viewer_store
 from src.channel_manager import search_game, update_channel_info
 from src.plugin_manager import get_plugin_manager
+from src.bot_filter import BotFilter
 
 
 class EventSubHandler:
@@ -244,6 +245,11 @@ class TranslateBot(commands.Bot):
         self._viewer_store = get_viewer_store()
         # Plugin manager（わんコメ互換 plugin.js ホスト）
         self._plugin_manager = get_plugin_manager()
+        # BOT フィルタリング
+        self._bot_filter = BotFilter(
+            enabled=config.get("bot_filter_enabled", True),
+            custom_bots=config.get("bot_filter_custom", []),
+        )
 
     async def event_ready(self):
         # GUI側から run_coroutine_threadsafe で送信できるよう、実際に動いているループを保持
@@ -341,6 +347,14 @@ class TranslateBot(commands.Bot):
         # 配信者の手入力（echo=False, 名前一致）は翻訳対象として処理を継続
         if self.nick and message.author.name.lower() == self.nick.lower():
             logger.debug(f"Processing broadcaster's own message: {message.author.name}")
+
+        # === BOT フィルタリング ===
+        # 誤 BAN 対策: チャンネルオーナーと認証ユーザー（配信者 BOT 兼用時）は絶対に除外しない
+        author_name = getattr(message.author, "name", "") or ""
+        protected = {self.channel_name, self.nick or ""}
+        if self._bot_filter.is_bot(author_name, protected_names=protected):
+            logger.debug(f"BOT フィルター: {author_name} をスキップ")
+            return
 
         # === 視聴回数の記録 ===
         visit_display_name = (
