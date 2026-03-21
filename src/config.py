@@ -127,6 +127,9 @@ DEFAULT_CONFIG = {
     # BOT フィルタリング
     "bot_filter_enabled": True,     # 既知 BOT を TTS・翻訳から自動除外
     "bot_filter_custom": [],        # ユーザー定義の追加 BOT リスト
+    # セッションアーカイブ
+    "archive_enabled": True,        # コメントログの自動保存
+    "archive_retention_days": 90,   # 保持期間（日数、0=無制限）
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
@@ -173,7 +176,7 @@ def validate_config(config_data):
         validated["log_level"] = log_level
 
     # ブール値はbool化
-    for key in ["voicevox_auto_start", "auto_update_check", "include_prerelease"]:
+    for key in ["voicevox_auto_start", "auto_update_check", "include_prerelease", "archive_enabled"]:
         if not isinstance(validated.get(key), bool):
             validated[key] = bool(validated.get(key))
             changed = True
@@ -255,6 +258,14 @@ def validate_config(config_data):
         validated["chat_html_max_entries"] = max(1, min(5000, max_entries))
     except (TypeError, ValueError):
         validated["chat_html_max_entries"] = 200
+        changed = True
+
+    # archive_retention_days (int, 0=無制限, 1-3650)
+    try:
+        retention = int(validated.get("archive_retention_days", 90))
+        validated["archive_retention_days"] = max(0, min(3650, retention))
+    except (TypeError, ValueError):
+        validated["archive_retention_days"] = 90
         changed = True
 
     # リスト系

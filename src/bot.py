@@ -15,6 +15,7 @@ from src.tts_dictionary import get_dictionary
 from src.viewer_store import get_viewer_store
 from src.channel_manager import search_game, update_channel_info
 from src.plugin_manager import get_plugin_manager
+from src.session_archive import get_session_archive
 from src.bot_filter import BotFilter
 
 
@@ -250,6 +251,9 @@ class TranslateBot(commands.Bot):
             enabled=config.get("bot_filter_enabled", True),
             custom_bots=config.get("bot_filter_custom", []),
         )
+        # セッションアーカイブ
+        self._archive_enabled = config.get("archive_enabled", True)
+        self._archive = get_session_archive() if self._archive_enabled else None
 
     async def event_ready(self):
         # GUI側から run_coroutine_threadsafe で送信できるよう、実際に動いているループを保持
@@ -300,6 +304,21 @@ class TranslateBot(commands.Bot):
         await asyncio.to_thread(self._plugin_manager.load_plugins)
         if self._plugin_manager.count > 0:
             logger.info(f"Kototsuna plugins loaded: {self._plugin_manager.count}")
+
+        # セッションアーカイブを開始
+        if self._archive:
+            try:
+                self._archive.open()
+                self._archive.start_session(self.channel_name)
+                # 起動時に保持期間超過データをクリーンアップ
+                config = load_config()
+                retention = config.get("archive_retention_days", 90)
+                if retention > 0:
+                    removed = self._archive.cleanup(retention)
+                    if removed > 0:
+                        logger.info(f"Archive cleanup removed {removed} old sessions")
+            except Exception as e:
+                logger.error(f"Failed to start session archive: {e}", exc_info=True)
 
     def _on_follow_event(self, follower_name: str):
         """フォローイベントのコールバック"""
@@ -492,6 +511,7 @@ class TranslateBot(commands.Bot):
                 extra_emotes=tp_emotes,
             )
             self.gui.on_comment_received(comment)
+            self._archive_comment(comment, bits)
 
             # TTS: チャット読み上げ（翻訳無効時も原文を読み上げる）
             if self.tts_enabled_getter():
@@ -549,6 +569,9 @@ class TranslateBot(commands.Bot):
         # GUIにコメントデータを渡す（全てのコメントをタイル表示）
         self.gui.on_comment_received(comment)
 
+        # セッションアーカイブに記録
+        self._archive_comment(comment, bits)
+
         # TTS: チャット読み上げ
         if self.tts_enabled_getter():
             # デフォルトは原文
@@ -576,6 +599,23 @@ class TranslateBot(commands.Bot):
                 except Exception as e:
                     logger.error(f"TTS speak error: {e}", exc_info=True)
 
+
+    def _archive_comment(self, comment, bits: int = 0) -> None:
+        """コメントをセッションアーカイブに記録する。"""
+        if not self._archive or not self._archive._current_session_id:
+            return
+        try:
+            self._archive.add_comment(
+                username=comment.username,
+                display_name=comment.display_name,
+                original_text=comment.message,
+                translated_text=comment.translated,
+                source_lang=getattr(comment, "original_language", None),
+                bits=bits,
+                is_sub=comment.is_subscriber,
+            )
+        except Exception as e:
+            logger.debug(f"Archive add_comment error: {e}")
 
     async def _handle_command(self, message) -> bool:
         """コマンドメッセージを処理する。
@@ -1428,6 +1468,13 @@ class TranslateBot(commands.Bot):
         # クリーンアップ
         self._running_loop = None
         self._processed_message_ids.clear()
+        # セッションアーカイブを終了
+        if self._archive:
+            try:
+                self._archive.end_session()
+                self._archive.close()
+            except Exception as e:
+                logger.warning(f"Exception closing session archive: {e}")
         # プラグインを停止
         try:
             self._plugin_manager.unload_all()

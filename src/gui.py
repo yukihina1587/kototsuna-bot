@@ -1414,6 +1414,27 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
+        # セッションアーカイブ設定
+        self._add_panel_section(parent, "セッションアーカイブ")
+        archive_toggle_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        archive_toggle_frame.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(archive_toggle_frame, text="コメントログを自動保存", font=FONT_LABEL).pack(side="left")
+        self.archive_enabled_var = tk.BooleanVar(value=self.config.get("archive_enabled", True))
+        ctk.CTkSwitch(archive_toggle_frame, text="", variable=self.archive_enabled_var,
+                       command=self._on_archive_toggle).pack(side="right")
+
+        retention_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        retention_frame.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(retention_frame, text="保持期間", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(side="left")
+        retention_options = ["30日", "90日", "365日", "無制限"]
+        current_days = self.config.get("archive_retention_days", 90)
+        retention_display = {0: "無制限", 30: "30日", 90: "90日", 365: "365日"}
+        self.archive_retention_var = tk.StringVar(value=retention_display.get(current_days, f"{current_days}日"))
+        ctk.CTkOptionMenu(retention_frame, values=retention_options, variable=self.archive_retention_var,
+                          command=self._on_archive_retention_changed, width=100).pack(side="right")
+
+        self._add_panel_divider(parent)
+
         # アップデート設定
         self._add_panel_section(parent, "アップデート")
 
@@ -1526,6 +1547,25 @@ class KototsunaApp:
             logger.error(f"コマンドパネル構築エラー: {e}")
             import traceback
             traceback.print_exc()
+
+    def _on_archive_toggle(self):
+        """セッションアーカイブのON/OFFを切り替え"""
+        enabled = self.archive_enabled_var.get()
+        config = load_config()
+        config["archive_enabled"] = enabled
+        save_config(config)
+        state = "有効" if enabled else "無効"
+        self.log_message(f"セッションアーカイブを{state}にしました", log_type="system")
+
+    def _on_archive_retention_changed(self, display_name: str):
+        """アーカイブ保持期間を変更"""
+        display_to_days = {"30日": 30, "90日": 90, "365日": 365, "無制限": 0}
+        days = display_to_days.get(display_name, 90)
+        config = load_config()
+        config["archive_retention_days"] = days
+        save_config(config)
+        label = "無制限" if days == 0 else f"{days}日"
+        self.log_message(f"アーカイブ保持期間を{label}に変更しました", log_type="system")
 
     def _on_commands_toggle(self):
         """コマンド機能のON/OFFを切り替え"""
