@@ -63,7 +63,7 @@ DEFAULT_CONFIG = {
     "follow_sound_volume": 80,
     # 翻訳フィルタとカスタム辞書
     "translation_filters": [],
-    "translation_dictionary": [],  # [{ "source": "原文", "target": "置換後" }]
+    "translation_dictionary": [],  # migration用: translation_dict.jsonに移行済みなら空
     # コメント表示/出力設定
     "comment_log_bg": "#0E1728",
     "comment_log_fg": "#E8F0FF",

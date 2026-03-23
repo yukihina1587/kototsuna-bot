@@ -9,6 +9,7 @@ from collections import OrderedDict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from src.logger import logger
 from src.performance_logger import get_perf
+from src.translation_dictionary import TranslationDictionary
 
 
 class DeepLRetryableError(Exception):
@@ -244,7 +245,7 @@ _rate_limiter = _RateLimiter()
 _session_manager = _SessionManager()
 _batcher = _TranslationBatcher()
 _translation_filters = []
-_translation_dictionary = []
+_dict_instance: TranslationDictionary | None = None
 _translation_engine = "deepl"  # deepl / local / hybrid
 _stats = {
     "requests": 0,
@@ -322,18 +323,27 @@ def set_translation_filters(filters):
     logger.info(f"Translation filters updated: {len(_translation_filters)} entries")
 
 
-def set_translation_dictionary(entries):
-    """翻訳前置換の辞書を設定"""
-    global _translation_dictionary
-    normalized = []
-    for e in entries or []:
-        if isinstance(e, dict):
-            src = str(e.get("source", ""))
-            tgt = str(e.get("target", ""))
-            if src:
-                normalized.append({"source": src, "target": tgt})
-    _translation_dictionary = normalized
-    logger.info(f"Translation dictionary updated: {len(_translation_dictionary)} entries")
+def set_translation_dictionary(entries: list[dict]) -> None:
+    """後方互換用。config.jsonの辞書をインスタンスにセット（マイグレーション）。"""
+    global _dict_instance
+    if _dict_instance is None:
+        return
+    if entries:
+        count = _dict_instance.migrate_from_config(entries)
+        if count:
+            logger.info(f"Migrated {count} entries from config to translation_dict.json")
+
+
+def init_translation_dictionary() -> TranslationDictionary:
+    """起動時に辞書インスタンスを初期化して返す。"""
+    global _dict_instance
+    _dict_instance = TranslationDictionary()
+    return _dict_instance
+
+
+def get_translation_dictionary() -> TranslationDictionary | None:
+    """辞書インスタンスを返す。"""
+    return _dict_instance
 
 
 def should_filter(text: str) -> bool:
@@ -345,16 +355,10 @@ def should_filter(text: str) -> bool:
 
 
 def apply_translation_dictionary(text: str) -> str:
-    """翻訳前に辞書置換を適用"""
-    if not text:
+    """翻訳前に辞書置換を適用する。"""
+    if not text or _dict_instance is None:
         return text
-    result = text
-    for entry in _translation_dictionary:
-        src = entry.get("source", "")
-        tgt = entry.get("target", "")
-        if src:
-            result = result.replace(src, tgt)
-    return result
+    return _dict_instance.apply(text)
 
 
 def get_stats():

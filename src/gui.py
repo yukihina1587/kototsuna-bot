@@ -43,6 +43,7 @@ from src.viewer_store import get_viewer_store
 from src.voicevox_manager import get_voicevox_manager
 from src.comment_data import CommentData
 from src import translator, __version__
+from src.translator import init_translation_dictionary, get_translation_dictionary
 from src.resource_monitor import get_monitor
 from src.gui_helpers import DifferentialListManager, create_participant_row, create_simple_list_row
 from src.obs_integration import ObsController, find_matching_scene_rule
@@ -188,6 +189,7 @@ class KototsunaApp:
         # 設定読み込み
         self.config = load_config()
         translator.set_translation_filters(self.config.get("translation_filters", []))
+        init_translation_dictionary()
         translator.set_translation_dictionary(self.config.get("translation_dictionary", []))
         translator.set_translation_engine(self.config.get("translation_engine", "deepl"))
 
@@ -6170,6 +6172,16 @@ window.onload = function() {{
         self.translation_dict_dst = ctk.CTkEntry(add_tdict_row, placeholder_text="置換後", width=180)
         self.translation_dict_dst.pack(side="left", padx=4)
         ctk.CTkButton(add_tdict_row, text="追加", command=self.add_translation_dict_entry, width=80).pack(side="left", padx=4)
+        self.translation_dict_regex_var = tk.BooleanVar(value=False)
+        ctk.CTkCheckBox(add_tdict_row, text="正規表現", variable=self.translation_dict_regex_var, width=90).pack(side="left", padx=6)
+        from src.translation_dictionary import TranslationDictionary as _TDict
+        if _TDict.onecomme_available():
+            ctk.CTkButton(
+                add_tdict_row,
+                text="わんこめからインポート",
+                command=self.import_from_onecomme,
+                width=160
+            ).pack(side="left", padx=6)
         self.translation_dict_list = ctk.CTkScrollableFrame(trans_dict_frame, height=140, fg_color="transparent")
         self.translation_dict_list.pack(fill="both", expand=True, padx=8, pady=(4, 8))
 
@@ -6300,44 +6312,49 @@ window.onload = function() {{
     def add_translation_dict_entry(self):
         src = self.translation_dict_src.get().strip()
         dst = self.translation_dict_dst.get().strip()
+        is_regex = getattr(self, 'translation_dict_regex_var', None)
+        is_regex = is_regex.get() if is_regex else False
         if not src:
             messagebox.showwarning("入力エラー", "元の文言を入力してください")
             return
-        entries = list(self.config.get("translation_dictionary", []))
-        entries.append({"source": src, "target": dst})
-        self.config["translation_dictionary"] = entries
-        translator.set_translation_dictionary(entries)
-        save_config(self.config)
+        dict_instance = get_translation_dictionary()
+        if dict_instance is None:
+            return
+        ok, err = dict_instance.add(src, dst, is_regex=is_regex)
+        if not ok:
+            messagebox.showerror("エラー", err)
+            return
         self.translation_dict_src.delete(0, "end")
         self.translation_dict_dst.delete(0, "end")
         self.refresh_translation_dict_list()
-        self.log_message(f"翻訳辞書を追加: {src} → {dst}")
+        label = f"（正規表現）{src}" if is_regex else src
+        self.log_message(f"翻訳辞書を追加: {label} → {dst}")
 
     def remove_translation_dict_entry(self, index):
-        entries = list(self.config.get("translation_dictionary", []))
-        if 0 <= index < len(entries):
-            removed = entries.pop(index)
-            self.config["translation_dictionary"] = entries
-            translator.set_translation_dictionary(entries)
-            save_config(self.config)
+        dict_instance = get_translation_dictionary()
+        if dict_instance is None:
+            return
+        removed = dict_instance.remove(index)
+        if removed:
             self.refresh_translation_dict_list()
             self.log_message(f"翻訳辞書を削除: {removed.get('source', '')}")
 
     def refresh_translation_dict_list(self):
         for widget in self.translation_dict_list.winfo_children():
             widget.destroy()
-        entries = self.config.get("translation_dictionary", [])
+        dict_instance = get_translation_dictionary()
+        entries = dict_instance.get_all() if dict_instance else []
         if not entries:
             ctk.CTkLabel(self.translation_dict_list, text="（翻訳辞書はありません）", text_color="gray").pack(pady=6)
             return
         for idx, entry in enumerate(entries):
             row = ctk.CTkFrame(self.translation_dict_list, fg_color="transparent")
             row.pack(fill="x", pady=2, padx=2)
-            ctk.CTkLabel(
-                row,
-                text=f"{entry.get('source','')}  →  {entry.get('target','')}",
-                anchor="w"
-            ).pack(side="left", padx=6)
+            src = entry.get("source", "")
+            tgt = entry.get("target", "")
+            is_regex = entry.get("is_regex", False)
+            label = f"[正規表現] {src}  →  {tgt}" if is_regex else f"{src}  →  {tgt}"
+            ctk.CTkLabel(row, text=label, anchor="w").pack(side="left", padx=6)
             ctk.CTkButton(
                 row,
                 text="削除",
@@ -6346,6 +6363,21 @@ window.onload = function() {{
                 hover_color="#dc2626",
                 command=lambda i=idx: self.remove_translation_dict_entry(i)
             ).pack(side="right", padx=4)
+
+    def import_from_onecomme(self):
+        dict_instance = get_translation_dictionary()
+        if dict_instance is None:
+            return
+        added, skipped, err = dict_instance.import_from_onecomme()
+        if err:
+            messagebox.showerror("インポートエラー", err)
+            return
+        self.refresh_translation_dict_list()
+        messagebox.showinfo(
+            "わんこめインポート完了",
+            f"追加: {added}件\nスキップ（重複）: {skipped}件"
+        )
+        self.log_message(f"わんこめ辞書をインポート: {added}件追加、{skipped}件スキップ")
 
     def build_participants_tab(self):
         """参加者管理タブの構築"""
