@@ -10,6 +10,11 @@ load_dotenv()
 REDIRECT_URI = 'http://localhost:8787/redirect.html'
 SCOPES = ['chat:read', 'chat:edit', 'moderator:read:followers', 'channel:manage:broadcast']
 
+
+def check_missing_scopes(token_scopes: list[str]) -> list[str]:
+    """必要なスコープのうちトークンに含まれないものを返す"""
+    return [s for s in SCOPES if s not in token_scopes]
+
 # アプリ同梱のデフォルトClient ID（.env の TWITCH_CLIENT_ID から読み込む）
 # リポジトリオーナーが dev.twitch.tv でアプリ登録して .env に設定しておく
 APP_DEFAULT_CLIENT_ID: str = os.environ.get("TWITCH_CLIENT_ID", "")

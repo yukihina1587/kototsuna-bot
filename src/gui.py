@@ -28,7 +28,7 @@ except Exception as e:
     pygame = None
     PYGAME_AVAILABLE = False
 
-from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info, get_effective_client_id, APP_DEFAULT_CLIENT_ID
+from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info, get_effective_client_id, APP_DEFAULT_CLIENT_ID, check_missing_scopes
 from src.bot import TranslateBot
 from src.config import load_config, save_config, backup_config, restore_config, reset_config, validate_deepl_api_key, validate_twitch_client_id
 from src.commands_store import CommandStore, CustomCommand
@@ -5267,21 +5267,30 @@ window.onload = function() {{
             messagebox.showerror("エラー", "Client ID が設定されていません。\n「設定」パネルで入力してください。")
             return
 
-        # 既に有効なトークンがある場合はスキップ
-        if self.token and validate_token(self.token):
-            self.log_message("✅ 既に有効なトークンがあります。再認証は不要です。")
-            self._set_status("認証済み。BOTを起動できます。", "success")
-            self._update_auth_button_states(authenticated=True)
-            return
+        # 既に有効なトークンがある場合はスコープもチェック
+        if self.token:
+            info = validate_token_with_info(self.token)
+            if info and isinstance(info, dict):
+                missing = check_missing_scopes(info.get('scopes', []))
+                if not missing:
+                    self.log_message("✅ 既に有効なトークンがあります。再認証は不要です。")
+                    self._set_status("認証済み。BOTを起動できます。", "success")
+                    self._update_auth_button_states(authenticated=True)
+                    return
+                else:
+                    self.log_message(f"⚠ 新しい権限が必要です: {', '.join(missing)}")
+                    self.log_message("🔄 再認証を開始します...")
 
         # 保存されたトークンをチェック
         saved_token = self.config.get("twitch_access_token", "").strip()
-        if saved_token and validate_token(saved_token):
-            self.token = saved_token
-            self.log_message("✅ 保存されたトークンが有効です。再認証は不要です。")
-            self._set_status("認証済み。BOTを起動できます。", "success")
-            self._update_auth_button_states(authenticated=True)
-            return
+        if saved_token:
+            info = validate_token_with_info(saved_token)
+            if info and isinstance(info, dict) and not check_missing_scopes(info.get('scopes', [])):
+                self.token = saved_token
+                self.log_message("✅ 保存されたトークンが有効です。再認証は不要です。")
+                self._set_status("認証済み。BOTを起動できます。", "success")
+                self._update_auth_button_states(authenticated=True)
+                return
 
         # 有効なトークンがない場合のみブラウザ認証を開始
         self._set_status("トークン認証を開始します。ブラウザを開いてください。", "info")
@@ -5315,6 +5324,12 @@ window.onload = function() {{
                 self.log_message("✅ 保存されたトークンが有効です。自動ログインしました。")
             self._set_status("保存されたトークンで自動ログイン完了", "success")
             self._update_auth_button_states(authenticated=True)
+            # スコープ不足チェック
+            missing = check_missing_scopes(user_info.get('scopes', []))
+            if missing:
+                self.log_message(f"⚠ アプリ更新により新しい権限が必要です: {', '.join(missing)}")
+                self.log_message("🔄 「Twitch認証」ボタンから再認証してください。")
+                self._update_auth_button_states(authenticated=False)
         elif user_info is None:
             # APIが明示的に「無効」と応答 → トークンを削除
             logger.warning("Saved token is invalid (API confirmed).")
