@@ -43,7 +43,7 @@ from src.viewer_store import get_viewer_store
 from src.voicevox_manager import get_voicevox_manager
 from src.comment_data import CommentData
 from src import translator, __version__
-from src.translator import init_translation_dictionary, get_translation_dictionary
+from src.translator import init_translation_dictionary, get_translation_dictionary, translate_text_sync
 from src.resource_monitor import get_monitor
 from src.gui_helpers import DifferentialListManager, create_participant_row, create_simple_list_row
 from src.obs_integration import ObsController, find_matching_scene_rule
@@ -218,6 +218,10 @@ class KototsunaApp:
         # 認証済みユーザー名（トークン検証時に取得）
         self.auth_username = tk.StringVar(value="")
         self.lang_mode = tk.StringVar(value=self.config.get("translate_mode", "自動"))
+        self.translate_mode_2_var = tk.StringVar(value=self.config.get("translate_mode_2", "") or "オフ")
+        self.voice_chat_lang_var = tk.StringVar(value=self.config.get("voice_chat_lang", "日→英"))
+        self.voice_chat_lang_2_var = tk.StringVar(value=self.config.get("voice_chat_lang_2", "") or "オフ")
+        self._voice_chat_last_sent: float = 0.0
         self.translation_engine = tk.StringVar(value=self.config.get("translation_engine", "deepl"))
         # チャット翻訳は毎回オフから開始（安全のため）
         self.chat_translation_enabled = tk.BooleanVar(value=False)
@@ -284,7 +288,7 @@ class KototsunaApp:
         # 音声翻訳クラスの初期化
         mic_device_index = self.config.get("mic_device_index", None)
         self.voice_translator = VoiceTranslator(
-            mode_getter=lambda: self.lang_mode.get(),
+            mode_getter=lambda: load_config().get("voice_chat_lang", "日→英"),
             api_key_getter=lambda: self.deepl_key.get(),
             callback=self.voice_callback,
             config_data=self.config,
@@ -3279,6 +3283,8 @@ class KototsunaApp:
         )
         self.translation_toggle.pack_forget()  # gridで配置するため
         self.translation_toggle.grid(row=3, column=1, sticky="w", padx=(0, 14), pady=6)
+        ctk.CTkLabel(card_connect, text="翻訳言語2", font=FONT_SUBTITLE, text_color=TEXT_SUBTLE).grid(row=4, column=0, sticky="e", padx=12, pady=6)
+        ctk.CTkOptionMenu(card_connect, variable=self.translate_mode_2_var, values=['オフ', '自動', '英→日', '日→英'], height=34, fg_color=PANEL_BG, button_color=ACCENT_SECONDARY, button_hover_color="#1EA4D8").grid(row=4, column=1, sticky="w", padx=(0, 14), pady=6)
 
         # 音声/読み上げカード
         card_voice = ctk.CTkFrame(controls, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
@@ -3301,6 +3307,10 @@ class KototsunaApp:
             row = 1 + idx // 2
             col = idx % 2
             ctk.CTkSwitch(card_voice, text=label, variable=var, command=cmd, font=FONT_BODY).grid(row=row, column=col, sticky="w", padx=12, pady=5)
+        ctk.CTkLabel(card_voice, text="音声チャット言語1", font=FONT_SUBTITLE, text_color=TEXT_SUBTLE).grid(row=3, column=0, sticky="e", padx=12, pady=4)
+        ctk.CTkOptionMenu(card_voice, variable=self.voice_chat_lang_var, values=['自動', '英→日', '日→英'], height=30, fg_color=PANEL_BG, button_color=ACCENT_SECONDARY, button_hover_color="#1EA4D8").grid(row=3, column=1, sticky="w", padx=(0, 14), pady=4)
+        ctk.CTkLabel(card_voice, text="音声チャット言語2", font=FONT_SUBTITLE, text_color=TEXT_SUBTLE).grid(row=4, column=0, sticky="e", padx=12, pady=4)
+        ctk.CTkOptionMenu(card_voice, variable=self.voice_chat_lang_2_var, values=['オフ', '自動', '英→日', '日→英'], height=30, fg_color=PANEL_BG, button_color=ACCENT_SECONDARY, button_hover_color="#1EA4D8").grid(row=4, column=1, sticky="w", padx=(0, 14), pady=4)
 
         # サマリーカード（ステータス表示用）
         card_status = ctk.CTkFrame(controls, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
@@ -4135,6 +4145,9 @@ class KototsunaApp:
             self.channel,
             self.channel_mode,
             self.lang_mode,
+            self.translate_mode_2_var,
+            self.voice_chat_lang_var,
+            self.voice_chat_lang_2_var,
             self.bits_sound_path,
             self.sub_sound_path,
             self.bits_volume_var,
@@ -4175,6 +4188,11 @@ class KototsunaApp:
             self.config["channel_name"] = self.channel.get().strip()
             self.config["channel_mode"] = self.channel_mode.get()
             self.config["translate_mode"] = self.lang_mode.get()
+            t2 = self.translate_mode_2_var.get()
+            self.config["translate_mode_2"] = "" if t2 == "オフ" else t2
+            self.config["voice_chat_lang"] = self.voice_chat_lang_var.get()
+            vl2 = self.voice_chat_lang_2_var.get()
+            self.config["voice_chat_lang_2"] = "" if vl2 == "オフ" else vl2
             self.config["translation_engine"] = self.translation_engine.get()
             self.config["bits_sound_path"] = self.bits_sound_path.get().strip()
             self.config["bits_sound_volume"] = int(self.bits_volume_var.get())
@@ -6364,6 +6382,13 @@ window.onload = function() {{
                 command=lambda i=idx: self.remove_translation_dict_entry(i)
             ).pack(side="right", padx=4)
 
+    def _voice_chat_cooldown_ok(self, cooldown_sec: float) -> bool:
+        """音声チャットのクールダウンが経過しているか確認する。"""
+        import time
+        if cooldown_sec <= 0:
+            return True
+        return time.time() - self._voice_chat_last_sent >= cooldown_sec
+
     def import_from_onecomme(self):
         dict_instance = get_translation_dictionary()
         if dict_instance is None:
@@ -7491,5 +7516,26 @@ window.onload = function() {{
 
         # 音声翻訳結果をチャット送信（音声翻訳機能がONなら送信）
         if self.voice_var.get() and translated and translated != "(No API Key)":
-            if not self._send_text_to_chat(f"[Voice] {translated}"):
-                logger.warning("Voice translation could not be sent to chat (connection not ready?)")
+            min_len = cfg.get("voice_chat_min_length", 5)
+            cooldown_sec = cfg.get("voice_chat_cooldown", 3)
+            fmt = cfg.get("voice_chat_format", "[{lang}] {translation}")
+            lang1 = cfg.get("voice_chat_lang", "日→英")
+            lang2 = cfg.get("voice_chat_lang_2", "")
+            _lang_labels = {"自動": "Auto", "英→日": "JA", "日→英": "EN"}
+
+            if len(text) >= min_len and self._voice_chat_cooldown_ok(cooldown_sec):
+                import time
+                label1 = _lang_labels.get(lang1, lang1)
+                msg1 = fmt.format(lang=label1, translation=translated)
+                if self._send_text_to_chat(msg1):
+                    self._voice_chat_last_sent = time.time()
+                else:
+                    logger.warning("Voice translation could not be sent to chat (connection not ready?)")
+
+                if lang2 and lang2 != lang1:
+                    api_key = self.deepl_key.get()
+                    translated_2 = translate_text_sync(text, lang2, api_key or "")
+                    if translated_2 and translated_2 != text and translated_2 != translated:
+                        label2 = _lang_labels.get(lang2, lang2)
+                        msg2 = fmt.format(lang=label2, translation=translated_2)
+                        self._send_text_to_chat(msg2)

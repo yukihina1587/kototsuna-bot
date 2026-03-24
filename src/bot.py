@@ -7,7 +7,7 @@ from src.logger import logger
 from src.tts import get_tts_instance, is_japanese
 from src.participant_tracker import get_tracker
 from src.comment_data import create_twitch_comment
-from src.config import load_config
+from src.config import load_config, save_config, VALID_TRANSLATE_MODES
 from src.commands import PermissionLevel, CooldownManager, check_permission, substitute_variables
 from src.commands_store import CommandStore
 from src.emote_provider import EmoteProvider
@@ -556,6 +556,15 @@ class TranslateBot(commands.Bot):
         if translated and translated != message.content:
             await message.channel.send(f"[Chat] {translated}" + '\u200B')
 
+        # 2言語目チャット翻訳（設定されている場合）
+        lang_mode_2 = config.get("translate_mode_2", "")
+        if lang_mode_2 and lang_mode_2 != lang_mode:
+            translated_2 = await translate_text_batched(content, lang_mode_2, self.deepl_api_key)
+            if translated_2:
+                translated_2 = translated_2.replace("<k>", "").replace("</k>", "")
+            if translated_2 and translated_2 != message.content and translated_2 != translated:
+                await message.channel.send(f"[Chat2] {translated_2}" + '\u200B')
+
         # CommentDataオブジェクトを作成（全てのコメントを表示）
         comment = create_twitch_comment(
             username=message.author.name,
@@ -661,6 +670,9 @@ class TranslateBot(commands.Bot):
             "tts": self._cmd_tts,
             "translation": self._cmd_translation,
             "voicechat": self._cmd_voicechat,
+            "lang2": self._cmd_lang2,
+            "voicelang": self._cmd_voicelang,
+            "voicelang2": self._cmd_voicelang2,
             "dict": self._cmd_dict,
             "voice": self._cmd_voice,
             "myvoice": self._cmd_myvoice,
@@ -690,8 +702,8 @@ class TranslateBot(commands.Bot):
     async def _cmd_help(self, message, args: str) -> None:
         """!help — 使用可能なコマンド一覧を表示"""
         builtin_cmds = [
-            "!help", "!translate", "!lang",
-            "!tts", "!translation", "!voicechat",
+            "!help", "!translate", "!lang", "!lang2",
+            "!tts", "!translation", "!voicechat", "!voicelang", "!voicelang2",
             "!dict", "!voice", "!myvoice", "!visits",
             "!queue", "!leave", "!stream",
         ]
@@ -718,8 +730,14 @@ class TranslateBot(commands.Bot):
 
     async def _cmd_lang(self, message, args: str) -> None:
         """!lang — 現在の翻訳モードを表示"""
+        config = load_config()
         lang_mode = self.get_lang_mode()
-        await message.channel.send(f"現在の翻訳モード: {lang_mode}" + '\u200B')
+        lang_mode_2 = config.get("translate_mode_2", "") or "off"
+        voice_lang = config.get("voice_chat_lang", "日→英")
+        voice_lang_2 = config.get("voice_chat_lang_2", "") or "off"
+        await message.channel.send(
+            f"翻訳モード: {lang_mode} / 言語2: {lang_mode_2} / 音声言語1: {voice_lang} / 音声言語2: {voice_lang_2}" + '\u200B'
+        )
 
     async def _cmd_tts(self, message, args: str) -> None:
         """!tts on/off — TTS有効/無効切替（モデレーター以上）"""
@@ -789,6 +807,68 @@ class TranslateBot(commands.Bot):
                 enabled = self.gui.voice_var.get()
             status = "ON" if enabled else "OFF"
             await message.channel.send(f"声→翻訳チャット: {status} (使い方: !voicechat on/off)" + '\u200B')
+
+    async def _cmd_lang2(self, message, args: str) -> None:
+        """!lang2 [自動|英→日|日→英|off] — チャット翻訳2言語目を設定（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        arg = args.strip()
+        config = load_config()
+        if not arg:
+            current = config.get("translate_mode_2", "") or "off"
+            await message.channel.send(f"翻訳言語2: {current} (使い方: !lang2 自動/英→日/日→英/off)" + '\u200B')
+            return
+        if arg == "off":
+            config["translate_mode_2"] = ""
+            save_config(config)
+            await message.channel.send("翻訳言語2を無効にしました" + '\u200B')
+        elif arg in VALID_TRANSLATE_MODES:
+            config["translate_mode_2"] = arg
+            save_config(config)
+            await message.channel.send(f"翻訳言語2を {arg} に設定しました" + '\u200B')
+        else:
+            await message.channel.send("使い方: !lang2 自動/英→日/日→英/off" + '\u200B')
+
+    async def _cmd_voicelang(self, message, args: str) -> None:
+        """!voicelang [自動|英→日|日→英] — 音声チャット翻訳言語1を設定（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        arg = args.strip()
+        config = load_config()
+        if not arg:
+            current = config.get("voice_chat_lang", "日→英")
+            await message.channel.send(f"音声チャット言語1: {current} (使い方: !voicelang 自動/英→日/日→英)" + '\u200B')
+            return
+        if arg in VALID_TRANSLATE_MODES:
+            config["voice_chat_lang"] = arg
+            save_config(config)
+            await message.channel.send(f"音声チャット言語1を {arg} に設定しました" + '\u200B')
+        else:
+            await message.channel.send("使い方: !voicelang 自動/英→日/日→英" + '\u200B')
+
+    async def _cmd_voicelang2(self, message, args: str) -> None:
+        """!voicelang2 [自動|英→日|日→英|off] — 音声チャット翻訳言語2を設定（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        arg = args.strip()
+        config = load_config()
+        if not arg:
+            current = config.get("voice_chat_lang_2", "") or "off"
+            await message.channel.send(f"音声チャット言語2: {current} (使い方: !voicelang2 自動/英→日/日→英/off)" + '\u200B')
+            return
+        if arg == "off":
+            config["voice_chat_lang_2"] = ""
+            save_config(config)
+            await message.channel.send("音声チャット言語2を無効にしました" + '\u200B')
+        elif arg in VALID_TRANSLATE_MODES:
+            config["voice_chat_lang_2"] = arg
+            save_config(config)
+            await message.channel.send(f"音声チャット言語2を {arg} に設定しました" + '\u200B')
+        else:
+            await message.channel.send("使い方: !voicelang2 自動/英→日/日→英/off" + '\u200B')
 
     async def _cmd_dict(self, message, args: str) -> None:
         """!dict — TTS辞書管理コマンド（モデレーター以上）

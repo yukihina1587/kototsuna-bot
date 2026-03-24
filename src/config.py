@@ -45,6 +45,12 @@ DEFAULT_CONFIG = {
     "channel_name": "",
     "channel_mode": "manual",  # auto: 認証アカウントと同じ, manual: 手動入力
     "translate_mode": "自動",
+    "translate_mode_2": "",              # 2言語目翻訳（空=無効、有効値: 自動/英→日/日→英）
+    "voice_chat_lang": "日→英",          # 音声チャット専用の翻訳先言語1
+    "voice_chat_lang_2": "",             # 音声チャット翻訳言語2（空=無効）
+    "voice_chat_format": "[{lang}] {translation}",  # 音声チャット投稿フォーマット
+    "voice_chat_min_length": 5,          # 音声チャット最低文字数（0=制限なし）
+    "voice_chat_cooldown": 3,            # 音声チャット連続投稿クールダウン（秒）
     "voicevox_url": "http://localhost:50021",
     "voicevox_speaker_id": 14,  # 冥鳴ひまり (Meimei Himari)
     "voicevox_engine_path": "",  # VOICEVOX Engineの実行ファイルパス
@@ -152,6 +158,44 @@ def validate_config(config_data):
     if validated.get("translate_mode") not in VALID_TRANSLATE_MODES:
         logger.warning(f"translate_mode is invalid: {validated.get('translate_mode')}, fallback to 自動")
         validated["translate_mode"] = "自動"
+        changed = True
+
+    # translate_mode_2 の検証
+    t2 = validated.get("translate_mode_2", "")
+    if t2 and t2 not in VALID_TRANSLATE_MODES:
+        validated["translate_mode_2"] = ""
+        changed = True
+
+    # voice_chat_lang の検証
+    if validated.get("voice_chat_lang", "") not in VALID_TRANSLATE_MODES:
+        validated["voice_chat_lang"] = "日→英"
+        changed = True
+
+    # voice_chat_lang_2 の検証
+    vl2 = validated.get("voice_chat_lang_2", "")
+    if vl2 and vl2 not in VALID_TRANSLATE_MODES:
+        validated["voice_chat_lang_2"] = ""
+        changed = True
+
+    # voice_chat_format の検証
+    if not isinstance(validated.get("voice_chat_format"), str):
+        validated["voice_chat_format"] = "[{lang}] {translation}"
+        changed = True
+
+    # voice_chat_min_length の検証 (0-1000)
+    try:
+        vml = int(validated.get("voice_chat_min_length", 5))
+        validated["voice_chat_min_length"] = max(0, min(1000, vml))
+    except (TypeError, ValueError):
+        validated["voice_chat_min_length"] = 5
+        changed = True
+
+    # voice_chat_cooldown の検証 (0-300)
+    try:
+        vcd = int(validated.get("voice_chat_cooldown", 3))
+        validated["voice_chat_cooldown"] = max(0, min(300, vcd))
+    except (TypeError, ValueError):
+        validated["voice_chat_cooldown"] = 3
         changed = True
 
     # ui_theme
