@@ -721,7 +721,7 @@ class TranslateBot(commands.Bot):
             "!help", "!translate", "!lang", "!lang2",
             "!tts", "!translation", "!voicechat", "!voicelang", "!voicelang2",
             "!dict", "!voice", "!myvoice", "!visits",
-            "!queue", "!leave", "!stream",
+            "!queue", "!leave", "!nextround", "!roundreset", "!played", "!stream",
             "!fortune", "!dice", "!coin", "!slot", "!roulette", "!janken",
             "!startguess", "!guess", "!endguess", "!giveaway", "!enter",
         ]

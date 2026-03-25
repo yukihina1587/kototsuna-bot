@@ -4,6 +4,14 @@
 
 ---
 
+## [1.6.3-beta.7] - 2026-03-25
+
+### バグ修正
+- `uv sync` 実行後に numpy が消える問題を修正（`[project.optional-dependencies]` → `[dependency-groups]` に移動）
+- `!help` コマンドに `!nextround`・`!roundreset`・`!played` が表示されない問題を修正
+
+---
+
 ## [1.6.3-beta.6] - 2026-03-25
 
 ### バグ修正
