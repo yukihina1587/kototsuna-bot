@@ -136,6 +136,15 @@ DEFAULT_CONFIG = {
     # セッションアーカイブ
     "archive_enabled": True,        # コメントログの自動保存
     "archive_retention_days": 90,   # 保持期間（日数、0=無制限）
+    # ゲーム機能
+    "game_enabled": True,           # ゲームコマンドの有効/無効
+    "game_fortune_cooldown": 30,    # おみくじクールダウン（秒）
+    "game_dice_cooldown": 5,        # さいころクールダウン（秒）
+    "game_coin_cooldown": 5,        # コイントスクールダウン（秒）
+    "game_slot_cooldown": 10,       # スロットクールダウン（秒）
+    "game_roulette_cooldown": 10,   # ルーレットクールダウン（秒）
+    "game_janken_cooldown": 5,      # じゃんけんクールダウン（秒）
+    "game_guess_cooldown": 3,       # 数字当てクールダウン（秒）
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}

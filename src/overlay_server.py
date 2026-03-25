@@ -45,6 +45,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+        elif self.path == '/api/giveaway':
+            from src.games import get_giveaway_manager
+            state = get_giveaway_manager().get_state()
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(state, ensure_ascii=False).encode('utf-8'))
         elif self.path.startswith('/subtitle'):
             self._serve_subtitle_html()
         elif self.path.startswith('/chat'):

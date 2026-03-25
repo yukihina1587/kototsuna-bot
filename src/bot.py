@@ -17,6 +17,10 @@ from src.channel_manager import search_game, update_channel_info
 from src.plugin_manager import get_plugin_manager
 from src.session_archive import get_session_archive
 from src.bot_filter import BotFilter
+from src.games import (
+    fortune, roll_dice, coin_toss, spin_slot, spin_roulette,
+    play_janken, get_number_guess_game, get_giveaway_manager,
+)
 
 
 class EventSubHandler:
@@ -680,6 +684,18 @@ class TranslateBot(commands.Bot):
             "queue": self._cmd_queue,
             "leave": self._cmd_leave,
             "stream": self._cmd_stream,
+            # ゲームコマンド
+            "fortune": self._cmd_fortune,
+            "dice": self._cmd_dice,
+            "coin": self._cmd_coin,
+            "slot": self._cmd_slot,
+            "roulette": self._cmd_roulette,
+            "janken": self._cmd_janken,
+            "startguess": self._cmd_startguess,
+            "guess": self._cmd_guess,
+            "endguess": self._cmd_endguess,
+            "giveaway": self._cmd_giveaway,
+            "enter": self._cmd_enter,
             # 後方互換エイリアス
             "remove": self._cmd_remove,
             "clearall": self._cmd_clearall,
@@ -706,6 +722,8 @@ class TranslateBot(commands.Bot):
             "!tts", "!translation", "!voicechat", "!voicelang", "!voicelang2",
             "!dict", "!voice", "!myvoice", "!visits",
             "!queue", "!leave", "!stream",
+            "!fortune", "!dice", "!coin", "!slot", "!roulette", "!janken",
+            "!startguess", "!guess", "!endguess", "!giveaway", "!enter",
         ]
         custom_cmds = [
             f"!{c.name}" for c in self._command_store.list_all() if c.enabled
@@ -1413,6 +1431,132 @@ class TranslateBot(commands.Bot):
             await message.channel.send(
                 "使い方: !stream title <タイトル> | !stream game <ゲーム名>" + '\u200B'
             )
+
+    # ===== Game Commands =====
+
+    async def _cmd_fortune(self, message, args: str) -> None:
+        """!fortune — おみくじを引く"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("fortune", user, 30, 30)
+        if not allowed:
+            return
+        self._cooldown_manager.record("fortune", user)
+        result = fortune()
+        await message.channel.send(f"@{message.author.display_name} {result}" + '\u200B')
+
+    async def _cmd_dice(self, message, args: str) -> None:
+        """!dice [XdY] — サイコロを振る"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("dice", user, 5, 5)
+        if not allowed:
+            return
+        self._cooldown_manager.record("dice", user)
+        result = roll_dice(args.strip() or "1d6")
+        await message.channel.send(f"@{message.author.display_name} {result}" + '\u200B')
+
+    async def _cmd_coin(self, message, args: str) -> None:
+        """!coin — コインを投げる"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("coin", user, 5, 5)
+        if not allowed:
+            return
+        self._cooldown_manager.record("coin", user)
+        result = coin_toss()
+        await message.channel.send(f"@{message.author.display_name} {result}" + '\u200B')
+
+    async def _cmd_slot(self, message, args: str) -> None:
+        """!slot — スロットを回す"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("slot", user, 10, 10)
+        if not allowed:
+            return
+        self._cooldown_manager.record("slot", user)
+        result = spin_slot()
+        await message.channel.send(f"@{message.author.display_name} {result}" + '\u200B')
+        if self.tts_enabled_getter():
+            self.tts.speak(result)
+
+    async def _cmd_roulette(self, message, args: str) -> None:
+        """!roulette [option1 option2 ...] — ルーレットを回す"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("roulette", user, 10, 10)
+        if not allowed:
+            return
+        self._cooldown_manager.record("roulette", user)
+        options = [o for o in args.split() if o] if args.strip() else []
+        result = spin_roulette(options)
+        await message.channel.send(f"@{message.author.display_name} {result}" + '\u200B')
+
+    async def _cmd_janken(self, message, args: str) -> None:
+        """!janken <グー/チョキ/パー> — じゃんけんをする"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("janken", user, 5, 5)
+        if not allowed:
+            return
+        self._cooldown_manager.record("janken", user)
+        result = play_janken(args)
+        await message.channel.send(f"@{message.author.display_name} {result}" + '\u200B')
+
+    async def _cmd_startguess(self, message, args: str) -> None:
+        """!startguess [min] [max] — 数字当てゲームを開始（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        parts = args.split()
+        try:
+            min_val = int(parts[0]) if len(parts) > 0 else 1
+            max_val = int(parts[1]) if len(parts) > 1 else 100
+        except ValueError:
+            await message.channel.send("使い方: !startguess [最小値] [最大値]" + '\u200B')
+            return
+        result = get_number_guess_game().start(message.author.name.lower(), min_val, max_val)
+        await message.channel.send(result + '\u200B')
+
+    async def _cmd_guess(self, message, args: str) -> None:
+        """!guess <number> — 数字当てゲームに参加"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("guess", user, 3, 3)
+        if not allowed:
+            return
+        self._cooldown_manager.record("guess", user)
+        result = get_number_guess_game().guess(message.author.display_name, args.strip())
+        await message.channel.send(result + '\u200B')
+
+    async def _cmd_endguess(self, message, args: str) -> None:
+        """!endguess — 数字当てゲームを終了（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        result = get_number_guess_game().end()
+        await message.channel.send(result + '\u200B')
+
+    async def _cmd_giveaway(self, message, args: str) -> None:
+        """!giveaway start/draw/end — 抽選管理（モデレーター以上）"""
+        if not check_permission(message.author, PermissionLevel.MODERATOR, self.channel_name):
+            await message.channel.send("このコマンドはモデレーター以上が使用できます" + '\u200B')
+            return
+        gm = get_giveaway_manager()
+        sub_cmd = args.strip().lower()
+        if sub_cmd == "start":
+            result = gm.start(message.author.name.lower())
+        elif sub_cmd == "draw":
+            result = gm.draw()
+        elif sub_cmd == "end":
+            result = gm.end()
+        else:
+            result = "使い方: !giveaway start / !giveaway draw / !giveaway end"
+        await message.channel.send(result + '\u200B')
+
+    async def _cmd_enter(self, message, args: str) -> None:
+        """!enter — 抽選に参加する"""
+        gm = get_giveaway_manager()
+        is_sub = getattr(message.author, 'is_subscriber', False)
+        result = gm.enter(
+            message.author.name.lower(),
+            message.author.display_name,
+            bool(is_sub),
+        )
+        await message.channel.send(result + '\u200B')
 
     async def event_raw_usernotice(self, channel, tags: dict):
         """サブスクやギフトなどのUSERNOTICEイベントを処理（twitchio 2.x準拠）"""
