@@ -4,6 +4,13 @@
 
 ---
 
+## [1.6.3-beta.9] - 2026-03-26
+
+### バグ修正
+- exe（PyInstaller ビルド）に numpy が同梱されていなかった問題を修正（`Kototsuna.spec` に `collect_all('numpy')` を追加）
+
+---
+
 ## [1.6.3-beta.8] - 2026-03-25
 
 ### バグ修正
