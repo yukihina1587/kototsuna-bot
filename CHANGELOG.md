@@ -4,6 +4,14 @@
 
 ---
 
+## [1.6.3-beta.8] - 2026-03-25
+
+### バグ修正
+- `uv sync` 後に numpy・sherpa-onnx・sounddevice が消える問題を根本修正（`[dependency-groups]` ではなく `[project.dependencies]` に移動）
+  - `[dependency-groups]` はカスタムグループだと `uv sync --group stt` が必要なため、毎回 `uv sync` で消えていた
+
+---
+
 ## [1.6.3-beta.7] - 2026-03-25
 
 ### バグ修正
