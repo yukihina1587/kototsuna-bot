@@ -6000,7 +6000,20 @@ window.onload = function() {{
             logger.info(f"voice_translator.start() returned: {success}")
             if not success:
                 self.voice_var.set(False)
-                self.log_message("❌ マイクの起動に失敗しました (モデルファイルまたは依存パッケージが不足しています)")
+                from src.voice_listener import (
+                    NUMPY_AVAILABLE, SHERPA_AVAILABLE, SOUNDDEVICE_AVAILABLE, is_stt_available
+                )
+                if not NUMPY_AVAILABLE:
+                    detail = "numpy がインストールされていません"
+                elif not SHERPA_AVAILABLE:
+                    detail = "sherpa-onnx がインストールされていません"
+                elif not SOUNDDEVICE_AVAILABLE:
+                    detail = "sounddevice がインストールされていません"
+                elif not is_stt_available():
+                    detail = "STTモデルファイルが見つかりません（download_models.py を実行してください）"
+                else:
+                    detail = "マイクのオープンに失敗しました（ログを確認してください）"
+                self.log_message(f"❌ 音声認識の起動に失敗: {detail}")
                 self._set_status("音声認識の起動に失敗しました。", "error")
             else:
                 self._set_status("音声翻訳を開始しました。", "success")

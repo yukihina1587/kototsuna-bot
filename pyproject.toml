@@ -9,3 +9,13 @@ dependencies = [
     "pillow>=12.1.0",
     "python-dotenv>=1.2.1",
 ]
+
+[project.optional-dependencies]
+# ローカル音声認識（ReazonSpeech + Silero VAD）に必要なパッケージ
+stt = [
+    "numpy>=1.24",
+    "sounddevice>=0.4",
+    "sherpa-onnx>=1.12",
+    "sherpa-onnx-core>=1.12",
+    "onnxruntime>=1.23.2,<1.24",
+]
