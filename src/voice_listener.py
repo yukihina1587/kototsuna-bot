@@ -18,31 +18,37 @@ from src.translator import translate_text_sync
 
 # --- Optional dependency availability checks ---------------------------------
 
+_numpy_import_error: str | None = None
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
-except ImportError:
+except Exception as _numpy_err:
     np = None  # type: ignore[assignment]
     NUMPY_AVAILABLE = False
-    logger.warning("numpy is not installed. Speech recognition will be unavailable.")
+    _numpy_import_error = str(_numpy_err)
+    logger.warning(f"numpy import failed: {_numpy_err!r}. Speech recognition will be unavailable.")
 
+_sherpa_import_error: str | None = None
 try:
     import sherpa_onnx
     SHERPA_AVAILABLE = True
-except ImportError:
+except Exception as _sherpa_err:
     SHERPA_AVAILABLE = False
+    _sherpa_import_error = str(_sherpa_err)
     logger.warning(
-        "sherpa_onnx is not installed. Speech recognition will be unavailable."
+        f"sherpa_onnx import failed: {_sherpa_err!r}. Speech recognition will be unavailable."
     )
 
+_sounddevice_import_error: str | None = None
 try:
     import sounddevice as sd
     SOUNDDEVICE_AVAILABLE = True
-except ImportError:
+except Exception as _sd_err:
     sd = None  # type: ignore[assignment]
     SOUNDDEVICE_AVAILABLE = False
+    _sounddevice_import_error = str(_sd_err)
     logger.warning(
-        "sounddevice is not installed. Speech recognition will be unavailable."
+        f"sounddevice import failed: {_sd_err!r}. Speech recognition will be unavailable."
     )
 
 # --- Constants ----------------------------------------------------------------

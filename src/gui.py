@@ -6001,14 +6001,15 @@ window.onload = function() {{
             if not success:
                 self.voice_var.set(False)
                 from src.voice_listener import (
-                    NUMPY_AVAILABLE, SHERPA_AVAILABLE, SOUNDDEVICE_AVAILABLE, is_stt_available
+                    NUMPY_AVAILABLE, SHERPA_AVAILABLE, SOUNDDEVICE_AVAILABLE, is_stt_available,
+                    _numpy_import_error, _sherpa_import_error, _sounddevice_import_error,
                 )
                 if not NUMPY_AVAILABLE:
-                    detail = "numpy がインストールされていません"
+                    detail = f"numpy の読み込みに失敗: {_numpy_import_error}"
                 elif not SHERPA_AVAILABLE:
-                    detail = "sherpa-onnx がインストールされていません"
+                    detail = f"sherpa-onnx の読み込みに失敗: {_sherpa_import_error}"
                 elif not SOUNDDEVICE_AVAILABLE:
-                    detail = "sounddevice がインストールされていません"
+                    detail = f"sounddevice の読み込みに失敗: {_sounddevice_import_error}"
                 elif not is_stt_available():
                     detail = "STTモデルファイルが見つかりません（download_models.py を実行してください）"
                 else:
