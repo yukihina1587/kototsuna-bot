@@ -65,7 +65,8 @@ def test_apply_plain(tmp_dict):
 
 def test_apply_regex(tmp_dict):
     tmp_dict.add("w+$", "笑", is_regex=True)
-    assert tmp_dict.apply("わははwww") == "わははwww"  # $ anchors to end
+    assert tmp_dict.apply("わははwww") == "わはは笑"          # w+$ matches www at end
+    assert tmp_dict.apply("わははwwwとか") == "わははwwwとか"  # $ anchors to end, so no match
 
 
 def test_apply_regex_wwww(tmp_dict):
