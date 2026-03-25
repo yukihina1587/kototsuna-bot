@@ -68,6 +68,20 @@ tmp_ret = collect_all('numpy')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 print(f"[SPEC] numpy collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={len(tmp_ret[2])}")
 
+# numpy.libs/ の OpenBLAS DLL をトップレベルにバイナリとして配置
+# collect_all は datas(=サブディレクトリ維持)として収集するが、
+# frozen 環境で DLL 検索パスに numpy.libs/ が入らないため
+# トップレベル('.') にもコピーしてWindows が確実に見つけられるようにする
+import numpy as _np_mod
+_numpy_libs_dir = os.path.join(os.path.dirname(_np_mod.__file__), '.libs')
+_numpy_dll_count = 0
+if os.path.isdir(_numpy_libs_dir):
+    for _dll_file in os.listdir(_numpy_libs_dir):
+        if _dll_file.lower().endswith('.dll'):
+            binaries.append((os.path.join(_numpy_libs_dir, _dll_file), '.'))
+            _numpy_dll_count += 1
+print(f"[SPEC] numpy.libs DLLs added to top-level binaries: {_numpy_dll_count}")
+
 # sounddeviceとPortAudioのネイティブライブラリを収集
 tmp_ret = collect_all('sounddevice')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]

@@ -4,6 +4,15 @@
 
 ---
 
+## [1.6.3-beta.12] - 2026-03-26
+
+### バグ修正
+- numpy OpenBLAS DLL（`libscipy_openblas64_.dll`）を exe のトップレベルに直接配置するよう修正
+  - `collect_all('numpy')` は DLL を `numpy.libs/` サブディレクトリに配置するが、frozen 環境では検索パスが通らない
+  - DLL をトップレベル（`_internal/`）にもコピーして Windows が確実に見つけられるようにした
+
+---
+
 ## [1.6.3-beta.11] - 2026-03-26
 
 ### バグ修正
