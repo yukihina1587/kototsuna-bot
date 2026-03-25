@@ -4,6 +4,16 @@
 
 ---
 
+## [1.6.3-beta.11] - 2026-03-26
+
+### バグ修正
+- 音声認識で numpy の OpenBLAS DLL が見つからず起動に失敗する問題を修正
+  - エラー: `DLL load failed while importing _umath_linalg`
+  - 原因: PyInstaller の frozen 環境で `numpy.libs/` が DLL 検索パスに入っていなかった
+  - 対策: ランタイムフック `rthook_numpy.py` を追加し、起動時に `numpy.libs/` を DLL 検索パスに登録
+
+---
+
 ## [1.6.3-beta.10] - 2026-03-26
 
 ### 改善
