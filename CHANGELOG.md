@@ -4,13 +4,12 @@
 
 ---
 
-## [1.6.3-beta.17] - 2026-03-26
+## [1.6.3] - 2026-03-26
 
 ### バグ修正
-- Windows版音声認識で numpy 読み込み前に必要DLLをアプリ本体側で直接準備するよう修正
-  - `voice_listener.py` で `numpy import` 前に `_MEIPASS` / `numpy.libs` / `runtime_cache/pyd_cache` / exeディレクトリを DLL 検索パスへ登録
-  - OpenBLAS / VC runtime / Python runtime DLL を `ctypes.WinDLL()` で事前ロード
-  - runtime hook の挙動や実行順に依存しない形に変更
+- Windows版で音声認識（ローカルSTT）が起動しない問題を修正
+  - numpy / OpenBLAS / VC++ runtime DLL の読み込み処理を見直し、配布exeでも音声認識を開始できるよう改善
+  - PyInstaller / runtime hook / DLL検索パス / 同梱DLL の扱いを調整し、`DLL load failed while importing _umath_linalg` エラーを解消
 
 ---
 
