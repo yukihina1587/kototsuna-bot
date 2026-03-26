@@ -17,7 +17,7 @@ customtkinter>=5.2.0,<6.0.0
 Pillow>=10.0.0,<13.0.0
 
 # Voice Recognition (Local STT: sherpa-onnx + ReazonSpeech-k2-v2)
-sherpa-onnx>=1.12.0
+sherpa-onnx==1.12.33
 sounddevice>=0.4.6
 numpy>=1.24.0
 

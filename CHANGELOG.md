@@ -4,6 +4,15 @@
 
 ---
 
+## [1.6.3-beta.16] - 2026-03-26
+
+### バグ修正
+- Windows版 exe の numpy DLL 読み込み修正を維持したまま、リリースビルドの依存解決を安定化
+  - `sherpa-onnx` / `sherpa-onnx-core` を `1.12.33` に固定し、GitHub Actions で source build に落ちて失敗する問題を回避
+  - beta.15 で入れた `AddDllDirectory` ハンドル保持修正をそのまま含む
+
+---
+
 ## [1.6.3-beta.15] - 2026-03-26
 
 ### バグ修正

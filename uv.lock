@@ -407,7 +407,7 @@ wheels = [
 
 [[package]]
 name = "translation-bot"
-version = "1.6.3b15"
+version = "1.6.3b16"
 source = { virtual = "." }
 dependencies = [
     { name = "customtkinter" },
@@ -427,7 +427,7 @@ requires-dist = [
     { name = "onnxruntime", specifier = ">=1.23.2,<1.24" },
     { name = "pillow", specifier = ">=12.1.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "sherpa-onnx", specifier = ">=1.12" },
-    { name = "sherpa-onnx-core", specifier = ">=1.12" },
+    { name = "sherpa-onnx", specifier = "==1.12.33" },
+    { name = "sherpa-onnx-core", specifier = "==1.12.33" },
     { name = "sounddevice", specifier = ">=0.4" },
 ]

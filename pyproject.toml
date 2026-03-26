@@ -1,6 +1,6 @@
 [project]
 name = "translation-bot"
-version = "1.6.3-beta.15"
+version = "1.6.3-beta.16"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,7 +11,7 @@ dependencies = [
     # ローカル音声認識（ReazonSpeech + Silero VAD）
     "numpy>=1.24",
     "sounddevice>=0.4",
-    "sherpa-onnx>=1.12",
-    "sherpa-onnx-core>=1.12",
+    "sherpa-onnx==1.12.33",
+    "sherpa-onnx-core==1.12.33",
     "onnxruntime>=1.23.2,<1.24",
 ]
