@@ -277,6 +277,7 @@ _pyd_cache_diag = []
 _pyd_safe_map = {}  # fullname → safe_path（Phase 0.5bのfinderが使用）
 _dll_cached = 0
 _data_cached = 0
+_dll_dir_handles = []
 if _meipass and _safe_dir:
     # ── 重要データファイルを最優先でコピー（os.walkループより前） ──
     # os.walkによるバイナリコピーは時間がかかるため、その間にAVが
@@ -361,7 +362,7 @@ if _meipass and _safe_dir:
     # pyd_cache/にあるためここをDLL検索パスに追加する必要がある
     if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
         try:
-            os.add_dll_directory(_pyd_cache_root)
+            _dll_dir_handles.append(os.add_dll_directory(_pyd_cache_root))
             _pyd_cache_diag.append("pyd_cache_dll_dir=YES")
         except OSError:
             _pyd_cache_diag.append("pyd_cache_dll_dir=FAIL")
@@ -453,7 +454,9 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory') and _meipass and _safe_d
 
     def _safe_add_dll_directory(path):
         try:
-            return _orig_add_dll_dir(path)
+            _handle = _orig_add_dll_dir(path)
+            _dll_dir_handles.append(_handle)
+            return _handle
         except (FileNotFoundError, OSError):
             # _MEI配下のパスならruntime_cacheの同等パスを試行
             try:
@@ -461,7 +464,9 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory') and _meipass and _safe_d
                 if not _rel.startswith('..'):
                     _cache_path = os.path.join(_pyd_cache_root_ref, _rel)
                     if os.path.isdir(_cache_path):
-                        return _orig_add_dll_dir(_cache_path)
+                        _handle = _orig_add_dll_dir(_cache_path)
+                        _dll_dir_handles.append(_handle)
+                        return _handle
             except (ValueError, OSError):
                 pass
             raise
