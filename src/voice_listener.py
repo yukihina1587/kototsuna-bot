@@ -10,6 +10,7 @@ import os
 import queue
 import sys
 import threading
+import ctypes
 from collections import deque
 from typing import Any, Callable, Optional
 
@@ -18,8 +19,60 @@ from src.translator import translate_text_sync
 
 # --- Optional dependency availability checks ---------------------------------
 
+_dll_dir_handles: list[object] = []
+
+
+def _prepare_windows_numpy_dlls() -> None:
+    """Register and preload DLL directories needed by numpy in frozen Windows builds."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+
+    candidates: list[str] = []
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        candidates.extend([
+            meipass,
+            os.path.join(meipass, "numpy.libs"),
+        ])
+
+    runtime_cache = os.environ.get("KOTOTSUNA_RUNTIME_CACHE", "")
+    if runtime_cache:
+        pyd_cache = os.path.join(runtime_cache, "pyd_cache")
+        candidates.extend([
+            pyd_cache,
+            os.path.join(pyd_cache, "numpy.libs"),
+        ])
+
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, "executable", "") else ""
+    if exe_dir:
+        candidates.append(exe_dir)
+
+    seen: set[str] = set()
+    for path in candidates:
+        if not path or path in seen or not os.path.isdir(path):
+            continue
+        seen.add(path)
+        os.environ["PATH"] = path + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory"):
+            try:
+                _dll_dir_handles.append(os.add_dll_directory(path))
+            except OSError as err:
+                logger.warning(f"Failed to register DLL dir {path}: {err!r}")
+
+        try:
+            for name in os.listdir(path):
+                low = name.lower()
+                if not low.endswith(".dll"):
+                    continue
+                if any(token in low for token in ("openblas", "vcruntime140", "msvcp140", "python312")):
+                    ctypes.WinDLL(os.path.join(path, name))
+        except OSError as err:
+            logger.warning(f"Failed to preload DLLs from {path}: {err!r}")
+
+
 _numpy_import_error: str | None = None
 try:
+    _prepare_windows_numpy_dlls()
     import numpy as np
     NUMPY_AVAILABLE = True
 except Exception as _numpy_err:

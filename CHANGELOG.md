@@ -4,6 +4,16 @@
 
 ---
 
+## [1.6.3-beta.17] - 2026-03-26
+
+### バグ修正
+- Windows版音声認識で numpy 読み込み前に必要DLLをアプリ本体側で直接準備するよう修正
+  - `voice_listener.py` で `numpy import` 前に `_MEIPASS` / `numpy.libs` / `runtime_cache/pyd_cache` / exeディレクトリを DLL 検索パスへ登録
+  - OpenBLAS / VC runtime / Python runtime DLL を `ctypes.WinDLL()` で事前ロード
+  - runtime hook の挙動や実行順に依存しない形に変更
+
+---
+
 ## [1.6.3-beta.16] - 2026-03-26
 
 ### バグ修正
