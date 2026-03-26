@@ -91,6 +91,17 @@ jobs:
             Write-Error "Build failed: dist/Kototsuna/Kototsuna.exe not found"
             exit 1
           }
+          $required = @(
+            "dist/Kototsuna/_internal/python312.dll",
+            "dist/Kototsuna/_internal/VCRUNTIME140.dll",
+            "dist/Kototsuna/_internal/VCRUNTIME140_1.dll"
+          )
+          foreach ($path in $required) {
+            if (!(Test-Path $path)) {
+              Write-Error "Build failed: required runtime DLL not found: $path"
+              exit 1
+            }
+          }
           $size = (Get-Item "dist/Kototsuna/Kototsuna.exe").Length / 1MB
           Write-Host "Build successful: Kototsuna.exe ($([math]::Round($size, 2)) MB)"
         shell: pwsh

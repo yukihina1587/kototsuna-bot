@@ -4,6 +4,16 @@
 
 ---
 
+## [1.6.3-beta.14] - 2026-03-26
+
+### バグ修正
+- Windows版 exe で numpy 読み込み時に `DLL load failed while importing _umath_linalg` となる問題を追加修正
+  - `rthook_numpy.py` で `os.add_dll_directory()` の戻り値ハンドルを保持するよう修正
+  - `VCRUNTIME140_1.dll` を PyInstaller ビルドへ明示的に同梱
+  - GitHub Actions で必須ランタイム DLL の存在チェックを追加
+
+---
+
 ## [1.6.3-beta.13] - 2026-03-26
 
 ### バグ修正

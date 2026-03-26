@@ -1,17 +1,24 @@
-"""Runtime hook: add numpy.libs to DLL search path for frozen builds.
-
-numpy 2.x on Windows uses delvewheel to load OpenBLAS from numpy.libs/.
-In a PyInstaller frozen environment, delvewheel's __init__.py loader
-doesn't work because the path calculation is wrong. We fix this by
-explicitly adding numpy.libs/ to the DLL search directories before
-numpy is imported.
-"""
+"""Runtime hook: register numpy/OpenBLAS DLL directories for frozen builds."""
 import os
 import sys
 
+_DLL_DIR_HANDLES = []
+
+
+def _register_dll_dir(path: str) -> None:
+    if not path or not os.path.isdir(path):
+        return
+    os.environ["PATH"] = path + os.pathsep + os.environ.get("PATH", "")
+    if os.name == "nt" and hasattr(os, "add_dll_directory"):
+        handle = os.add_dll_directory(path)
+        _DLL_DIR_HANDLES.append(handle)
+
+
 if sys.platform == "win32" and getattr(sys, "frozen", False):
     _meipass = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-    _numpy_libs = os.path.join(_meipass, "numpy.libs")
-    if os.path.isdir(_numpy_libs):
-        os.add_dll_directory(_numpy_libs)
-        os.environ["PATH"] = _numpy_libs + os.pathsep + os.environ.get("PATH", "")
+    for _dll_dir in (
+        os.path.join(_meipass, "numpy.libs"),
+        _meipass,
+        os.path.dirname(sys.executable),
+    ):
+        _register_dll_dir(_dll_dir)

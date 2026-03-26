@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 import zipfile
 import tempfile as _tmpmod
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -86,6 +87,16 @@ if os.path.isdir(_numpy_libs_dir):
             _numpy_dll_count += 1
             print(f"[SPEC]   -> {_dll_file}")
 print(f"[SPEC] numpy.libs DLLs added to top-level binaries: {_numpy_dll_count}")
+
+# numpy 2.x の拡張モジュールは VCRUNTIME140_1.dll を要求するが、
+# PyInstaller が自動収集しない場合があるため明示的に追加する。
+_python_root = os.path.dirname(sys.executable)
+_vc_runtime_path = os.path.join(_python_root, 'VCRUNTIME140_1.dll')
+if os.path.isfile(_vc_runtime_path):
+    binaries.append((_vc_runtime_path, '.'))
+    print("[SPEC] Added VCRUNTIME140_1.dll to top-level binaries")
+else:
+    print(f"[SPEC] WARNING: VCRUNTIME140_1.dll not found at {_vc_runtime_path}")
 
 # sounddeviceとPortAudioのネイティブライブラリを収集
 tmp_ret = collect_all('sounddevice')
