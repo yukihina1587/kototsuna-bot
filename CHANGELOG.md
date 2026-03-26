@@ -4,6 +4,14 @@
 
 ---
 
+## [1.6.3-beta.13] - 2026-03-26
+
+### バグ修正
+- numpy OpenBLAS DLL のパス探索を修正（`numpy/.libs` ではなく `numpy.libs`（site-packages直下）を参照するよう修正）
+  - beta.12 では DLL 探索パスの誤りにより OpenBLAS DLL が 0 個しかコピーされていなかった
+
+---
+
 ## [1.6.3-beta.12] - 2026-03-26
 
 ### バグ修正
