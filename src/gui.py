@@ -4239,6 +4239,10 @@ class KototsunaApp:
     def _auto_save_settings(self):
         """config.jsonへサイレント保存"""
         try:
+            previous_chat_html_path = self.config.get("chat_html_path", "")
+            previous_newest_first = self.config.get("chat_html_newest_first", False)
+            previous_max_entries = self.config.get("chat_html_max_entries", self._chat_history_limit)
+
             self.config["twitch_client_id"] = self.client_id.get().strip()
             self.config.pop("deepl_api_key", None)
 
@@ -4286,6 +4290,15 @@ class KototsunaApp:
                 self.voicevox_manager.engine_path = self.voicevox_path.get().strip()
 
             save_config(self.config)
+            chat_html_changed = (
+                previous_chat_html_path != self.config["chat_html_path"]
+                or previous_newest_first != self.config["chat_html_newest_first"]
+                or previous_max_entries != self.config["chat_html_max_entries"]
+            )
+            if previous_newest_first != self.config["chat_html_newest_first"]:
+                self._sync_comment_tile_order()
+            if chat_html_changed:
+                self._export_chat_html(force=True)
             logger.debug("Config auto-saved")
         except Exception as e:
             logger.error(f"Auto-save failed: {e}", exc_info=True)
@@ -4401,6 +4414,31 @@ class KototsunaApp:
             )
         except Exception as e:
             logger.debug(f"Failed to apply log style: {e}")
+
+    def _scroll_comment_tiles_to_edge(self) -> None:
+        """コメント表示順に合わせて先頭または末尾へスクロールする。"""
+        if not hasattr(self, "comment_tile_frame") or not self.comment_tile_frame:
+            return
+
+        target = 0.0 if self.chat_html_newest_first.get() else 1.0
+        try:
+            self.comment_tile_frame.after(
+                10, lambda: self.comment_tile_frame._parent_canvas.yview_moveto(target)
+            )
+        except Exception:
+            pass
+
+    def _sync_comment_tile_order(self) -> None:
+        """HTML設定に合わせてアプリ内コメントログの表示順も同期する。"""
+        if not hasattr(self, "comment_tiles") or not self.comment_tiles:
+            return
+
+        ordered_tiles = list(reversed(self.comment_tiles)) if self.chat_html_newest_first.get() else list(self.comment_tiles)
+        for tile in ordered_tiles:
+            tile.pack_forget()
+            tile.pack(fill="x", padx=6, pady=3)
+
+        self._scroll_comment_tiles_to_edge()
 
     def _get_icon_path(self) -> str:
         """アイコンファイルのパスを取得（PyInstallerビルド対応）"""
@@ -5013,15 +5051,14 @@ window.onload = function() {{
                     text_color="#B3D4FF"
                 ).pack(fill="x", pady=(3, 1))
 
-            tile.pack(fill="x", padx=6, pady=3)
+            pack_kwargs = {"fill": "x", "padx": 6, "pady": 3}
+            if self.chat_html_newest_first.get():
+                existing_children = self.comment_tile_frame.winfo_children()
+                if existing_children:
+                    pack_kwargs["before"] = existing_children[0]
+            tile.pack(**pack_kwargs)
 
-            # 末尾へスクロール
-            try:
-                self.comment_tile_frame.after(
-                    10, lambda: self.comment_tile_frame._parent_canvas.yview_moveto(1.0)
-                )
-            except Exception:
-                pass
+            self._scroll_comment_tiles_to_edge()
 
             self.comment_tiles.append(tile)
             if len(self.comment_tiles) > self.comment_tile_limit:
