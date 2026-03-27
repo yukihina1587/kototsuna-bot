@@ -210,6 +210,7 @@ class KototsunaApp:
         self._chat_history_limit = self.config.get("chat_html_max_entries", 200)
         self.log_history = deque(maxlen=self._log_history_limit)
         self.chat_history = deque(maxlen=self._chat_history_limit)
+        self._next_chat_entry_id = 1
 
         # Variables
         self.channel = tk.StringVar(value=self.config.get("channel_name", ""))
@@ -4386,6 +4387,7 @@ class KototsunaApp:
         # チャット履歴への反映（チャット/ボイス、またはCommentDataがあるとき）
         if log_type in ("chat", "voice") or comment_data:
             entry = {
+                "id": self._generate_chat_entry_id(),
                 "name": comment_data.display_username if comment_data else "System",
                 "message": comment_data.message if comment_data else msg,
                 "translated": getattr(comment_data, "translated", None),
@@ -4394,6 +4396,18 @@ class KototsunaApp:
             }
             self.chat_history.append(entry)
             self._export_chat_html()
+
+    def _generate_chat_entry_id(self) -> str:
+        """チャットHTML差分更新用の安定IDを採番する。"""
+        entry_id = f"chat-{self._next_chat_entry_id}"
+        self._next_chat_entry_id += 1
+        return entry_id
+
+    def _ensure_chat_history_entry_ids(self) -> None:
+        """既存履歴のID欠落を補完して差分更新を安定化する。"""
+        for entry in self.chat_history:
+            if not entry.get("id"):
+                entry["id"] = self._generate_chat_entry_id()
 
     def _apply_log_style(self, textbox):
         try:
@@ -4689,6 +4703,7 @@ class KototsunaApp:
         return "".join(parts)
 
     def _build_chat_html(self) -> str:
+        self._ensure_chat_history_entry_ids()
         style_name = self.comment_bubble_style.get()
         css = self._get_css_style(style_name)
 
@@ -4719,8 +4734,7 @@ class KototsunaApp:
 
             sub_html = f"<div class='sub'>{translated}</div>" if translated else ""
 
-            # ユニークなIDを生成（時刻 + 名前で識別）
-            msg_id = f"{c['time']}-{name}".replace(" ", "-").replace(":", "-")
+            msg_id = str(c["id"])
 
             line = f"""
             <div class='msg' data-id='{msg_id}'>
