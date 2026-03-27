@@ -176,23 +176,3 @@ class TestLocalTranslator:
         # CTranslate2.Translator should be created only once
         assert mock_ct2.Translator.call_count == 1
 
-
-# =========================================
-# translator.py integration (engine routing)
-# =========================================
-
-class TestTranslatorEngineRouting:
-    def test_set_translation_engine(self):
-        from src.translator import set_translation_engine, get_translation_engine
-        set_translation_engine("local")
-        assert get_translation_engine() == "local"
-        set_translation_engine("hybrid")
-        assert get_translation_engine() == "hybrid"
-        set_translation_engine("deepl")
-        assert get_translation_engine() == "deepl"
-
-    def test_set_invalid_engine_ignored(self):
-        from src.translator import set_translation_engine, get_translation_engine
-        set_translation_engine("deepl")
-        set_translation_engine("invalid")
-        assert get_translation_engine() == "deepl"

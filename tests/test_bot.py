@@ -48,7 +48,6 @@ def _make_bot():
             channel="testchannel",
             get_lang_mode=lambda: "自動",
             gui_ref=Mock(),
-            deepl_api_key="",
             tts_enabled_getter=lambda: False,
             tts_include_name_getter=lambda: False,
             client_id=None,
@@ -70,7 +69,6 @@ class TestTranslateBot:
         """Botの初期化テスト"""
         mock_load_config.return_value = {
             "twitch_client_id": "test_client_id",
-            "deepl_api_key": "test_api_key",
             "channel_name": "test_channel",
             "translate_mode": "自動",
             "chat_translation_enabled": True,
@@ -136,7 +134,6 @@ class TestBotEventHandlers:
         """event_ready ハンドラのテスト（同期版 - 基本的なインポート確認）"""
         mock_load_config.return_value = {
             "twitch_client_id": "test_client_id",
-            "deepl_api_key": "test_api_key",
             "channel_name": "test_channel",
             "translate_mode": "自動",
             "chat_translation_enabled": True,

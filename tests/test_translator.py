@@ -1,23 +1,20 @@
 import asyncio
-import time
-import pytest
 from src import translator
 
 
 def test_translate_text_uses_cache(monkeypatch):
     """translate_text の非同期キャッシュテスト（同期ラッパー）"""
     translator._cache = translator._TranslationCache(max_entries=10, ttl=60)
-    translator._rate_limiter = translator._RateLimiter(min_interval=0, max_concurrent=5)
     translator.set_translation_filters([])
     translator.set_translation_dictionary([])
 
     calls = {"count": 0}
 
-    async def fake_http(payload, endpoint, api_key):
+    def fake_local(text, mode):
         calls["count"] += 1
-        return 200, "", {"translations": [{"text": "OUT"}]}
+        return "OUT"
 
-    monkeypatch.setattr(translator, "_translate_http_async", fake_http)
+    monkeypatch.setattr(translator, "_translate_local", fake_local)
 
     loop = asyncio.new_event_loop()
     try:
@@ -33,17 +30,16 @@ def test_translate_text_uses_cache(monkeypatch):
 
 def test_translate_text_sync_uses_cache(monkeypatch):
     translator._cache = translator._TranslationCache(max_entries=10, ttl=60)
-    translator._rate_limiter = translator._RateLimiter(min_interval=0, max_concurrent=5)
     translator.set_translation_filters([])
     translator.set_translation_dictionary([])
 
     calls = {"count": 0}
 
-    def fake_http(payload, endpoint, api_key):
+    def fake_local(text, mode):
         calls["count"] += 1
-        return 200, "", {"translations": [{"text": "SYNC"}]}
+        return "SYNC"
 
-    monkeypatch.setattr(translator, "_translate_http_sync", fake_http)
+    monkeypatch.setattr(translator, "_translate_local", fake_local)
 
     res1 = translator.translate_text_sync("world", "日→英", "KEY")
     res2 = translator.translate_text_sync("world", "日→英", "KEY")
@@ -51,12 +47,3 @@ def test_translate_text_sync_uses_cache(monkeypatch):
     assert res1 == "SYNC"
     assert res2 == "SYNC"
     assert calls["count"] == 1
-
-
-def test_rate_limiter_sync_spacing():
-    limiter = translator._RateLimiter(min_interval=0.05, max_concurrent=2)
-    start = time.monotonic()
-    limiter.wait_sync()
-    limiter.wait_sync()
-    elapsed = time.monotonic() - start
-    assert elapsed >= 0.05

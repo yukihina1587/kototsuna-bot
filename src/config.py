@@ -41,7 +41,6 @@ CONFIG_FILE = _resolve_config_path()
 DEFAULT_CONFIG = {
     "twitch_client_id": "",
     "twitch_access_token": "",  # 保存されたアクセストークン（自動ログイン用）
-    "deepl_api_key": "",
     "channel_name": "",
     "channel_mode": "manual",  # auto: 認証アカウントと同じ, manual: 手動入力
     "translate_mode": "自動",
@@ -94,8 +93,6 @@ DEFAULT_CONFIG = {
     "ui_theme": "default",  # default / gradient / minimal / cyberpunk
     # ログ設定
     "log_level": "INFO",  # DEBUG / INFO / WARNING / ERROR
-    # 翻訳エンジン設定
-    "translation_engine": "deepl",  # deepl / local / hybrid
     # アップデート設定
     "auto_update_check": True,
     "include_prerelease": False,
@@ -152,8 +149,6 @@ VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_VOICE_ASSIGN_MODES = {"mod_only", "self_service", "disabled"}
-VALID_TRANSLATION_ENGINES = {"deepl", "local", "hybrid"}
-
 def validate_config(config_data):
     """
     設定値を検証し、不足値をデフォルトで補完する
@@ -238,7 +233,6 @@ def validate_config(config_data):
     for key in [
         "twitch_client_id",
         "twitch_access_token",
-        "deepl_api_key",
         "channel_name",
         "channel_mode",
         "voicevox_url",
@@ -262,13 +256,13 @@ def validate_config(config_data):
             validated[key] = DEFAULT_CONFIG.get(key, "")
             changed = True
 
-    # translation_engine
-    if validated.get("translation_engine") not in VALID_TRANSLATION_ENGINES:
-        logger.warning(
-            "translation_engine is invalid: %s, fallback to deepl",
-            validated.get("translation_engine"),
-        )
-        validated["translation_engine"] = "deepl"
+    # 旧翻訳設定はローカル翻訳固定化に伴い除去
+    for legacy_key in ("deepl_api_key", "translation_engine"):
+        if legacy_key in validated:
+            validated.pop(legacy_key, None)
+            changed = True
+
+    if config_data and any(key in config_data for key in ("deepl_api_key", "translation_engine")):
         changed = True
 
     # voice_assign_mode
@@ -524,8 +518,9 @@ def _rotate_backups() -> None:
 def save_config(config_data):
     _rotate_backups()
     try:
+        validated, _ = validate_config(config_data)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=4, ensure_ascii=False)
+            json.dump(validated, f, indent=4, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Failed to save config: {e}", exc_info=True)
 
@@ -584,26 +579,6 @@ def reset_config() -> dict:
     defaults = DEFAULT_CONFIG.copy()
     save_config(defaults)
     return defaults
-
-def validate_deepl_api_key(key: str) -> tuple[bool, str]:
-    """
-    DeepL APIキーの形式を検証
-
-    Args:
-        key: DeepL APIキー
-
-    Returns:
-        (is_valid, error_message)
-    """
-    if not key:
-        return False, "DeepL APIキーが入力されていません"
-    key = key.strip()
-    # DeepL Free: ends with :fx, Pro: UUID-like format
-    if key.endswith(":fx") and len(key) > 3:
-        return True, ""
-    if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', key.lower()):
-        return True, ""
-    return False, "DeepL APIキーの形式が正しくありません（Free版は:fxで終わる形式、Pro版はUUID形式）"
 
 
 def validate_twitch_client_id(client_id: str) -> tuple[bool, str]:

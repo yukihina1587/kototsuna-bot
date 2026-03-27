@@ -122,7 +122,6 @@ stats = perf.get_stats("my_operation")
 
 | 名前 | 対象 |
 |-----|------|
-| `deepl_api` | DeepL API呼び出し |
 
 ---
 

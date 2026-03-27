@@ -217,7 +217,7 @@ class EventSubHandler:
                 self.on_follow(follower_name)
 
 class TranslateBot(commands.Bot):
-    def __init__(self, token, channel, get_lang_mode, gui_ref, deepl_api_key,
+    def __init__(self, token, channel, get_lang_mode, gui_ref,
                  tts_enabled_getter=None, tts_include_name_getter=None, client_id=None):
         super().__init__(token=token, prefix='!', initial_channels=[channel])
         self.token = token
@@ -225,7 +225,6 @@ class TranslateBot(commands.Bot):
         self.client_id = client_id
         self.get_lang_mode = get_lang_mode
         self.gui = gui_ref
-        self.deepl_api_key = deepl_api_key
         self.tts_enabled_getter = tts_enabled_getter or (lambda: False)
         self.tts_include_name_getter = tts_include_name_getter or (lambda: False)
         self.tts = get_tts_instance()
@@ -437,7 +436,7 @@ class TranslateBot(commands.Bot):
         # Refresh emote cache in background if stale
         self._emote_provider.refresh_if_stale()
 
-        # Wrap all emotes in <k> tags for DeepL XML handling
+        # 翻訳前後でエモート位置が崩れないよう、一時的に <k> タグで保護する
         if replacements:
             replacements.sort(key=lambda x: x[0], reverse=True)
             temp_content = list(content)
@@ -535,7 +534,7 @@ class TranslateBot(commands.Bot):
             return
 
         lang_mode = self.get_lang_mode()
-        translated = await translate_text_batched(content, lang_mode, self.deepl_api_key)
+        translated = await translate_text_batched(content, lang_mode)
 
         # フィルタでスキップされた場合
         if translated == "":
@@ -563,7 +562,7 @@ class TranslateBot(commands.Bot):
         # 2言語目チャット翻訳（設定されている場合）
         lang_mode_2 = config.get("translate_mode_2", "")
         if lang_mode_2 and lang_mode_2 != lang_mode:
-            translated_2 = await translate_text_batched(content, lang_mode_2, self.deepl_api_key)
+            translated_2 = await translate_text_batched(content, lang_mode_2)
             if translated_2:
                 translated_2 = translated_2.replace("<k>", "").replace("</k>", "")
             if translated_2 and translated_2 != message.content and translated_2 != translated:
@@ -738,7 +737,7 @@ class TranslateBot(commands.Bot):
             await message.channel.send("使い方: !translate <テキスト>" + '\u200B')
             return
         lang_mode = self.get_lang_mode()
-        translated = await translate_text_batched(args, lang_mode, self.deepl_api_key)
+        translated = await translate_text_batched(args, lang_mode)
         if translated and translated != args:
             await message.channel.send(f"[翻訳] {translated}" + '\u200B')
             if self.tts_enabled_getter():

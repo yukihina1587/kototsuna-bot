@@ -21,7 +21,7 @@ cd kototsuna-bot
 pip install -r requirements.txt
 ```
 
-### 3. 必要なAPIキーの取得
+### 3. 必要な設定情報の取得
 
 #### Twitch Client ID
 
@@ -33,12 +33,6 @@ pip install -r requirements.txt
    - **カテゴリ**: `チャットボット`
 4. 作成後、**クライアントID**をコピー
 
-#### DeepL API Key
-
-1. [DeepL公式サイト](https://www.deepl.com/pro-api)にアクセス
-2. アカウント作成（Free版でOK）
-3. API Keyをコピー
-
 ### 4. 起動
 
 ```bash
@@ -49,11 +43,10 @@ python main.py
 
 1. GUIが起動したら、右パネルの「設定」を開く
 2. **Twitch Client ID**を入力
-3. **DeepL API Key**を入力
-4. **トークン認証**ボタンをクリック
-5. ブラウザでTwitch認証を完了
-6. **チャンネル名**を入力
-7. **BOT起動**ボタンをクリック
+3. **トークン認証**ボタンをクリック
+4. ブラウザでTwitch認証を完了
+5. **チャンネル名**を入力
+6. **BOT起動**ボタンをクリック
 
 ## オプション設定
 
@@ -63,11 +56,10 @@ python main.py
 2. インストール・起動
 3. GUIの設定パネルでパスを設定（自動検出も可能）
 
-### Gladia API（高品質音声認識）
+### ローカル翻訳
 
-1. [Gladia公式サイト](https://www.gladia.io/)でアカウント作成
-2. API Keyを取得（月10時間まで無料）
-3. GUIの設定パネルに入力
+- 翻訳はローカルエンジン固定です
+- DeepL API Key の取得や設定は不要です
 
 ## 次のステップ
 

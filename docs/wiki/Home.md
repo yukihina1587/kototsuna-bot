@@ -4,15 +4,15 @@ Twitchのチャットメッセージをリアルタイムで翻訳するBOTで�
 
 ## 概要
 
-- **DeepL API**を使用した高品質な翻訳
+- **ローカル翻訳エンジン**を使用した翻訳
 - **VOICEVOX**による日本語読み上げ
-- **Gladia API**によるリアルタイム音声認識
+- **ローカル音声認識**によるリアルタイム音声入力
 - Twitchイベント（フォロー、サブスク、Bits等）の検知と通知
 
 ## クイックスタート
 
 1. [セットアップガイド](Getting-Started)を参照してインストール
-2. Twitch Client IDとDeepL API Keyを取得
+2. Twitch Client IDを取得
 3. `python main.py` で起動
 4. GUIで認証してBOTを開始
 
@@ -31,9 +31,7 @@ Twitchのチャットメッセージをリアルタイムで翻訳するBOTで�
 
 - Python 3.10以上（3.12推奨）
 - Twitchアカウント
-- DeepL APIキー（Free版可）
 - VOICEVOX Engine（オプション）
-- Gladia APIキー（オプション）
 
 ## リンク
 

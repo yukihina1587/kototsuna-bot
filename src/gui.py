@@ -30,7 +30,7 @@ except Exception as e:
 
 from src.auth import run_auth_server_and_get_token, build_auth_url, validate_token, validate_token_with_info, get_effective_client_id, APP_DEFAULT_CLIENT_ID, check_missing_scopes
 from src.bot import TranslateBot
-from src.config import load_config, save_config, backup_config, restore_config, reset_config, validate_deepl_api_key, validate_twitch_client_id
+from src.config import load_config, save_config, backup_config, restore_config, reset_config, validate_twitch_client_id
 from src.commands_store import CommandStore, CustomCommand
 from src.voice_listener import VoiceTranslator
 from src.overlay_server import update_translation, update_subtitle, set_subtitle_enabled, set_subtitle_html_path, run_server_thread
@@ -192,7 +192,6 @@ class KototsunaApp:
         translator.set_translation_filters(self.config.get("translation_filters", []))
         init_translation_dictionary()
         translator.set_translation_dictionary(self.config.get("translation_dictionary", []))
-        translator.set_translation_engine(self.config.get("translation_engine", "deepl"))
 
         # テーマ適用（widgetビルド前に実行）
         saved_theme = self.config.get("ui_theme", "default")
@@ -223,14 +222,12 @@ class KototsunaApp:
         self.voice_chat_lang_var = tk.StringVar(value=self.config.get("voice_chat_lang", "日→英"))
         self.voice_chat_lang_2_var = tk.StringVar(value=self.config.get("voice_chat_lang_2", "") or "オフ")
         self._voice_chat_last_sent: float = 0.0
-        self.translation_engine = tk.StringVar(value=self.config.get("translation_engine", "deepl"))
         # チャット翻訳は毎回オフから開始（安全のため）
         self.chat_translation_enabled = tk.BooleanVar(value=False)
         # config.jsonにも反映して、bot.pyと同期させる
         self.config["chat_translation_enabled"] = False
         save_config(self.config)
         self.client_id = tk.StringVar(value=self.config.get("twitch_client_id", ""))
-        self.deepl_key = tk.StringVar(value=self.config.get("deepl_api_key", ""))
         # チャンネル検証状態: "unknown" / "checking" / "valid" / "invalid" / "rate_limited"
         self._ch_valid_state = "unknown"
         self._ch_validate_after_id = None  # after() ID for debounce
@@ -290,7 +287,7 @@ class KototsunaApp:
         mic_device_index = self.config.get("mic_device_index", None)
         self.voice_translator = VoiceTranslator(
             mode_getter=lambda: load_config().get("voice_chat_lang", "日→英"),
-            api_key_getter=lambda: self.deepl_key.get(),
+            api_key_getter=lambda: "",
             callback=self.voice_callback,
             config_data=self.config,
             device_index=mic_device_index
@@ -714,15 +711,6 @@ class KototsunaApp:
             fg_color=CARD_BG, button_color=ACCENT_SECONDARY, height=28
         ).pack(fill="x", pady=(0, 4))
 
-        # === 翻訳エンジン ===
-        self._add_sidebar_section(top, "翻訳エンジン")
-        ctk.CTkOptionMenu(
-            top, variable=self.translation_engine,
-            values=['deepl', 'local', 'hybrid'],
-            command=self._on_translation_engine_changed,
-            fg_color=CARD_BG, button_color=ACCENT_SECONDARY, height=28
-        ).pack(fill="x", pady=(0, 4))
-
         # === 機能トグル ===
         self._add_sidebar_section(top, "機能")
 
@@ -744,7 +732,6 @@ class KototsunaApp:
             ("dictionary", "📖  辞書"),
             ("participants", "👥  参加者"),
             ("viewers", "🎙  常連管理"),
-            ("resources", "📊  リソース"),
             ("commands", "💬  コマンド"),
             ("plugins", "🧩  プラグイン"),
             ("subtitle", "🗒  字幕設定"),
@@ -1139,7 +1126,7 @@ class KototsunaApp:
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "viewers": "常連管理", "resources": "リソース監視", "commands": "コマンド管理", "plugins": "プラグイン管理", "comment_tester": "コメントテスター"}
+        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "viewers": "常連管理", "commands": "コマンド管理", "plugins": "プラグイン管理", "comment_tester": "コメントテスター"}
         ctk.CTkLabel(header, text=titles.get(panel_id, ""), font=FONT_LABEL).pack(side="left", padx=12)
         ctk.CTkButton(header, text="✕", command=self._close_right_panel, width=32, height=32, fg_color="transparent", hover_color=BORDER).pack(side="right", padx=4)
 
@@ -1259,15 +1246,13 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
-        # API設定
-        self._add_panel_section(parent, "API設定")
-
-        ctk.CTkLabel(parent, text="DeepL API Key", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
-        ctk.CTkEntry(parent, textvariable=self.deepl_key, show="*", height=32).pack(fill="x", pady=(0, 4))
-        ctk.CTkButton(parent, text="↗ DeepL API登録", command=lambda: webbrowser.open("https://www.deepl.com/pro-api"),
-                      fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
-
-        # ローカルSTT（sherpa-onnx）— API Key不要
+        self._add_panel_section(parent, "翻訳・音声認識")
+        ctk.CTkLabel(
+            parent,
+            text="翻訳はローカルエンジン固定です。API Key の設定は不要です。",
+            font=("Segoe UI", 10),
+            text_color=TEXT_SUBTLE,
+        ).pack(anchor="w", pady=(0, 6))
 
         # マイク選択
         ctk.CTkLabel(parent, text="マイク選択（ステレオミキサー除外済み）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
@@ -2886,14 +2871,8 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
-        # API使用状況
-        self._add_panel_section(parent, "API使用状況")
-
-        # DeepL使用状況
-        self.res_deepl_label = ctk.CTkLabel(parent, text="DeepL: 取得中...", font=("Consolas", 11))
-        self.res_deepl_label.pack(anchor="w", pady=2)
-
-        # ローカルSTT（API使用なし）
+        self._add_panel_section(parent, "ローカル翻訳")
+        ctk.CTkLabel(parent, text="翻訳はローカルエンジンのみを使用します", font=("Consolas", 11)).pack(anchor="w", pady=2)
 
         self._add_panel_divider(parent)
 
@@ -2922,30 +2901,7 @@ class KototsunaApp:
         except Exception as e:
             logger.debug(f"Resource panel update failed: {e}")
 
-        # DeepL使用量更新（別スレッドで実行してUIブロック回避）
-        def update_deepl():
-            try:
-                deepl_key = self.deepl_key.get().strip()
-                usage = translator.get_deepl_usage(deepl_key)
-                if usage['error']:
-                    text = f"DeepL: {usage['error']}"
-                else:
-                    used = usage['character_count']
-                    limit = usage['character_limit']
-                    # 見やすい単位に変換（万文字）
-                    used_display = f"{used:,}"
-                    limit_display = f"{limit:,}"
-                    percent = (used / limit * 100) if limit > 0 else 0
-                    text = f"DeepL: {used_display} / {limit_display} 文字 ({percent:.1f}%)"
-                # UIスレッドで更新
-                if hasattr(self, 'res_deepl_label'):
-                    self.master.after(0, lambda: self.res_deepl_label.configure(text=text))
-            except Exception as e:
-                logger.debug(f"DeepL usage update failed: {e}")
-
-        threading.Thread(target=update_deepl, daemon=True).start()
-
-        # ローカルSTT — API使用量トラッキング不要
+        # ローカル翻訳のみのため外部API使用量トラッキングは不要
 
     def _build_comment_tester_panel(self, parent):
         """コメントテスターパネル - ダミーコメントを内部に送信して各種演出を確認"""
@@ -3663,16 +3619,13 @@ class KototsunaApp:
                                       width=200)
         btn_twitch_help.grid(row=6, column=2, padx=10, pady=(0, 5), sticky="w")
 
-        # 翻訳API設定
-        ctk.CTkLabel(frm_set, text="翻訳API設定", font=("Arial", 16, "bold")).grid(row=7, column=0, columnspan=3, sticky="w", pady=(20, 10))
-        ctk.CTkLabel(frm_set, text="DeepL API Key:", font=("Arial", 14, "bold")).grid(row=8, column=0, sticky="w", pady=(10, 0))
-        ctk.CTkEntry(frm_set, textvariable=self.deepl_key, width=300, show="*").grid(row=9, column=0, columnspan=2, sticky="ew", pady=(0, 5))
-
-        btn_deepl_help = ctk.CTkButton(frm_set, text="DeepL API登録ページへ",
-                                      command=lambda: webbrowser.open("https://www.deepl.com/pro-api"),
-                                      fg_color="gray",
-                                      width=200)
-        btn_deepl_help.grid(row=9, column=2, padx=10, pady=(0, 5), sticky="w")
+        ctk.CTkLabel(frm_set, text="翻訳設定", font=("Arial", 16, "bold")).grid(row=7, column=0, columnspan=3, sticky="w", pady=(20, 10))
+        ctk.CTkLabel(
+            frm_set,
+            text="翻訳はローカルエンジン固定です。追加設定は不要です。",
+            font=("Arial", 11),
+            text_color="gray",
+        ).grid(row=8, column=0, columnspan=3, sticky="w")
 
         # 音声認識設定（ローカルSTT）
         ctk.CTkLabel(frm_set, text="音声認識設定", font=("Arial", 16, "bold")).grid(row=10, column=0, columnspan=3, sticky="w", pady=(20, 10))
@@ -3848,7 +3801,6 @@ class KototsunaApp:
         cfg = self.config
         try:
             self.client_id.set(cfg.get("twitch_client_id", ""))
-            self.deepl_key.set(cfg.get("deepl_api_key", ""))
             self.voicevox_path.set(cfg.get("voicevox_engine_path", ""))
             self.voicevox_auto_start.set(cfg.get("voicevox_auto_start", True))
             self.voicevox_speaker_id.set(cfg.get("voicevox_speaker_id", 14))
@@ -3856,7 +3808,6 @@ class KototsunaApp:
             self.channel.set(cfg.get("channel_name", ""))
             self.channel_mode.set(cfg.get("channel_mode", "manual"))
             self.lang_mode.set(cfg.get("translate_mode", "自動"))
-            self.translation_engine.set(cfg.get("translation_engine", "deepl"))
             self.bits_sound_path.set(cfg.get("bits_sound_path", ""))
             self.bits_volume_var.set(cfg.get("bits_sound_volume", 80))
             self.sub_sound_path.set(cfg.get("subscription_sound_path", ""))
@@ -4241,8 +4192,6 @@ class KototsunaApp:
         """設定変更を自動保存するためのトレースを設定"""
         watch_vars = [
             self.client_id,
-            self.deepl_key,
-
             self.voicevox_path,
             self.voicevox_auto_start,
             self.voicevox_speaker_id,
@@ -4284,7 +4233,7 @@ class KototsunaApp:
         """config.jsonへサイレント保存"""
         try:
             self.config["twitch_client_id"] = self.client_id.get().strip()
-            self.config["deepl_api_key"] = self.deepl_key.get().strip()
+            self.config.pop("deepl_api_key", None)
 
             self.config["voicevox_engine_path"] = self.voicevox_path.get().strip()
             self.config["voicevox_auto_start"] = self.voicevox_auto_start.get()
@@ -4298,7 +4247,7 @@ class KototsunaApp:
             self.config["voice_chat_lang"] = self.voice_chat_lang_var.get()
             vl2 = self.voice_chat_lang_2_var.get()
             self.config["voice_chat_lang_2"] = "" if vl2 == "オフ" else vl2
-            self.config["translation_engine"] = self.translation_engine.get()
+            self.config.pop("translation_engine", None)
             self.config["bits_sound_path"] = self.bits_sound_path.get().strip()
             self.config["bits_sound_volume"] = int(self.bits_volume_var.get())
             self.config["subscription_sound_path"] = self.sub_sound_path.get().strip()
@@ -4337,12 +4286,6 @@ class KototsunaApp:
     def save_settings(self):
         # バリデーション実行
         warnings = []
-
-        deepl_key = self.deepl_key.get().strip()
-        if deepl_key:  # 入力がある場合のみチェック
-            valid, msg = validate_deepl_api_key(deepl_key)
-            if not valid:
-                warnings.append(msg)
 
         client_id = self.client_id.get().strip()
         if client_id:  # 入力がある場合のみチェック
@@ -5652,7 +5595,7 @@ window.onload = function() {{
         self._set_status("ログアウト完了。再度認証が必要です。", "info")
         messagebox.showinfo("ログアウト", "ログアウトしました。\n再度ログインするには「🔑 認証」を実行してください。")
 
-    def _run_bot_in_thread(self, token, channel, lang_mode_getter, gui_ref, deepl_key, tts_enabled_getter, tts_include_name_getter, client_id):
+    def _run_bot_in_thread(self, token, channel, lang_mode_getter, gui_ref, tts_enabled_getter, tts_include_name_getter, client_id):
         """BOTを新しいイベントループで実行（スレッド内で呼び出し）
 
         重要: TranslateBotはこのスレッド内で作成する必要がある。
@@ -5672,7 +5615,6 @@ window.onload = function() {{
                 channel,
                 lang_mode_getter,
                 gui_ref,
-                deepl_key,
                 tts_enabled_getter=tts_enabled_getter,
                 tts_include_name_getter=tts_include_name_getter,
                 client_id=client_id
@@ -5721,10 +5663,6 @@ window.onload = function() {{
                 return
             # valid=None はレート制限/ネットワーク不可 → 警告のみで続行
 
-        deepl_key = self.deepl_key.get().strip()
-        if not deepl_key:
-            messagebox.showwarning("警告", "DeepL API Keyが設定されていません。\n翻訳機能は動作しませんが、BOTは起動します。")
-
         # 読み上げエンジンを先に起動しておく
         self._ensure_tts_started()
 
@@ -5734,7 +5672,6 @@ window.onload = function() {{
             channel,
             lambda: self.lang_mode.get(),
             self,
-            deepl_key,
             lambda: True,  # tts_enabled_getter
             lambda: self.tts_include_name_var.get(),  # tts_include_name_getter
             effective_client_id  # フォロー検知用
@@ -6137,12 +6074,8 @@ window.onload = function() {{
         self.log_message(f"チャット翻訳を{status}にしました")
 
     def _on_translation_engine_changed(self, value: str) -> None:
-        """翻訳エンジン選択が変更されたとき"""
-        translator.set_translation_engine(value)
-        self.config["translation_engine"] = value
-        save_config(self.config)
-        engine_labels = {"deepl": "DeepL API", "local": "ローカル (OPUS-MT)", "hybrid": "ハイブリッド"}
-        self.log_message(f"翻訳エンジンを {engine_labels.get(value, value)} に変更しました")
+        """互換用の空メソッド。翻訳エンジン切り替えUIは削除済み。"""
+        return None
 
     def _ensure_tts_started(self):
         """チャット読み上げを常時ONにするための起動ヘルパー"""
@@ -7652,8 +7585,7 @@ window.onload = function() {{
                     logger.warning("Voice translation could not be sent to chat (connection not ready?)")
 
                 if lang2 and lang2 != lang1:
-                    api_key = self.deepl_key.get()
-                    translated_2 = translate_text_sync(text, lang2, api_key or "")
+                    translated_2 = translate_text_sync(text, lang2, "")
                     if translated_2 and translated_2 != text and translated_2 != translated:
                         label2 = _lang_labels.get(lang2, lang2)
                         msg2 = fmt.format(lang=label2, translation=translated_2)

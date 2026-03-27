@@ -2,12 +2,12 @@
 
 [![Tests](https://github.com/yukihina1587/kototsuna-bot/actions/workflows/test.yml/badge.svg)](https://github.com/yukihina1587/kototsuna-bot/actions/workflows/test.yml)
 
-Twitchのチャットメッセージをリアルタイムで翻訳するBOTです。DeepL APIを利用した高品質な翻訳と、VOICEVOXによる読み上げ機能を搭載しています。
+Twitchのチャットメッセージをリアルタイムで翻訳するBOTです。ローカル翻訳エンジンと、VOICEVOXによる読み上げ機能を搭載しています。
 
 ## 主な機能
 
 ### チャット翻訳
-- 日本語⇔英語の双方向自動翻訳（DeepL API）
+- 日本語⇔英語の双方向自動翻訳（ローカル翻訳）
 - 翻訳モード選択（自動 / 英→日 / 日→英）
 - 翻訳のオン/オフ切り替え
 - 翻訳フィルター（特定ワードをスキップ）
@@ -18,8 +18,7 @@ Twitchのチャットメッセージをリアルタイムで翻訳するBOTで�
   - 複数のボイスから選択可能
   - VOICEVOX未起動時はpyttsx3にフォールバック
 - **音声翻訳（マイク入力）**: マイクに向かって喋った内容を翻訳
-  - Gladia API（リアルタイム音声認識）
-  - Google Speech Recognition（フォールバック）
+  - ローカル音声認識（ReazonSpeech-k2-v2）
 
 ### Twitchイベント検知
 - **フォロー通知**: EventSub WebSocketで検知
@@ -42,7 +41,6 @@ Twitchのチャットメッセージをリアルタイムで翻訳するBOTで�
 - **UIテーマ**: 4種類のテーマから選択可能
 - **ログレベル切り替え**: DEBUG/INFO/WARNING/ERRORの動的切り替え
 - **API安定性**: ネットワークエラー時の自動リトライ（指数バックオフ）
-- **リソース監視**: メモリ/CPU/スレッドのリアルタイム監視
 - **パフォーマンス最適化**: 翻訳バッチ処理、GUI差分更新、メモリ自動制限
 - **自動アップデート**: GitHub Releasesからの自動更新チェック
 - **軽量な配布**: 不要なブラウザエンジンを排除し、EXEサイズを大幅削減
@@ -51,10 +49,8 @@ Twitchのチャットメッセージをリアルタイムで翻訳するBOTで�
 
 - Python 3.10以上（3.12推奨）
 - Twitchアカウント
-- DeepL APIキー（Free版またはPro版）
 - マイク（音声翻訳機能を使用する場合）
 - VOICEVOX Engine（高品質な読み上げを使用する場合、オプション）
-- Gladia APIキー（高品質な音声認識を使用する場合、オプション）
 
 ## セットアップ手順
 
@@ -74,25 +70,14 @@ pip install -r requirements.txt
    - **カテゴリ**: `チャットボット`
 4. 作成後、**クライアントID**をメモ
 
-### 3. DeepL APIキーの取得
-
-1. [DeepL公式サイト](https://www.deepl.com/pro-api)でAPIキーを取得
-2. Free版でも動作します
-
-### 4. VOICEVOX Engineのインストール（オプション）
+### 3. VOICEVOX Engineのインストール（オプション）
 
 1. [VOICEVOX公式サイト](https://voicevox.hiroshiba.jp/)からダウンロード
 2. インストール後、起動（デフォルト: `http://localhost:50021`）
 
 **フォールバック**: VOICEVOX未起動時は自動的にpyttsx3にフォールバックします。
 
-### 5. Gladia APIキーの取得（オプション）
-
-1. [Gladia公式サイト](https://www.gladia.io/)でAPIキーを取得
-2. 月10時間まで無料で使用可能
-3. 制限超過時はGoogle Speech Recognitionに自動切り替え
-
-### 6. 実行
+### 4. 実行
 
 ```bash
 python main.py
@@ -103,10 +88,9 @@ python main.py
 ### 初回起動時
 
 1. **Twitch Client ID**を設定パネルに入力
-2. **DeepL API Key**を設定パネルに入力
-3. **トークン認証**ボタンをクリック → ブラウザでTwitch認証
-4. **チャンネル名**を入力（または認証アカウントと同じを選択）
-5. **BOT起動**ボタンをクリック
+2. **トークン認証**ボタンをクリック → ブラウザでTwitch認証
+3. **チャンネル名**を入力（または認証アカウントと同じを選択）
+4. **BOT起動**ボタンをクリック
 
 ### 画面構成
 
@@ -135,7 +119,7 @@ python main.py
 | セクション | 設定項目 |
 |-----------|---------|
 | Twitch接続 | 認証アカウント、チャンネル選択 |
-| API設定 | DeepL Key、Gladia Key |
+| 翻訳設定 | ローカル翻訳固定 |
 | マイク選択 | 使用するマイクデバイス |
 | VOICEVOX | パス、自動起動、ボイス選択 |
 | UIテーマ | デフォルト/グラデーション/ミニマル/サイバーパンク |
@@ -190,8 +174,6 @@ OBSなどの配信ソフトでブラウザソースとして使用できます�
 | キー | 説明 | デフォルト |
 |-----|------|-----------|
 | `twitch_client_id` | Twitch Client ID | "" |
-| `deepl_api_key` | DeepL API Key | "" |
-| `gladia_api_key` | Gladia API Key | "" |
 | `channel_name` | チャンネル名 | "" |
 | `translate_mode` | 翻訳モード | "自動" |
 | `commands_enabled` | コマンド機能の有効/無効 | true |
@@ -225,15 +207,15 @@ OBSなどの配信ソフトでブラウザソースとして使用できます�
 
 ### 翻訳されない
 
-1. DeepL API Keyが正しく設定されていることを確認
+1. ローカル翻訳モデルが配置されていることを確認
 2. 「チャット翻訳」トグルがオンになっていることを確認
 3. 翻訳フィルターに該当していないことを確認
 
 ### 音声認識が動作しない
 
 1. マイクが正しく選択されていることを確認
-2. Gladia API Keyが設定されていることを確認（または Google SR を使用）
-3. マイクのアクセス権限を確認
+2. マイクのアクセス権限を確認
+3. ローカル音声認識モデルが配置されていることを確認
 
 ### メモリ使用量が増え続ける
 

@@ -292,7 +292,7 @@ class TestProcessResult:
     """_process_result() translates text and invokes callback."""
 
     def test_process_result_with_api_key(self):
-        """When an API key is available, translate_text_sync is called."""
+        """Voice translation no longer depends on an API key."""
         cb = MagicMock()
         vt = VoiceTranslator(
             mode_getter=lambda: "\u82f1\u2192\u65e5",
@@ -303,11 +303,11 @@ class TestProcessResult:
         with patch.object(vl_module, "translate_text_sync", return_value="translated") as mock_tr:
             vt._process_result("hello world")
 
-        mock_tr.assert_called_once_with("hello world", "\u82f1\u2192\u65e5", "real-key")
+        mock_tr.assert_called_once_with("hello world", "\u82f1\u2192\u65e5")
         cb.assert_called_once_with("hello world", "translated")
 
     def test_process_result_without_api_key(self):
-        """When no API key, callback receives '(No API Key)' as translation."""
+        """Local-only mode no longer requires an API key."""
         cb = MagicMock()
         vt = VoiceTranslator(
             mode_getter=lambda: "\u81ea\u52d5",
@@ -317,7 +317,7 @@ class TestProcessResult:
 
         vt._process_result("test text")
 
-        cb.assert_called_once_with("test text", "(No API Key)")
+        cb.assert_called_once_with("test text", "test text")
 
     def test_process_result_no_callback(self):
         """When callback is None, no error is raised."""

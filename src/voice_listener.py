@@ -146,7 +146,7 @@ def is_stt_available() -> bool:
 
 class VoiceTranslator:
     """Capture microphone audio, detect speech with Silero VAD, recognise with
-    ReazonSpeech-k2-v2, and pass the recognised text through DeepL translation.
+    ReazonSpeech-k2-v2, and pass the recognised text through local translation.
     """
 
     # Keywords used to filter out stereo-mix / loopback virtual devices.
@@ -207,7 +207,7 @@ class VoiceTranslator:
         mode_getter:
             Callable returning the current translation mode string.
         api_key_getter:
-            Callable returning the DeepL API key.
+            Legacy callable kept for compatibility. Local translation does not use an API key.
         callback:
             ``callback(recognised_text, translated_text)`` invoked on each
             final recognition result.
@@ -510,14 +510,7 @@ class VoiceTranslator:
             mode = self.mode_getter()
             logger.info(f"Recognized: {text}")
 
-            api_key = self.api_key_getter()
-            # ローカル/hybridモードではAPIキーなしでも翻訳可能
-            from src.translator import get_translation_engine
-            engine = get_translation_engine()
-            if api_key or engine in ("local", "hybrid"):
-                translated = translate_text_sync(text, mode, api_key or "")
-            else:
-                translated = "(No API Key)"
+            translated = translate_text_sync(text, mode)
 
             if self.callback:
                 self.callback(text, translated)

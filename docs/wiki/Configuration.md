@@ -11,17 +11,9 @@
 | `channel_name` | 接続するチャンネル名 | `""` |
 | `channel_mode` | `auto`（認証アカウント）または `manual` | `"manual"` |
 
-## API設定
-
-| キー | 説明 | デフォルト |
-|-----|------|-----------|
-| `deepl_api_key` | DeepL API Key | `""` |
-| `gladia_api_key` | Gladia API Key | `""` |
-| `gladia_usage_seconds` | 今月のGladia使用秒数 | `0` |
-| `gladia_reset_month` | 使用量リセット月 | `""` |
-| `stt_provider` | 音声認識プロバイダ（`gladia`/`google`） | `"gladia"` |
-
 ## 翻訳設定
+
+翻訳はローカルエンジン固定です。DeepL API Key の設定項目はありません。
 
 | キー | 説明 | デフォルト |
 |-----|------|-----------|
