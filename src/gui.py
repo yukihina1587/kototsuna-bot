@@ -2977,6 +2977,43 @@ class KototsunaApp:
         )
         send_btn.pack(fill="x")
 
+        def _dispatch_test_comment(name: str, content: str, tags: Dict) -> None:
+            import asyncio
+
+            username = name.lower().replace(" ", "_")
+            bot = self.bot_instance
+
+            if bot and getattr(bot, "_running_loop", None):
+                future = asyncio.run_coroutine_threadsafe(
+                    bot.process_test_message(
+                        username=username,
+                        content=content,
+                        tags=tags,
+                        display_name=name,
+                    ),
+                    bot._running_loop,
+                )
+                future.result(timeout=10)
+                return
+
+            temp_bot = TranslateBot(
+                token=self.token or "oauth:test-token",
+                channel=(self.channel.get().strip() or "testchannel").lower(),
+                get_lang_mode=lambda: self.lang_mode.get(),
+                gui_ref=self,
+                tts_enabled_getter=lambda: False,
+                tts_include_name_getter=lambda: False,
+                client_id=None,
+            )
+            asyncio.run(
+                temp_bot.process_test_message(
+                    username=username,
+                    content=content,
+                    tags=tags,
+                    display_name=name,
+                )
+            )
+
         def _send():
             name = tester_name_var.get().strip() or "テストユーザー"
             content = tester_msg_var.get().strip() or "(空のメッセージ)"
@@ -2990,14 +3027,9 @@ class KototsunaApp:
                 "color": "#FF6B6B",
                 "user-id": "test-000",
                 "badges": badges,
+                "tester_generated": True,
             }
-            comment = create_twitch_comment(
-                username=name.lower().replace(" ", "_"),
-                message=content,
-                tags=tags,
-                display_name=name,
-            )
-            self.on_comment_received(comment)
+            _dispatch_test_comment(name, content, tags)
 
             if tester_tts_var.get():
                 try:
@@ -5129,7 +5161,8 @@ window.onload = function() {{
 
         # 字幕更新
         cfg = load_config()
-        if cfg.get("subtitle_enabled"):
+        suppress_subtitle = bool(getattr(comment, "raw_data", {}).get("suppress_subtitle"))
+        if cfg.get("subtitle_enabled") and not suppress_subtitle:
             update_subtitle(
                 original=comment.message,
                 translated=comment.translated or "",

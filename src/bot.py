@@ -1,7 +1,9 @@
 import asyncio
 import aiohttp
 import json
+import time
 from twitchio.ext import commands
+from types import SimpleNamespace
 from src.translator import translate_text, translate_text_batched, should_filter, apply_translation_dictionary, get_stats
 from src.logger import logger
 from src.tts import get_tts_instance, is_japanese
@@ -222,6 +224,7 @@ class TranslateBot(commands.Bot):
         super().__init__(token=token, prefix='!', initial_channels=[channel])
         self.token = token
         self.channel_name = channel
+        self.nick = None
         self.client_id = client_id
         self.get_lang_mode = get_lang_mode
         self.gui = gui_ref
@@ -611,10 +614,68 @@ class TranslateBot(commands.Bot):
                 except Exception as e:
                     logger.error(f"TTS speak error: {e}", exc_info=True)
 
+    async def process_test_message(
+        self,
+        *,
+        username: str,
+        content: str,
+        tags: dict | None = None,
+        display_name: str | None = None,
+    ) -> None:
+        """コメントテスター用に、実チャット相当の経路でメッセージを処理する。"""
+        safe_tags = dict(tags or {})
+        safe_tags.setdefault("id", f"test-{time.monotonic_ns()}")
+        safe_tags.setdefault("color", "#FF6B6B")
+        safe_tags.setdefault("user-id", "test-000")
+        badges = safe_tags.get("badges", {}) or {}
+
+        author = SimpleNamespace(
+            name=username,
+            display_name=display_name or username,
+            is_mod="moderator" in badges,
+            is_subscriber="subscriber" in badges,
+            badges=badges,
+        )
+
+        async def _send_local(text: str) -> None:
+            clean_text = (text or "").replace('\u200B', '').strip()
+            if not clean_text or not self.gui:
+                return
+
+            bot_name = (self.nick or "ことつなBOT").strip() or "ことつなBOT"
+            bot_username = bot_name.lower().replace(" ", "_")
+            response_tags = {
+                "id": f"test-bot-{time.monotonic_ns()}",
+                "color": "#60A5FA",
+                "user-id": "test-bot",
+                "badges": {},
+                "tester_generated": True,
+                "suppress_subtitle": True,
+            }
+            comment = create_twitch_comment(
+                username=bot_username,
+                message=clean_text,
+                tags=response_tags,
+                display_name=bot_name,
+                translated=None,
+            )
+            self.gui.on_comment_received(comment)
+
+        message = SimpleNamespace(
+            content=content,
+            author=author,
+            channel=SimpleNamespace(send=_send_local),
+            tags=safe_tags,
+            echo=False,
+        )
+        await self.event_message(message)
+
 
     def _archive_comment(self, comment, bits: int = 0) -> None:
         """コメントをセッションアーカイブに記録する。"""
         if not self._archive or not self._archive._current_session_id:
+            return
+        if getattr(comment, "raw_data", {}).get("tester_generated"):
             return
         try:
             self._archive.add_comment(

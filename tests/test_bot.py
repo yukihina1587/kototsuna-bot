@@ -34,14 +34,21 @@ def _make_bot():
     command_store = Mock()
     command_store.get.return_value = None
     command_store.list_all.return_value = []
+    tracker = Mock()
+    tracker.check_message.return_value = False
+    emote_provider = Mock()
+    emote_provider.detect_emotes.return_value = []
+    plugin_manager = Mock()
+    plugin_manager.count = 0
+    viewer_store = Mock()
 
     with patch("src.bot.commands.Bot.__init__", return_value=None), \
          patch("src.bot.get_tts_instance", return_value=Mock()), \
-         patch("src.bot.get_tracker", return_value=Mock()), \
+         patch("src.bot.get_tracker", return_value=tracker), \
          patch("src.bot.CommandStore", return_value=command_store), \
-         patch("src.bot.EmoteProvider", return_value=Mock()), \
-         patch("src.bot.get_viewer_store", return_value=Mock()), \
-         patch("src.bot.get_plugin_manager", return_value=Mock()), \
+         patch("src.bot.EmoteProvider", return_value=emote_provider), \
+         patch("src.bot.get_viewer_store", return_value=viewer_store), \
+         patch("src.bot.get_plugin_manager", return_value=plugin_manager), \
          patch("src.bot.load_config", return_value={"commands_enabled": True}):
         bot = TranslateBot(
             token="oauth:test-token",
@@ -223,6 +230,46 @@ class TestBotCommands:
         assert consumed is True
         sent = message.channel.send.await_args.args[0]
         assert "漢字→かんじ" in sent or "英語→えいご" in sent
+
+    def test_process_test_message_runs_command_and_hides_invocation(self):
+        bot = _make_bot()
+
+        with patch("src.bot.load_config", return_value={"chat_translation_enabled": False}), \
+             patch("src.bot.fortune", return_value="大吉"):
+            asyncio.run(
+                bot.process_test_message(
+                    username="testuser",
+                    content="!fortune",
+                    tags={"id": "test-1", "badges": {}},
+                    display_name="TestUser",
+                )
+            )
+
+        bot.gui.on_comment_received.assert_called_once()
+        response = bot.gui.on_comment_received.call_args.args[0]
+        assert response.message == "@TestUser 大吉"
+        assert response.raw_data["suppress_subtitle"] is True
+        assert response.raw_data["tester_generated"] is True
+
+    def test_process_test_message_uses_normal_chat_path_for_plain_text(self):
+        bot = _make_bot()
+
+        with patch("src.bot.load_config", return_value={"chat_translation_enabled": False}):
+            asyncio.run(
+                bot.process_test_message(
+                    username="testuser",
+                    content="こんにちは",
+                    tags={"id": "test-2", "badges": {}},
+                    display_name="TestUser",
+                )
+            )
+
+        bot.gui.on_comment_received.assert_called_once()
+        comment = bot.gui.on_comment_received.call_args.args[0]
+        assert comment.message == "こんにちは"
+        assert comment.display_name == "TestUser"
+        assert comment.raw_data.get("tester_generated") is None
+        assert comment.raw_data.get("suppress_subtitle") is None
 
     def test_dict_list_command_empty(self, tmp_path):
         bot = _make_bot()
