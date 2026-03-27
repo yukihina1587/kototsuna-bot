@@ -41,7 +41,8 @@ from src.tts_dictionary import get_dictionary
 from src.participant_tracker import get_tracker
 from src.viewer_store import get_viewer_store
 from src.voicevox_manager import get_voicevox_manager
-from src.comment_data import CommentData
+import uuid
+from src.comment_data import CommentData, create_twitch_comment
 from src import translator, __version__
 from src.translator import init_translation_dictionary, get_translation_dictionary, translate_text_sync
 from src.resource_monitor import get_monitor
@@ -748,6 +749,7 @@ class KototsunaApp:
             ("plugins", "🧩  プラグイン"),
             ("subtitle", "🗒  字幕設定"),
             ("obs", "🎬  OBS連携"),
+            ("comment_tester", "🧪  テスト送信"),
         ]
         for panel_id, label in nav_items:
             btn = ctk.CTkButton(
@@ -1137,7 +1139,7 @@ class KototsunaApp:
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "viewers": "常連管理", "resources": "リソース監視", "commands": "コマンド管理", "plugins": "プラグイン管理"}
+        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "viewers": "常連管理", "resources": "リソース監視", "commands": "コマンド管理", "plugins": "プラグイン管理", "comment_tester": "コメントテスター"}
         ctk.CTkLabel(header, text=titles.get(panel_id, ""), font=FONT_LABEL).pack(side="left", padx=12)
         ctk.CTkButton(header, text="✕", command=self._close_right_panel, width=32, height=32, fg_color="transparent", hover_color=BORDER).pack(side="right", padx=4)
 
@@ -1156,6 +1158,7 @@ class KototsunaApp:
             "plugins": self._build_plugins_panel,
             "subtitle": self._build_subtitle_panel,
             "obs": self._build_obs_panel,
+            "comment_tester": self._build_comment_tester_panel,
         }
         builder = builders.get(panel_id)
         if builder:
@@ -2943,6 +2946,108 @@ class KototsunaApp:
         threading.Thread(target=update_deepl, daemon=True).start()
 
         # ローカルSTT — API使用量トラッキング不要
+
+    def _build_comment_tester_panel(self, parent):
+        """コメントテスターパネル - ダミーコメントを内部に送信して各種演出を確認"""
+        self._add_panel_section(parent, "送信者")
+
+        # ユーザー名入力
+        name_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        name_frame.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(name_frame, text="ユーザー名", font=FONT_LABEL).pack(anchor="w")
+        tester_name_var = tk.StringVar(value="テストユーザー")
+        ctk.CTkEntry(name_frame, textvariable=tester_name_var, height=32).pack(fill="x", pady=(4, 0))
+
+        self._add_panel_divider(parent)
+        self._add_panel_section(parent, "メッセージ")
+
+        # メッセージ入力
+        msg_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        msg_frame.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(msg_frame, text="内容", font=FONT_LABEL).pack(anchor="w")
+        tester_msg_var = tk.StringVar(value="こんにちは！")
+        ctk.CTkEntry(msg_frame, textvariable=tester_msg_var, height=32).pack(fill="x", pady=(4, 0))
+
+        # プリセットボタン
+        preset_label_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        preset_label_frame.pack(fill="x", pady=(4, 0))
+        ctk.CTkLabel(preset_label_frame, text="プリセット", font=FONT_LABEL).pack(anchor="w")
+
+        presets = [
+            ("短文", "こんにちは！"),
+            ("長文", "これはとても長いテストメッセージです。OBSオーバーレイの表示幅や折り返しを確認するためのサンプルテキストです。"),
+            ("エモート", "Kappa PogChamp LUL"),
+            ("URL", "check out https://example.com"),
+        ]
+        preset_row1 = ctk.CTkFrame(parent, fg_color="transparent")
+        preset_row1.pack(fill="x", pady=(4, 0))
+        preset_row2 = ctk.CTkFrame(parent, fg_color="transparent")
+        preset_row2.pack(fill="x", pady=(2, 0))
+        for i, (label, text) in enumerate(presets):
+            row = preset_row1 if i < 2 else preset_row2
+            ctk.CTkButton(
+                row, text=label, height=28,
+                command=lambda t=text: tester_msg_var.set(t),
+                fg_color=CARD_BG, hover_color=ACCENT, text_color="#FFFFFF",
+                corner_radius=6
+            ).pack(side="left", expand=True, fill="x", padx=(0 if i % 2 == 0 else 2, 0))
+
+        self._add_panel_divider(parent)
+        self._add_panel_section(parent, "オプション")
+
+        # バッジオプション
+        tester_mod_var = tk.BooleanVar(value=False)
+        tester_sub_var = tk.BooleanVar(value=False)
+        tester_tts_var = tk.BooleanVar(value=False)
+
+        ctk.CTkCheckBox(parent, text="モデレーターとして送信", variable=tester_mod_var).pack(anchor="w", pady=2)
+        ctk.CTkCheckBox(parent, text="サブスクライバーとして送信", variable=tester_sub_var).pack(anchor="w", pady=2)
+        ctk.CTkCheckBox(parent, text="TTS 読み上げも実行", variable=tester_tts_var).pack(anchor="w", pady=2)
+
+        self._add_panel_divider(parent)
+
+        # 送信ボタン
+        send_btn = ctk.CTkButton(
+            parent, text="テスト送信", height=40,
+            fg_color="#2563EB", hover_color="#1D4ED8",
+        )
+        send_btn.pack(fill="x")
+
+        def _send():
+            name = tester_name_var.get().strip() or "テストユーザー"
+            content = tester_msg_var.get().strip() or "(空のメッセージ)"
+            badges: Dict = {}
+            if tester_mod_var.get():
+                badges["moderator"] = "1"
+            if tester_sub_var.get():
+                badges["subscriber"] = "1"
+            tags = {
+                "id": f"test-{uuid.uuid4().hex[:8]}",
+                "color": "#FF6B6B",
+                "user-id": "test-000",
+                "badges": badges,
+            }
+            comment = create_twitch_comment(
+                username=name.lower().replace(" ", "_"),
+                message=content,
+                tags=tags,
+                display_name=name,
+            )
+            self.on_comment_received(comment)
+
+            if tester_tts_var.get():
+                try:
+                    from src.tts import get_tts_instance
+                    tts = get_tts_instance()
+                    tts.speak(content)
+                except Exception as e:
+                    logger.warning(f"Comment tester TTS error: {e}")
+
+            # 連打防止: 1秒間ボタン無効化
+            send_btn.configure(state="disabled")
+            self.master.after(1000, lambda: send_btn.configure(state="normal"))
+
+        send_btn.configure(command=_send)
 
     # 辞書パネル用ヘルパー
     def _add_tts_dict_entry(self):
