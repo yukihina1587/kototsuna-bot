@@ -63,38 +63,48 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def _serve_chat_html(self):
         """チャットHTMLを配信"""
-        if _chat_html_path and os.path.exists(_chat_html_path):
-            try:
-                with open(_chat_html_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-                self.end_headers()
-                self.wfile.write(content.encode('utf-8'))
-            except Exception as e:
-                self.send_error(500, f"Error reading chat HTML: {e}")
-        else:
-            self.send_error(404, "Chat HTML not available")
+        content = _load_overlay_html(_chat_html_path)
+        if content is None:
+            logger.warning("Chat HTML not available yet; serving blank overlay.")
+            content = _blank_overlay_html()
+        self._send_html(content)
 
 
     def _serve_subtitle_html(self):
         """字幕HTMLを配信"""
-        if _subtitle_html_path and os.path.exists(_subtitle_html_path):
-            try:
-                with open(_subtitle_html_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-                self.end_headers()
-                self.wfile.write(content.encode('utf-8'))
-            except Exception as e:
-                self.send_error(500, f"Error reading subtitle HTML: {e}")
-        else:
-            self.send_error(404, "Subtitle HTML not available")
+        content = _load_overlay_html(_subtitle_html_path)
+        if content is None:
+            logger.warning("Subtitle HTML not available yet; serving blank overlay.")
+            content = _blank_overlay_html()
+        self._send_html(content)
+
+    def _send_html(self, content: str) -> None:
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        self.end_headers()
+        self.wfile.write(content.encode('utf-8'))
+
+
+def _blank_overlay_html() -> str:
+    """OBSでエラーページを見せないための空HTML。"""
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
+        "<body style='margin:0;background:transparent;overflow:hidden;'></body></html>"
+    )
+
+
+def _load_overlay_html(path: str | None) -> str | None:
+    """HTMLを読み込めたら返し、未準備や読み込み失敗時はNoneを返す。"""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        logger.warning(f"Failed to read overlay HTML '{path}': {e}")
+        return None
 
 
 def _find_free_port(start_port: int = DEFAULT_PORT, max_tries: int = 10) -> int:

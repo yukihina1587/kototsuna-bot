@@ -78,9 +78,7 @@
           #0
         </span>
       </div>
-      <p id="current-text" class="text-2xl font-semibold leading-relaxed tracking-tight text-card-foreground animate-slide-up">
-        Loading...
-      </p>
+      <p id="current-text" class="text-2xl font-semibold leading-relaxed tracking-tight text-card-foreground"></p>
     </div>
 
     <!-- History Card -->
@@ -98,41 +96,52 @@
 
   <script>
     async function fetchJson(url) {
-      const res = await fetch(url);
-      return res.json();
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          return null;
+        }
+        return await res.json();
+      } catch (e) {
+        console.warn('Overlay fetch failed:', e);
+        return null;
+      }
     }
 
     let lastId = -1;
+    let lastHistoryKey = '';
 
     async function refresh() {
-      try {
-        const current = await fetchJson('/api/current');
+      const current = await fetchJson('/api/current');
+      if (current) {
         const currentTextEl = document.getElementById('current-text');
         const idPill = document.getElementById('id-pill');
 
         if (current.id !== lastId) {
           currentTextEl.textContent = current.text || '';
-          currentTextEl.classList.remove('animate-slide-up');
-          void currentTextEl.offsetWidth; // Trigger reflow
-          currentTextEl.classList.add('animate-slide-up');
           lastId = current.id;
         }
 
         idPill.textContent = `#${current.id}`;
+      }
 
-        const hist = await fetchJson('/api/history');
+      const hist = await fetchJson('/api/history');
+      if (Array.isArray(hist)) {
         const historyEl = document.getElementById('history');
-        historyEl.innerHTML = '';
+        const historyItems = hist.slice().reverse();
+        const historyKey = historyItems.join('\n');
+        if (historyKey !== lastHistoryKey) {
+          historyEl.innerHTML = '';
 
-        hist.slice().reverse().forEach((t, idx) => {
-          const div = document.createElement('div');
-          div.className = 'py-2 px-3 rounded-md bg-muted/50 border border-border/50 animate-fade-in';
-          div.style.animationDelay = `${idx * 50}ms`;
-          div.textContent = t;
-          historyEl.appendChild(div);
-        });
-      } catch (e) {
-        console.error(e);
+          historyItems.forEach((t, idx) => {
+            const div = document.createElement('div');
+            div.className = 'py-2 px-3 rounded-md bg-muted/50 border border-border/50 animate-fade-in';
+            div.style.animationDelay = `${idx * 50}ms`;
+            div.textContent = t;
+            historyEl.appendChild(div);
+          });
+          lastHistoryKey = historyKey;
+        }
       }
       setTimeout(refresh, 1200);
     }

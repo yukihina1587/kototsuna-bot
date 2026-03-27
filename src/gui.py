@@ -324,6 +324,7 @@ class KototsunaApp:
         self.channel.trace_add("write", self._on_channel_input_changed)
 
         # BOT起動前にHTML出力パスを設定（/chatエンドポイント用）
+        self._init_subtitle_overlay()
         self.master.after(500, self._init_chat_html)
 
         # 起動時はBOTボタンを無効化（認証前）
@@ -2288,6 +2289,12 @@ class KototsunaApp:
         cfg["subtitle_text_color"] = self._subtitle_text_color_var.get()
         cfg["subtitle_stroke_color"] = self._subtitle_stroke_color_var.get()
         save_config(cfg)
+        self._build_subtitle_html()
+
+    def _init_subtitle_overlay(self) -> None:
+        """起動時に字幕サーバー state と subtitle.html を同期する。"""
+        enabled = bool(self.config.get("subtitle_enabled", False))
+        set_subtitle_enabled(enabled)
         self._build_subtitle_html()
 
     def _build_subtitle_html(self) -> None:
@@ -4698,52 +4705,88 @@ class KototsunaApp:
 
         # JavaScriptで点滅を最小化：既存のメッセージはそのまま、新しいメッセージだけを追加
         js_code = f"""
-let lastUpdateTime = 0;
+const newestFirst = {str(newest_first).lower()};
 let updateInterval = null;
 
-function updateChat() {{
-    fetch(window.location.href + '?t=' + Date.now())
-        .then(response => response.text())
+function getMessageIds(root) {{
+    return Array.from(root.querySelectorAll('.msg')).map(msg => msg.dataset.id);
+}}
+
+function arraysEqual(left, right) {{
+    if (left.length !== right.length) {{
+        return false;
+    }}
+    return left.every((value, index) => value === right[index]);
+}}
+
+function syncChat() {{
+    fetch(window.location.href + '?t=' + Date.now(), {{ cache: 'no-store' }})
+        .then(response => response.ok ? response.text() : '')
         .then(html => {{
+            if (!html) {{
+                return;
+            }}
+
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
-            const newMessages = doc.querySelectorAll('.msg');
-            const existingIds = new Set(
-                Array.from(document.querySelectorAll('.msg')).map(m => m.dataset.id)
-            );
-
-            // 新しいメッセージを検出して追加
-            let hasNewMessages = false;
-            newMessages.forEach(msg => {{
-                if (!existingIds.has(msg.dataset.id)) {{
-                    hasNewMessages = true;
-                }}
-            }});
-
-            // 変更があった場合のみ更新（点滅を最小化）
-            if (hasNewMessages || newMessages.length !== existingIds.size) {{
-                document.body.innerHTML = doc.body.innerHTML;
-                {scroll_script}
+            const currentRoot = document.getElementById('chat-root');
+            const nextRoot = doc.getElementById('chat-root');
+            if (!currentRoot || !nextRoot) {{
+                return;
             }}
+
+            const currentIds = getMessageIds(currentRoot);
+            const nextMessages = Array.from(nextRoot.querySelectorAll('.msg'));
+            const nextIds = nextMessages.map(msg => msg.dataset.id);
+
+            if (arraysEqual(currentIds, nextIds)) {{
+                return;
+            }}
+
+            const canIncrementallySync = currentIds.length <= nextIds.length &&
+                (newestFirst
+                    ? arraysEqual(currentIds, nextIds.slice(nextIds.length - currentIds.length))
+                    : arraysEqual(currentIds, nextIds.slice(0, currentIds.length)));
+
+            if (canIncrementallySync) {{
+                const diffCount = nextIds.length - currentIds.length;
+                const incoming = newestFirst
+                    ? nextMessages.slice(0, diffCount)
+                    : nextMessages.slice(nextMessages.length - diffCount);
+                const fragment = document.createDocumentFragment();
+
+                incoming.forEach(msg => {{
+                    fragment.appendChild(msg.cloneNode(true));
+                }});
+
+                if (newestFirst) {{
+                    currentRoot.prepend(fragment);
+                }} else {{
+                    currentRoot.appendChild(fragment);
+                }}
+            }} else {{
+                currentRoot.innerHTML = nextRoot.innerHTML;
+            }}
+
+            {scroll_script}
         }})
         .catch(err => console.error('Update failed:', err));
 }}
 
 window.onload = function() {{
     {scroll_script}
-    // 1.2秒ごとに更新
-    updateInterval = setInterval(updateChat, 1200);
+    updateInterval = setInterval(syncChat, 1200);
 }};
 """
 
         return f"""<!DOCTYPE html>
 <html><head><meta charset='utf-8'><style>
 {css}
-</style>
+        </style>
 <script>
 {js_code}
 </script>
-</head><body>{body}</body></html>"""
+</head><body><div id='chat-root'>{body}</div></body></html>"""
 
 
     # =========================================
