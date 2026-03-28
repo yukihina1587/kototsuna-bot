@@ -23,6 +23,23 @@ _subtitle_state = {
 _subtitle_lock = threading.Lock()
 
 
+def _normalize_subtitle_lines(original: str, translated: str, config: dict | None) -> tuple[str, str]:
+    """字幕の原文/翻訳文を設定に応じて正規化する。"""
+    original_text = original or ""
+    translated_text = translated or ""
+    cfg = config or {}
+
+    if (
+        cfg.get("show_original", True)
+        and cfg.get("show_translated", True)
+        and original_text.strip()
+        and original_text.strip() == translated_text.strip()
+    ):
+        translated_text = ""
+
+    return original_text, translated_text
+
+
 class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/current':
@@ -164,9 +181,10 @@ def update_subtitle(original: str, translated: str, speaker: str = "", config: d
     with _subtitle_lock:
         if not _subtitle_state.get("enabled"):
             return
+        normalized_original, normalized_translated = _normalize_subtitle_lines(original, translated, config)
         _subtitle_state["id"] += 1
-        _subtitle_state["original"] = original or ""
-        _subtitle_state["translated"] = translated or ""
+        _subtitle_state["original"] = normalized_original
+        _subtitle_state["translated"] = normalized_translated
         _subtitle_state["speaker"] = speaker or ""
         _subtitle_state["timestamp"] = datetime.now().strftime("%H:%M:%S")
         if config is not None:

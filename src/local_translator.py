@@ -66,6 +66,28 @@ def is_local_translation_available() -> bool:
     return True
 
 
+def get_local_translation_unavailable_reason() -> str | None:
+    """ローカル翻訳が使えない理由を返す。利用可能ならNone。"""
+    if not _HAS_CT2:
+        return "ctranslate2 が未インストールです"
+    if not _HAS_SPM:
+        return "sentencepiece が未インストールです"
+
+    models_dir = _get_models_dir()
+    model_path = os.path.join(models_dir, _NLLB_MODEL_DIR)
+    missing_files: list[str] = []
+    for filename in _REQUIRED_FILES:
+        filepath = os.path.join(model_path, filename)
+        if not os.path.isfile(filepath):
+            missing_files.append(filepath)
+
+    if missing_files:
+        missing = ", ".join(os.path.basename(path) for path in missing_files)
+        return f"翻訳モデルが不足しています: {missing}"
+
+    return None
+
+
 class LocalTranslator:
     """CTranslate2 + NLLB-200 ローカル翻訳エンジン。
 

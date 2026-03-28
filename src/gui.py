@@ -48,12 +48,14 @@ from src.translator import init_translation_dictionary, get_translation_dictiona
 from src.resource_monitor import get_monitor
 from src.gui_helpers import DifferentialListManager, create_participant_row, create_simple_list_row
 from src.obs_integration import ObsController, find_matching_scene_rule
+from src.voice_display import build_voice_translation_view
 from src.updater import (
     check_for_updates, download_update, apply_update, restart_app,
     ReleaseInfo, UpdateError, format_file_size,
     save_rollback_info, get_rollback_info, clear_rollback_info,
     rollback_to_previous,
 )
+
 
 # 外観設定 / テーマ
 # 初期設定（後でconfigから読み込んだテーマで上書き）
@@ -2983,6 +2985,11 @@ class KototsunaApp:
 
             username = name.lower().replace(" ", "_")
             bot = self.bot_instance
+            trace_id = tags.get("id", "unknown")
+            logger.info(
+                f"[tester:{trace_id}] gui.dispatch start user={username} "
+                f"bot_running={bool(bot and getattr(bot, '_running_loop', None))}"
+            )
 
             if bot and getattr(bot, "_running_loop", None):
                 future = asyncio.run_coroutine_threadsafe(
@@ -2994,12 +3001,15 @@ class KototsunaApp:
                     ),
                     bot._running_loop,
                 )
+                logger.info(f"[tester:{trace_id}] gui.dispatch submitted to running bot loop")
 
                 def _handle_future_result(done_future):
                     try:
                         done_future.result()
+                        logger.info(f"[tester:{trace_id}] gui.dispatch future completed")
                     except Exception as e:
                         logger.error(f"Comment tester async error: {e}", exc_info=True)
+                        logger.error(f"[tester:{trace_id}] gui.dispatch future failed", exc_info=True)
                         self.master.after(
                             0,
                             lambda: messagebox.showerror(
@@ -3013,7 +3023,8 @@ class KototsunaApp:
 
             def _run_temp_bot():
                 try:
-                    temp_bot = TranslateBot(
+                    logger.info(f"[tester:{trace_id}] gui.dispatch temp bot thread start")
+                    temp_bot = TranslateBot.create_test_dispatcher(
                         token=self.token or "oauth:test-token",
                         channel=(self.channel.get().strip() or "testchannel").lower(),
                         get_lang_mode=lambda: self.lang_mode.get(),
@@ -3030,8 +3041,10 @@ class KototsunaApp:
                             display_name=name,
                         )
                     )
+                    logger.info(f"[tester:{trace_id}] gui.dispatch temp bot thread completed")
                 except Exception as e:
                     logger.error(f"Comment tester temp bot error: {e}", exc_info=True)
+                    logger.error(f"[tester:{trace_id}] gui.dispatch temp bot thread failed", exc_info=True)
                     self.master.after(
                         0,
                         lambda: messagebox.showerror(
@@ -3062,6 +3075,11 @@ class KototsunaApp:
                     "badges": badges,
                     "tester_generated": True,
                 }
+                logger.info(
+                    f"[tester:{tags['id']}] gui.send clicked "
+                    f"name={name!r} content={content[:80]!r} "
+                    f"mod={tester_mod_var.get()} sub={tester_sub_var.get()} tts={tester_tts_var.get()}"
+                )
                 _dispatch_test_comment(name, content, tags)
 
                 if tester_tts_var.get():
@@ -3069,8 +3087,10 @@ class KototsunaApp:
                         from src.tts import get_tts_instance
                         tts = get_tts_instance()
                         tts.speak(content)
+                        logger.info(f"[tester:{tags['id']}] gui.send manual_tts completed")
                     except Exception as e:
                         logger.warning(f"Comment tester TTS error: {e}")
+                        logger.warning(f"[tester:{tags['id']}] gui.send manual_tts failed: {e}")
             except Exception as e:
                 logger.error(f"Comment tester error: {e}", exc_info=True)
                 messagebox.showerror("テスト送信エラー", f"テスト送信に失敗しました:\n{e}")
@@ -4515,6 +4535,10 @@ class KototsunaApp:
         if not hasattr(self, "comment_tiles") or not self.comment_tiles:
             return
 
+        self.comment_tiles = [tile for tile in self.comment_tiles if tile.winfo_exists()]
+        if not self.comment_tiles:
+            return
+
         ordered_tiles = list(reversed(self.comment_tiles)) if self.chat_html_newest_first.get() else list(self.comment_tiles)
         for tile in ordered_tiles:
             tile.pack_forget()
@@ -4974,6 +4998,7 @@ window.onload = function() {{
 
     def _add_comment_tile(self, comment: CommentData):
         """コメントをタイル形式で表示"""
+        trace_id = (getattr(comment, "raw_data", None) or {}).get("id")
         if not hasattr(self, "comment_tile_frame"):
             logger.error("comment_tile_frame not initialized yet!")
             return
@@ -4983,6 +5008,11 @@ window.onload = function() {{
             return
 
         try:
+            if trace_id:
+                logger.info(
+                    f"[tester:{trace_id}] gui.add_comment_tile start "
+                    f"user={comment.display_username} existing_tiles={len(self.comment_tiles)}"
+                )
             style = self.comment_bubble_style.get()
             if style == "bubble":
                 tile_bg = "#1b2b44"
@@ -5133,24 +5163,28 @@ window.onload = function() {{
                     text_color="#B3D4FF"
                 ).pack(fill="x", pady=(3, 1))
 
-            pack_kwargs = {"fill": "x", "padx": 6, "pady": 3}
-            if self.chat_html_newest_first.get():
-                existing_children = self.comment_tile_frame.winfo_children()
-                if existing_children:
-                    pack_kwargs["before"] = existing_children[0]
-            tile.pack(**pack_kwargs)
-
-            self._scroll_comment_tiles_to_edge()
-
+            tile.pack(fill="x", padx=6, pady=3)
             self.comment_tiles.append(tile)
             if len(self.comment_tiles) > self.comment_tile_limit:
                 oldest = self.comment_tiles.pop(0)
                 oldest.destroy()
 
+            if self.chat_html_newest_first.get():
+                self._sync_comment_tile_order()
+            else:
+                self._scroll_comment_tiles_to_edge()
+
             logger.debug(f"Comment tile added: {comment.display_username}")
+            if trace_id:
+                logger.info(
+                    f"[tester:{trace_id}] gui.add_comment_tile done "
+                    f"tiles={len(self.comment_tiles)}"
+                )
 
         except Exception as e:
             logger.error(f"Failed to add comment tile: {e}", exc_info=True)
+            if trace_id:
+                logger.error(f"[tester:{trace_id}] gui.add_comment_tile failed", exc_info=True)
             self.log_message("⚠️ コメントタイルの描画に失敗しました。ログを確認してください。", log_type="error")
 
     def on_comment_received(self, comment: CommentData):
@@ -5160,7 +5194,16 @@ window.onload = function() {{
         Args:
             comment: CommentDataオブジェクト
         """
+        trace_id = (getattr(comment, "raw_data", None) or {}).get("id")
+        if trace_id:
+            logger.info(
+                f"[tester:{trace_id}] gui.on_comment_received entry "
+                f"user={comment.display_username} translated={bool(comment.translated)} "
+                f"suppress_subtitle={bool(getattr(comment, 'raw_data', {}).get('suppress_subtitle'))}"
+            )
         def _update_ui():
+            if trace_id:
+                logger.info(f"[tester:{trace_id}] gui.on_comment_received update_ui start")
             # 拡張フォーマットでログに表示（タイムスタンプはlog_messageが付与）
             badge_str = f"{comment.badge_text} " if comment.badge_text else ""
             # テキストログ用: エモートを :name: 形式で表示
@@ -5177,7 +5220,11 @@ window.onload = function() {{
 
             # 通常コメントログに追加
             self.log_message(msg, log_type="chat", comment_data=comment)
+            if trace_id:
+                logger.info(f"[tester:{trace_id}] gui.on_comment_received log_message done")
             self._add_comment_tile(comment)
+            if trace_id:
+                logger.info(f"[tester:{trace_id}] gui.on_comment_received add_comment_tile done")
 
             # 特別イベントの検出（サブスクライバー、モデレーター、VIP）
             if comment.is_subscriber or comment.is_moderator or comment.is_vip:
@@ -5190,6 +5237,8 @@ window.onload = function() {{
                     event_type.append("VIP")
                 event_msg = f"{comment.display_username} ({', '.join(event_type)})"
                 self.log_special_event(event_msg, "badge")
+            if trace_id:
+                logger.info(f"[tester:{trace_id}] gui.on_comment_received update_ui done")
 
             # オーバーレイ更新
         if comment.translated:
@@ -5221,10 +5270,16 @@ window.onload = function() {{
         # エモートがない場合: 即座にUI更新
         if comment.emotes:
             def _prefetch_then_update():
+                if trace_id:
+                    logger.info(f"[tester:{trace_id}] gui.on_comment_received prefetch start")
                 self._prefetch_emote_images(comment.emotes)
+                if trace_id:
+                    logger.info(f"[tester:{trace_id}] gui.on_comment_received prefetch done")
                 self.master.after(0, _update_ui)
             threading.Thread(target=_prefetch_then_update, daemon=True).start()
         else:
+            if trace_id:
+                logger.info(f"[tester:{trace_id}] gui.on_comment_received scheduled update_ui")
             self.master.after(0, _update_ui)
 
     def log_special_event(self, message: str, event_type: str = "other"):
@@ -6199,6 +6254,18 @@ window.onload = function() {{
     def toggle_voice(self):
         logger.info(f"toggle_voice called, voice_var={self.voice_var.get()}")
         if self.voice_var.get():
+            from src.local_translator import (
+                get_local_translation_unavailable_reason,
+                is_local_translation_available,
+            )
+
+            if not is_local_translation_available():
+                detail = get_local_translation_unavailable_reason() or "ローカル翻訳の初期化に失敗しました"
+                self.voice_var.set(False)
+                self.log_message(f"❌ 音声翻訳を開始できません: {detail}")
+                self._set_status("音声翻訳の依存関係が不足しています。", "error")
+                return
+
             self.log_message("🎤 音声認識を開始します...")
             logger.info("Calling voice_translator.start()")
             success = self.voice_translator.start()
@@ -7701,19 +7768,20 @@ window.onload = function() {{
             self.master.after(0, lambda: self.log_message(msg, log_type="system"))
             return
 
-        msg = f"🎤 [Voice] {text}\n    ➡ {translated}"
+        voice_view = build_voice_translation_view(text, translated)
+        msg = voice_view.log_message
         # UI更新はメインスレッドで行う
         self.master.after(0, lambda: self.log_message(msg, log_type="voice"))
 
         # オーバーレイ更新
-        update_translation(translated)
+        update_translation(voice_view.overlay_text)
 
         # 字幕更新（音声認識）
         cfg = load_config()
         if cfg.get("subtitle_enabled"):
             update_subtitle(
                 original=text,
-                translated=translated,
+                translated=voice_view.subtitle_translated,
                 speaker="",
                 config={
                     "show_original": cfg.get("subtitle_show_original", True),
@@ -7730,7 +7798,7 @@ window.onload = function() {{
             )
 
         # 音声翻訳結果をチャット送信（音声翻訳機能がONなら送信）
-        if self.voice_var.get() and translated and translated != "(No API Key)":
+        if self.voice_var.get() and voice_view.has_distinct_translation:
             min_len = cfg.get("voice_chat_min_length", 5)
             cooldown_sec = cfg.get("voice_chat_cooldown", 3)
             fmt = cfg.get("voice_chat_format", "[{lang}] {translation}")

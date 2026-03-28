@@ -78,6 +78,58 @@ class TestOverlayServer:
             assert overlay_server._subtitle_state["config"] == {"font_size": 32}
             assert overlay_server._subtitle_state["timestamp"]
 
+    def test_update_subtitle_hides_duplicate_translation_when_both_lines_enabled(self):
+        """原文と翻訳文が同一で両方表示設定なら重複行を抑制する"""
+        from src import overlay_server
+
+        with overlay_server._subtitle_lock:
+            overlay_server._subtitle_state = {
+                "id": 0,
+                "enabled": True,
+                "original": "",
+                "translated": "",
+                "speaker": "",
+                "timestamp": "",
+                "config": {},
+            }
+
+        overlay_server.update_subtitle(
+            "こんにちは",
+            "こんにちは",
+            "speaker",
+            {"show_original": True, "show_translated": True},
+        )
+
+        with overlay_server._subtitle_lock:
+            assert overlay_server._subtitle_state["original"] == "こんにちは"
+            assert overlay_server._subtitle_state["translated"] == ""
+
+    def test_update_subtitle_keeps_same_text_when_only_translated_is_shown(self):
+        """翻訳文のみ表示時は同一テキストでも字幕を消さない"""
+        from src import overlay_server
+
+        with overlay_server._subtitle_lock:
+            overlay_server._subtitle_state = {
+                "id": 0,
+                "enabled": True,
+                "original": "",
+                "translated": "",
+                "speaker": "",
+                "timestamp": "",
+                "config": {},
+            }
+
+        overlay_server.update_subtitle(
+            "こんにちは",
+            "こんにちは",
+            "speaker",
+            {"show_original": False, "show_translated": True},
+        )
+
+        with overlay_server._subtitle_lock:
+            assert overlay_server._subtitle_state["original"] == "こんにちは"
+            assert overlay_server._subtitle_state["translated"] == "こんにちは"
+
     def test_blank_overlay_html_is_transparent(self):
         """未準備時はOBSに空の透明HTMLを返せる"""
         from src.overlay_server import _blank_overlay_html

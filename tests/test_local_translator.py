@@ -9,6 +9,7 @@ import pytest
 from src.local_translator import (
     LocalTranslator,
     _get_models_dir,
+    get_local_translation_unavailable_reason,
     is_local_translation_available,
 )
 
@@ -60,6 +61,26 @@ class TestIsLocalTranslationAvailable:
         mock_dir.return_value = "/fake/models"
         mock_isfile.return_value = True
         assert is_local_translation_available() is True
+
+    @patch("src.local_translator._HAS_CT2", False)
+    def test_unavailable_reason_for_missing_ctranslate2(self):
+        assert get_local_translation_unavailable_reason() == "ctranslate2 が未インストールです"
+
+    @patch("src.local_translator._HAS_CT2", True)
+    @patch("src.local_translator._HAS_SPM", False)
+    def test_unavailable_reason_for_missing_sentencepiece(self):
+        assert get_local_translation_unavailable_reason() == "sentencepiece が未インストールです"
+
+    @patch("src.local_translator._HAS_CT2", True)
+    @patch("src.local_translator._HAS_SPM", True)
+    @patch("src.local_translator._get_models_dir")
+    @patch("os.path.isfile")
+    def test_unavailable_reason_for_missing_model_files(self, mock_isfile, mock_dir):
+        mock_dir.return_value = "/fake/models"
+        mock_isfile.return_value = False
+        reason = get_local_translation_unavailable_reason()
+        assert reason is not None
+        assert "翻訳モデルが不足しています" in reason
 
 
 # =========================================
@@ -175,4 +196,3 @@ class TestLocalTranslator:
 
         # CTranslate2.Translator should be created only once
         assert mock_ct2.Translator.call_count == 1
-

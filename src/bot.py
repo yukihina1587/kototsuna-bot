@@ -223,6 +223,27 @@ class TranslateBot(commands.Bot):
     def __init__(self, token, channel, get_lang_mode, gui_ref,
                  tts_enabled_getter=None, tts_include_name_getter=None, client_id=None):
         super().__init__(token=token, prefix='!', initial_channels=[channel])
+        self._initialize_state(
+            token=token,
+            channel=channel,
+            get_lang_mode=get_lang_mode,
+            gui_ref=gui_ref,
+            tts_enabled_getter=tts_enabled_getter,
+            tts_include_name_getter=tts_include_name_getter,
+            client_id=client_id,
+        )
+
+    def _initialize_state(
+        self,
+        *,
+        token,
+        channel,
+        get_lang_mode,
+        gui_ref,
+        tts_enabled_getter=None,
+        tts_include_name_getter=None,
+        client_id=None,
+    ):
         self.token = token
         self.channel_name = channel
         self.nick = None
@@ -261,6 +282,31 @@ class TranslateBot(commands.Bot):
         # セッションアーカイブ
         self._archive_enabled = config.get("archive_enabled", True)
         self._archive = get_session_archive() if self._archive_enabled else None
+
+    @classmethod
+    def create_test_dispatcher(
+        cls,
+        *,
+        token,
+        channel,
+        get_lang_mode,
+        gui_ref,
+        tts_enabled_getter=None,
+        tts_include_name_getter=None,
+        client_id=None,
+    ):
+        """コメントテスター専用の軽量インスタンスを作成する。"""
+        bot = cls.__new__(cls)
+        bot._initialize_state(
+            token=token,
+            channel=channel,
+            get_lang_mode=get_lang_mode,
+            gui_ref=gui_ref,
+            tts_enabled_getter=tts_enabled_getter,
+            tts_include_name_getter=tts_include_name_getter,
+            client_id=client_id,
+        )
+        return bot
 
     async def event_ready(self):
         # GUI側から run_coroutine_threadsafe で送信できるよう、実際に動いているループを保持
@@ -334,12 +380,22 @@ class TranslateBot(commands.Bot):
         callback = getattr(self.gui, callback_name, None)
         if not callable(callback):
             return
+        trace_id = None
+        if args:
+            raw_data = getattr(args[0], "raw_data", None) or {}
+            trace_id = raw_data.get("id")
         if threading.current_thread() is threading.main_thread():
+            if trace_id:
+                logger.info(f"[tester:{trace_id}] bot._call_gui immediate callback={callback_name}")
             callback(*args, **kwargs)
             return
         if hasattr(self.gui, "master"):
+            if trace_id:
+                logger.info(f"[tester:{trace_id}] bot._call_gui scheduled callback={callback_name}")
             self.gui.master.after(0, lambda: callback(*args, **kwargs))
             return
+        if trace_id:
+            logger.info(f"[tester:{trace_id}] bot._call_gui fallback callback={callback_name}")
         callback(*args, **kwargs)
 
     def _on_follow_event(self, follower_name: str):
@@ -644,6 +700,11 @@ class TranslateBot(commands.Bot):
         safe_tags.setdefault("color", "#FF6B6B")
         safe_tags.setdefault("user-id", "test-000")
         badges = safe_tags.get("badges", {}) or {}
+        trace_id = safe_tags["id"]
+        logger.info(
+            f"[tester:{trace_id}] process_test_message start "
+            f"user={username} display={display_name or username} content={content[:80]!r}"
+        )
 
         author = SimpleNamespace(
             name=username,
@@ -656,6 +717,7 @@ class TranslateBot(commands.Bot):
         async def _send_local(text: str) -> None:
             clean_text = (text or "").replace('\u200B', '').strip()
             if not clean_text or not self.gui:
+                logger.info(f"[tester:{trace_id}] process_test_message local response skipped")
                 return
 
             bot_name = (self.nick or "ことつなBOT").strip() or "ことつなBOT"
@@ -675,6 +737,10 @@ class TranslateBot(commands.Bot):
                 display_name=bot_name,
                 translated=None,
             )
+            logger.info(
+                f"[tester:{trace_id}] process_test_message local response "
+                f"bot_message={clean_text[:80]!r}"
+            )
             self._call_gui("on_comment_received", comment)
 
         message = SimpleNamespace(
@@ -684,7 +750,9 @@ class TranslateBot(commands.Bot):
             tags=safe_tags,
             echo=False,
         )
+        logger.info(f"[tester:{trace_id}] process_test_message before event_message")
         await self.event_message(message)
+        logger.info(f"[tester:{trace_id}] process_test_message done")
 
 
     def _archive_comment(self, comment, bits: int = 0) -> None:

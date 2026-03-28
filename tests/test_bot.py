@@ -63,6 +63,41 @@ def _make_bot():
     return bot
 
 
+def _make_test_dispatcher():
+    from src.bot import TranslateBot
+
+    command_store = Mock()
+    command_store.get.return_value = None
+    command_store.list_all.return_value = []
+    tracker = Mock()
+    tracker.check_message.return_value = False
+    emote_provider = Mock()
+    emote_provider.detect_emotes.return_value = []
+    plugin_manager = Mock()
+    plugin_manager.count = 0
+    viewer_store = Mock()
+
+    with patch("src.bot.commands.Bot.__init__", side_effect=AssertionError("parent init should not run")), \
+         patch("src.bot.get_tts_instance", return_value=Mock()), \
+         patch("src.bot.get_tracker", return_value=tracker), \
+         patch("src.bot.CommandStore", return_value=command_store), \
+         patch("src.bot.EmoteProvider", return_value=emote_provider), \
+         patch("src.bot.get_viewer_store", return_value=viewer_store), \
+         patch("src.bot.get_plugin_manager", return_value=plugin_manager), \
+         patch("src.bot.load_config", return_value={"commands_enabled": True}):
+        bot = TranslateBot.create_test_dispatcher(
+            token="oauth:test-token",
+            channel="testchannel",
+            get_lang_mode=lambda: "自動",
+            gui_ref=Mock(),
+            tts_enabled_getter=lambda: False,
+            tts_include_name_getter=lambda: False,
+            client_id=None,
+        )
+
+    return bot
+
+
 class TestTranslateBot:
     """TranslateBotクラスの基本テスト"""
 
@@ -270,6 +305,24 @@ class TestBotCommands:
         assert comment.display_name == "TestUser"
         assert comment.raw_data.get("tester_generated") is None
         assert comment.raw_data.get("suppress_subtitle") is None
+
+    def test_create_test_dispatcher_processes_message_without_parent_bot_init(self):
+        bot = _make_test_dispatcher()
+
+        with patch("src.bot.load_config", return_value={"chat_translation_enabled": False}):
+            asyncio.run(
+                bot.process_test_message(
+                    username="testuser",
+                    content="こんにちは",
+                    tags={"id": "test-3", "badges": {}},
+                    display_name="TestUser",
+                )
+            )
+
+        bot.gui.on_comment_received.assert_called_once()
+        comment = bot.gui.on_comment_received.call_args.args[0]
+        assert comment.message == "こんにちは"
+        assert comment.display_name == "TestUser"
 
     def test_call_gui_uses_main_thread_dispatch_from_worker_thread(self):
         bot = _make_bot()
