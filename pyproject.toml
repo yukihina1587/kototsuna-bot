@@ -1,12 +1,12 @@
 [project]
 name = "translation-bot"
-version = "1.6.4-beta.11"
+version = "1.6.4-beta.12"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "customtkinter>=5.2.2",
-    "pillow>=12.1.0",
+    "pillow==12.1.0",
     "python-dotenv>=1.2.1",
     # ローカル音声認識（ReazonSpeech + Silero VAD）
     "numpy>=1.24",
