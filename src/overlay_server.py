@@ -41,6 +41,10 @@ def _normalize_subtitle_lines(original: str, translated: str, config: dict | Non
 
 
 class RequestHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args) -> None:  # type: ignore[override]
+        """アクセスログをアプリのロガーに流す（コンソール非表示）。"""
+        logger.debug("overlay: " + (format % args))
+
     def do_GET(self):
         if self.path == '/api/current':
             self.send_response(200)
