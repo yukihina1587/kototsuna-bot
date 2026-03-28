@@ -7035,7 +7035,7 @@ window.onload = function() {{
 
     def stop_resource_auto_update(self):
         """リソース表示の自動更新を停止"""
-        if self.resource_update_timer:
+        if getattr(self, "resource_update_timer", None):
             self.master.after_cancel(self.resource_update_timer)
             self.resource_update_timer = None
 

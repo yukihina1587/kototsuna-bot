@@ -408,7 +408,7 @@ class VoiceTranslator:
         models_dir = _get_models_dir()
         base_dir = os.path.dirname(models_dir)
         vad_rel = os.path.join("models", "silero_vad.onnx")
-        vad_threshold: float = float(self.config_data.get("stt_vad_threshold", 0.3))
+        vad_threshold: float = float(self.config_data.get("stt_vad_threshold", 0.2))
 
         logger.info(
             f"Creating VoiceActivityDetector (threshold={vad_threshold}, "
