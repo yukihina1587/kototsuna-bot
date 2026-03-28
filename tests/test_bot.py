@@ -271,6 +271,28 @@ class TestBotCommands:
         assert comment.raw_data.get("tester_generated") is None
         assert comment.raw_data.get("suppress_subtitle") is None
 
+    def test_call_gui_uses_main_thread_dispatch_from_worker_thread(self):
+        bot = _make_bot()
+        bot.gui.master = Mock()
+
+        payload = object()
+        scheduled = []
+
+        def run_later(delay_ms, callback):
+            scheduled.append(delay_ms)
+            callback()
+
+        bot.gui.master.after.side_effect = run_later
+
+        worker_thread = object()
+        main_thread = object()
+        with patch("src.bot.threading.current_thread", return_value=worker_thread), \
+             patch("src.bot.threading.main_thread", return_value=main_thread):
+            bot._call_gui("on_comment_received", payload)
+
+        assert scheduled == [0]
+        bot.gui.on_comment_received.assert_called_once_with(payload)
+
     def test_dict_list_command_empty(self, tmp_path):
         bot = _make_bot()
         author = _make_author(is_mod=True)

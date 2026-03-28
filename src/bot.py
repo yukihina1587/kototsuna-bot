@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
 import json
+import threading
 import time
 from twitchio.ext import commands
 from types import SimpleNamespace
@@ -326,6 +327,21 @@ class TranslateBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Failed to start session archive: {e}", exc_info=True)
 
+    def _call_gui(self, callback_name: str, *args, **kwargs) -> None:
+        """GUI更新をメインスレッドへ橋渡しする。"""
+        if not self.gui:
+            return
+        callback = getattr(self.gui, callback_name, None)
+        if not callable(callback):
+            return
+        if threading.current_thread() is threading.main_thread():
+            callback(*args, **kwargs)
+            return
+        if hasattr(self.gui, "master"):
+            self.gui.master.after(0, lambda: callback(*args, **kwargs))
+            return
+        callback(*args, **kwargs)
+
     def _on_follow_event(self, follower_name: str):
         """フォローイベントのコールバック"""
         follow_msg = f"{follower_name} さんがフォローしました"
@@ -463,8 +479,8 @@ class TranslateBot(commands.Bot):
                 display_name=participant_name,
                 translated=None
             )
-            self.gui.on_comment_received(join_comment)
-            self.gui.log_message(join_msg, log_type="system")
+            self._call_gui("on_comment_received", join_comment)
+            self._call_gui("log_message", join_msg, log_type="system")
 
             # 参加者リストを即時送信
             try:
@@ -516,7 +532,7 @@ class TranslateBot(commands.Bot):
                 translated=None,
                 extra_emotes=tp_emotes,
             )
-            self.gui.on_comment_received(comment)
+            self._call_gui("on_comment_received", comment)
             self._archive_comment(comment, bits)
 
             # TTS: チャット読み上げ（翻訳無効時も原文を読み上げる）
@@ -541,7 +557,7 @@ class TranslateBot(commands.Bot):
 
         # フィルタでスキップされた場合
         if translated == "":
-            self.gui.log_message("🚫 翻訳フィルタによりスキップしました", log_type="system")
+            self._call_gui("log_message", "🚫 翻訳フィルタによりスキップしました", log_type="system")
             # コメントは表示する
             comment = create_twitch_comment(
                 username=message.author.name,
@@ -551,7 +567,7 @@ class TranslateBot(commands.Bot):
                 translated=None,
                 extra_emotes=tp_emotes,
             )
-            self.gui.on_comment_received(comment)
+            self._call_gui("on_comment_received", comment)
             return
 
         # Remove <k> tags from translated text for display
@@ -582,7 +598,7 @@ class TranslateBot(commands.Bot):
         )
 
         # GUIにコメントデータを渡す（全てのコメントをタイル表示）
-        self.gui.on_comment_received(comment)
+        self._call_gui("on_comment_received", comment)
 
         # セッションアーカイブに記録
         self._archive_comment(comment, bits)
@@ -659,7 +675,7 @@ class TranslateBot(commands.Bot):
                 display_name=bot_name,
                 translated=None,
             )
-            self.gui.on_comment_received(comment)
+            self._call_gui("on_comment_received", comment)
 
         message = SimpleNamespace(
             content=content,
