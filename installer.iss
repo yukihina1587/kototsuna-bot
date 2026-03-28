@@ -26,6 +26,12 @@ Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[InstallDelete]
+; Remove _internal/ completely before installing new files.
+; This prevents stale .pyd/.dll files (e.g. old PIL/_imaging.pyd) from
+; persisting across updates and causing version mismatch errors.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "dist\Kototsuna\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "assets\icon_fullsize.ico"; DestDir: "{app}"; Flags: ignoreversion
