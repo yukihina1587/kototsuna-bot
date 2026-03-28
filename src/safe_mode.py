@@ -81,3 +81,12 @@ def should_suggest_safe_mode(crash_count: int) -> bool:
         crash_count: record_startup() の戻り値
     """
     return crash_count >= CRASH_THRESHOLD
+
+
+def should_offer_post_update_rollback(
+    crash_count: int,
+    just_updated: bool,
+    has_rollback_info: bool,
+) -> bool:
+    """アップデート直後のロールバック提案を出すべきか返す。"""
+    return just_updated and has_rollback_info and crash_count >= CRASH_THRESHOLD

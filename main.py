@@ -335,6 +335,25 @@ def _show_safe_mode_dialog(master, crash_count: int) -> tuple[bool, bool]:
     return result["safe_mode"], result["reset_config"]
 
 
+def _show_post_update_recovery_dialog(master, crash_count: int, previous_version: str) -> str:
+    """アップデート直後の連続クラッシュ時に復旧方法を確認する。"""
+    result = messagebox.askyesnocancel(
+        "アップデート後の起動失敗を検出",
+        (
+            f"アップデート後の起動が {crash_count} 回連続で失敗しています。\n\n"
+            f"「はい」: 前のバージョン ({previous_version}) に戻す\n"
+            "「いいえ」: セーフモードで起動する\n"
+            "「キャンセル」: 通常起動を試す"
+        ),
+        parent=master,
+    )
+    if result is True:
+        return "rollback"
+    if result is False:
+        return "safe_mode"
+    return "normal"
+
+
 if __name__ == '__main__':
     # 前回アップデート後のクリーンアップ
     if "--cleanup" in sys.argv:
@@ -344,16 +363,24 @@ if __name__ == '__main__':
         cleanup_old_exe()
 
     # 起動を記録（クラッシュカウンタ増加）
-    from src.safe_mode import record_startup, reset_crash_count, should_suggest_safe_mode
+    from src.safe_mode import (
+        record_startup,
+        reset_crash_count,
+        should_offer_post_update_rollback,
+        should_suggest_safe_mode,
+    )
     _crash_count = record_startup()
 
     # アップデート直後かどうか確認
     from src.config import load_config as _load_config
+    from src.updater import UpdateError, get_rollback_info, rollback_to_previous
     _startup_config = _load_config()
     _just_updated = _startup_config.get("just_updated", False)
+    _rollback_info = get_rollback_info() if _just_updated else None
 
     # セーフモード状態
     _safe_mode_active = False
+    _startup_recovery_handled = False
 
     # メインウィンドウを作成（非表示）
     try:
@@ -362,8 +389,44 @@ if __name__ == '__main__':
         raise
     root.withdraw()  # 最初は非表示
 
+    # アップデート直後の連続クラッシュ時は、通常初期化前にロールバックを提案する
+    if should_offer_post_update_rollback(
+        _crash_count,
+        _just_updated,
+        bool(_rollback_info and _rollback_info.get("version")),
+    ):
+        action = _show_post_update_recovery_dialog(
+            root,
+            _crash_count,
+            _rollback_info["version"],
+        )
+        _startup_recovery_handled = True
+
+        if action == "rollback":
+            try:
+                rollback_to_previous()
+                sys.exit(0)
+            except UpdateError as e:
+                logger.error(f"起動前ロールバック失敗: {e}")
+                messagebox.showerror(
+                    "ロールバックエラー",
+                    f"前のバージョンに戻せませんでした:\n{e}",
+                    parent=root,
+                )
+                _startup_recovery_handled = False
+            except Exception as e:
+                logger.error(f"起動前ロールバック中の予期しないエラー: {e}", exc_info=True)
+                messagebox.showerror(
+                    "ロールバックエラー",
+                    f"前のバージョンに戻せませんでした:\n{e}",
+                    parent=root,
+                )
+                _startup_recovery_handled = False
+        elif action == "safe_mode":
+            _safe_mode_active = True
+
     # セーフモード確認（クラッシュ閾値超過時はスプラッシュより先に表示）
-    if should_suggest_safe_mode(_crash_count):
+    if not _startup_recovery_handled and should_suggest_safe_mode(_crash_count):
         _safe_mode_active, _reset_config = _show_safe_mode_dialog(root, _crash_count)
         if _reset_config:
             from src.config import reset_config as _reset_cfg
