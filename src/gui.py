@@ -2979,6 +2979,7 @@ class KototsunaApp:
 
         def _dispatch_test_comment(name: str, content: str, tags: Dict) -> None:
             import asyncio
+            import threading
 
             username = name.lower().replace(" ", "_")
             bot = self.bot_instance
@@ -2993,55 +2994,90 @@ class KototsunaApp:
                     ),
                     bot._running_loop,
                 )
-                future.result(timeout=10)
+
+                def _handle_future_result(done_future):
+                    try:
+                        done_future.result()
+                    except Exception as e:
+                        logger.error(f"Comment tester async error: {e}", exc_info=True)
+                        self.master.after(
+                            0,
+                            lambda: messagebox.showerror(
+                                "テスト送信エラー",
+                                f"テスト送信に失敗しました:\n{e}",
+                            ),
+                        )
+
+                future.add_done_callback(_handle_future_result)
                 return
 
-            temp_bot = TranslateBot(
-                token=self.token or "oauth:test-token",
-                channel=(self.channel.get().strip() or "testchannel").lower(),
-                get_lang_mode=lambda: self.lang_mode.get(),
-                gui_ref=self,
-                tts_enabled_getter=lambda: False,
-                tts_include_name_getter=lambda: False,
-                client_id=None,
-            )
-            asyncio.run(
-                temp_bot.process_test_message(
-                    username=username,
-                    content=content,
-                    tags=tags,
-                    display_name=name,
-                )
-            )
+            def _run_temp_bot():
+                try:
+                    temp_bot = TranslateBot(
+                        token=self.token or "oauth:test-token",
+                        channel=(self.channel.get().strip() or "testchannel").lower(),
+                        get_lang_mode=lambda: self.lang_mode.get(),
+                        gui_ref=self,
+                        tts_enabled_getter=lambda: False,
+                        tts_include_name_getter=lambda: False,
+                        client_id=None,
+                    )
+                    asyncio.run(
+                        temp_bot.process_test_message(
+                            username=username,
+                            content=content,
+                            tags=tags,
+                            display_name=name,
+                        )
+                    )
+                except Exception as e:
+                    logger.error(f"Comment tester temp bot error: {e}", exc_info=True)
+                    self.master.after(
+                        0,
+                        lambda: messagebox.showerror(
+                            "テスト送信エラー",
+                            f"テスト送信に失敗しました:\n{e}",
+                        ),
+                    )
+
+            threading.Thread(
+                target=_run_temp_bot,
+                daemon=True,
+                name="comment-tester",
+            ).start()
 
         def _send():
-            name = tester_name_var.get().strip() or "テストユーザー"
-            content = tester_msg_var.get().strip() or "(空のメッセージ)"
-            badges: Dict = {}
-            if tester_mod_var.get():
-                badges["moderator"] = "1"
-            if tester_sub_var.get():
-                badges["subscriber"] = "1"
-            tags = {
-                "id": f"test-{uuid.uuid4().hex[:8]}",
-                "color": "#FF6B6B",
-                "user-id": "test-000",
-                "badges": badges,
-                "tester_generated": True,
-            }
-            _dispatch_test_comment(name, content, tags)
+            try:
+                name = tester_name_var.get().strip() or "テストユーザー"
+                content = tester_msg_var.get().strip() or "(空のメッセージ)"
+                badges: Dict = {}
+                if tester_mod_var.get():
+                    badges["moderator"] = "1"
+                if tester_sub_var.get():
+                    badges["subscriber"] = "1"
+                tags = {
+                    "id": f"test-{uuid.uuid4().hex[:8]}",
+                    "color": "#FF6B6B",
+                    "user-id": "test-000",
+                    "badges": badges,
+                    "tester_generated": True,
+                }
+                _dispatch_test_comment(name, content, tags)
 
-            if tester_tts_var.get():
-                try:
-                    from src.tts import get_tts_instance
-                    tts = get_tts_instance()
-                    tts.speak(content)
-                except Exception as e:
-                    logger.warning(f"Comment tester TTS error: {e}")
-
-            # 連打防止: 1秒間ボタン無効化
-            send_btn.configure(state="disabled")
-            self.master.after(1000, lambda: send_btn.configure(state="normal"))
+                if tester_tts_var.get():
+                    try:
+                        from src.tts import get_tts_instance
+                        tts = get_tts_instance()
+                        tts.speak(content)
+                    except Exception as e:
+                        logger.warning(f"Comment tester TTS error: {e}")
+            except Exception as e:
+                logger.error(f"Comment tester error: {e}", exc_info=True)
+                messagebox.showerror("テスト送信エラー", f"テスト送信に失敗しました:\n{e}")
+            finally:
+                # 連打防止: 1秒間ボタン無効化
+                send_btn.configure(state="disabled")
+                self.master.after(1000, lambda: send_btn.configure(state="normal"))
 
         send_btn.configure(command=_send)
 
