@@ -7784,9 +7784,7 @@ window.onload = function() {{
             return
 
         voice_view = build_voice_translation_view(text, translated)
-        msg = voice_view.log_message
-        # UI更新はメインスレッドで行う
-        self.master.after(0, lambda: self.log_message(msg, log_type="voice"))
+        # コメントログ・チャットHTMLには表示しない（字幕チャットに専念）
 
         # オーバーレイ更新
         update_translation(voice_view.overlay_text)
