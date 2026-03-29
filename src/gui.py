@@ -307,6 +307,11 @@ class KototsunaApp:
         voicevox_url = self.config.get("voicevox_url", "http://localhost:50021")
         self.voicevox_manager = get_voicevox_manager(voicevox_engine_path, voicevox_url)
 
+        # チャットHTMLを先に書き出してからサーバーを起動する。
+        # サーバー起動後に書き出すと、OBSがサーバー復帰直後に /chat へアクセスした際に
+        # _chat_html_path が未設定で blank HTML が返り、画面が真っ黒になる問題を防ぐ。
+        self._export_chat_html(force=True)
+
         # オーバーレイサーバー起動
         run_server_thread()
 
@@ -328,6 +333,7 @@ class KototsunaApp:
 
         # BOT起動前にHTML出力パスを設定（/chatエンドポイント用）
         self._init_subtitle_overlay()
+        # after(500) はOBSサイドバーのURLラベル更新のみ（HTML書き出しは上で完了済み）
         self.master.after(500, self._init_chat_html)
 
         # 起動時はBOTボタンを無効化（認証前）
@@ -4851,6 +4857,7 @@ class KototsunaApp:
         js_code = f"""
 const newestFirst = {str(newest_first).lower()};
 let updateInterval = null;
+let consecutiveErrors = 0;
 
 function getMessageIds(root) {{
     return Array.from(root.querySelectorAll('.msg')).map(msg => msg.dataset.id);
@@ -4867,6 +4874,7 @@ function syncChat() {{
     fetch(window.location.href + '?t=' + Date.now(), {{ cache: 'no-store' }})
         .then(response => response.ok ? response.text() : '')
         .then(html => {{
+            consecutiveErrors = 0;
             if (!html) {{
                 return;
             }}
@@ -4914,7 +4922,14 @@ function syncChat() {{
 
             {scroll_script}
         }})
-        .catch(err => console.error('Update failed:', err));
+        .catch(err => {{
+            consecutiveErrors++;
+            console.error('Update failed:', err);
+            // サーバーが再起動した場合に自動で再接続するためページをリロード
+            if (consecutiveErrors >= 5) {{
+                window.location.reload();
+            }}
+        }});
 }}
 
 window.onload = function() {{
