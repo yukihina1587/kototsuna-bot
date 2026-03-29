@@ -1,6 +1,6 @@
 [project]
 name = "translation-bot"
-version = "1.6.4-beta.17"
+version = "1.6.4-beta.18"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
