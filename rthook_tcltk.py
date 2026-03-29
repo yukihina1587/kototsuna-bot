@@ -318,18 +318,23 @@ if _meipass and _safe_dir:
             _safe_subdir = _pyd_cache_root if _rel_dir == '.' else os.path.join(_pyd_cache_root, _rel_dir)
             _pyd_dst = os.path.join(_safe_subdir, _fname)
 
-            # サイズが同じなら再コピー不要（2回目以降の起動を高速化）
+            # サイズ・タイムスタンプが両方一致すれば再コピー不要（2回目以降の起動を高速化）
+            # サイズのみの比較は、同サイズで中身が異なるファイル（バージョン違いのpyd等）を
+            # 誤ってスキップする問題があるため、更新時刻も合わせて確認する。
             try:
-                _src_size = os.path.getsize(_pyd_src)
-                if os.path.isfile(_pyd_dst) and os.path.getsize(_pyd_dst) == _src_size:
-                    if _is_pyd:
-                        _mod_base = _fname.split('.')[0]
-                        _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
-                        _pyd_safe_map[_fullname] = _pyd_dst
-                    else:
-                        _dll_cached += 1
-                    _copy_skipped += 1
-                    continue
+                _src_stat = os.stat(_pyd_src)
+                _src_size = _src_stat.st_size
+                if os.path.isfile(_pyd_dst):
+                    _dst_stat = os.stat(_pyd_dst)
+                    if _dst_stat.st_size == _src_size and abs(_dst_stat.st_mtime - _src_stat.st_mtime) < 2:
+                        if _is_pyd:
+                            _mod_base = _fname.split('.')[0]
+                            _fullname = _mod_base if _rel_dir == '.' else _rel_dir.replace(os.sep, '.') + '.' + _mod_base
+                            _pyd_safe_map[_fullname] = _pyd_dst
+                        else:
+                            _dll_cached += 1
+                        _copy_skipped += 1
+                        continue
             except OSError:
                 pass
 

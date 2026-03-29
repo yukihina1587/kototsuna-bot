@@ -31,6 +31,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; This prevents stale .pyd/.dll files (e.g. old PIL/_imaging.pyd) from
 ; persisting across updates and causing version mismatch errors.
 Type: filesandordirs; Name: "{app}\_internal"
+; Remove runtime_cache/ (pyd cache) to force rthook to re-copy all .pyd files.
+; rthook skips copy when file sizes match, so stale cached versions persist
+; across updates when new/old .pyd files happen to have identical sizes.
+Type: filesandordirs; Name: "{app}\runtime_cache"
 
 [Files]
 Source: "dist\Kototsuna\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
