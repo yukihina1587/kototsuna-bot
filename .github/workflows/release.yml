@@ -66,7 +66,7 @@ jobs:
       - name: Download NLLB-200 translation model
         run: |
           Write-Host "Downloading NLLB-200-distilled-600M (CTranslate2 INT8) from HuggingFace..."
-          pip install huggingface_hub
+          pip install "huggingface_hub" "pillow==12.1.0"
           python download_translation_models.py
 
           $modelDir = "models/nllb-200-distilled-600M-ct2-int8"
@@ -79,6 +79,17 @@ jobs:
           $spmSize = (Get-Item "$modelDir/sentencepiece.bpe.model").Length / 1MB
           Write-Host "  sentencepiece.bpe.model ($([math]::Round($spmSize, 2)) MB)"
           Write-Host "NLLB-200 translation model downloaded successfully."
+        shell: pwsh
+
+      - name: Verify Pillow version before build
+        run: |
+          $version = python -c "import PIL; print(PIL.__version__)"
+          Write-Host "Pillow version: $version"
+          if ($version -ne "12.1.0") {
+            Write-Error "Pillow version mismatch! Expected 12.1.0, got $version"
+            exit 1
+          }
+          Write-Host "Pillow version OK: 12.1.0"
         shell: pwsh
 
       - name: Build with PyInstaller
