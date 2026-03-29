@@ -127,6 +127,14 @@ if os.path.isdir(_models_dir):
 else:
     print(f"[SPEC] WARNING: models/ directory not found. STT models must be present at build time.")
 
+# pygame（VOICEVOX音声再生）を明示的に収集
+try:
+    tmp_ret = collect_all('pygame')
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+    print(f"[SPEC] pygame collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={len(tmp_ret[2])}")
+except Exception as e:
+    print(f"[SPEC] WARNING: pygame collect_all failed: {e}")
+
 # srcパッケージ内の全サブモジュールを収集
 hiddenimports += collect_submodules('src')
 
