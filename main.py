@@ -78,6 +78,7 @@ if sys.platform == "win32" and getattr(sys, 'frozen', False):
         _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         if _hwnd:
             ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
+        ctypes.windll.kernel32.FreeConsole()  # プロセスからコンソールを完全切り離し
     except Exception:
         pass
 

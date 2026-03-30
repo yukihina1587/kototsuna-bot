@@ -314,6 +314,16 @@ class TranslateBot(commands.Bot):
             self._running_loop = asyncio.get_running_loop()
         except RuntimeError:
             self._running_loop = None
+
+        # Windows ProactorEventLoop の WinError 10022 を抑制
+        if self._running_loop is not None:
+            def _suppress_pipe_errors(loop, context):
+                exc = context.get("exception")
+                if isinstance(exc, OSError) and getattr(exc, "winerror", None) == 10022:
+                    return
+                loop.default_exception_handler(context)
+            self._running_loop.set_exception_handler(_suppress_pipe_errors)
+
         logger.info(f"Bot logged in as {self.nick}")
 
         # EventSub接続を開始（フォロー検知）
