@@ -87,7 +87,7 @@ sounddevice==0.5.5
     # via translation-bot
 sympy==1.14.0
     # via onnxruntime
-twitchio==3.2.1
+twitchio==2.10.0
     # via translation-bot
 typing-extensions==4.15.0 ; python_full_version < '3.13'
     # via aiosignal

@@ -20,6 +20,6 @@ dependencies = [
     "sentencepiece>=0.1.99",
     "requests>=2.33.0",
     "aiohttp>=3.13.3",
-    "twitchio>=3.2.1",
+    "twitchio>=2.9.0,<3.0.0",
     "psutil>=7.2.2",
 ]
