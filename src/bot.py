@@ -720,7 +720,11 @@ class TranslateBot(commands.Bot):
                 logger.info(f"[tester:{trace_id}] process_test_message local response skipped")
                 return
 
-            bot_name = (self.nick or "ことつなBOT").strip() or "ことつなBOT"
+            try:
+                nick = self.nick
+            except Exception:
+                nick = None
+            bot_name = (nick or "ことつなBOT").strip() or "ことつなBOT"
             bot_username = bot_name.lower().replace(" ", "_")
             response_tags = {
                 "id": f"test-bot-{time.monotonic_ns()}",
