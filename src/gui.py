@@ -5252,28 +5252,6 @@ window.onload = function() {{
         if comment.translated:
             update_translation(comment.translated)
 
-        # 字幕更新
-        cfg = load_config()
-        suppress_subtitle = bool(getattr(comment, "raw_data", {}).get("suppress_subtitle"))
-        if cfg.get("subtitle_enabled") and not suppress_subtitle:
-            update_subtitle(
-                original=comment.message,
-                translated=comment.translated or "",
-                speaker=comment.display_username,
-                config={
-                    "show_original": cfg.get("subtitle_show_original", True),
-                    "show_translated": cfg.get("subtitle_show_translated", True),
-                    "show_speaker": cfg.get("subtitle_show_speaker", False),
-                    "show_timestamp": cfg.get("subtitle_show_timestamp", False),
-                    "font_family": cfg.get("subtitle_font_family", "Noto Sans JP"),
-                    "font_size": cfg.get("subtitle_font_size", 32),
-                    "text_color": cfg.get("subtitle_text_color", "#FFFFFF"),
-                    "stroke_color": cfg.get("subtitle_stroke_color", "#000000"),
-                    "stroke_width": cfg.get("subtitle_stroke_width", 3),
-                    "display_seconds": cfg.get("subtitle_display_seconds", 5.0),
-                }
-            )
-
         # エモートがある場合: 画像DL完了後にUI更新（画像がインライン表示される）
         # エモートがない場合: 即座にUI更新
         if comment.emotes:
