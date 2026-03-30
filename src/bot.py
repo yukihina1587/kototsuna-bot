@@ -246,7 +246,7 @@ class TranslateBot(commands.Bot):
     ):
         self.token = token
         self.channel_name = channel
-        self.nick = None
+
         self.client_id = client_id
         self.get_lang_mode = get_lang_mode
         self.gui = gui_ref
