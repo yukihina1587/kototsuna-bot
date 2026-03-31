@@ -461,23 +461,30 @@ class TranslateBot(commands.Bot):
             logger.debug(f"Skipped (zero-width space): {message.author.name}")
             return
 
+        # テストディスパッチャー等の軽量インスタンスでは _http/_connection が未初期化のため
+        # self.nick プロパティへのアクセスを防御的に行う
+        try:
+            _my_nick = self.nick
+        except Exception:
+            _my_nick = None
+
         # BOTが送信したエコーメッセージのみスキップ
         # ※配信者アカウント＝BOTアカウントの場合、配信者の手入力は翻訳対象
         # echoフラグ: BOTが送信→Twitchからエコーバック→True
         # 配信者の手入力: echo=False（通常メッセージとして扱われる）
-        is_bot_echo = message.echo and self.nick and message.author.name.lower() == self.nick.lower()
+        is_bot_echo = message.echo and _my_nick and message.author.name.lower() == _my_nick.lower()
         if is_bot_echo:
             logger.debug(f"Skipped (bot echo): {message.author.name}")
             return
 
         # 配信者の手入力（echo=False, 名前一致）は翻訳対象として処理を継続
-        if self.nick and message.author.name.lower() == self.nick.lower():
+        if _my_nick and message.author.name.lower() == _my_nick.lower():
             logger.debug(f"Processing broadcaster's own message: {message.author.name}")
 
         # === BOT フィルタリング ===
         # 誤 BAN 対策: チャンネルオーナーと認証ユーザー（配信者 BOT 兼用時）は絶対に除外しない
         author_name = getattr(message.author, "name", "") or ""
-        protected = {self.channel_name, self.nick or ""}
+        protected = {self.channel_name, _my_nick or ""}
         if self._bot_filter.is_bot(author_name, protected_names=protected):
             logger.debug(f"BOT フィルター: {author_name} をスキップ")
             return
