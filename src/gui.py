@@ -1222,29 +1222,34 @@ class KototsunaApp:
         manual_frame = ctk.CTkFrame(parent, fg_color="transparent")
         manual_frame.pack(fill="x", pady=2)
 
+        # 1行目: ラジオボタン + ComboBox + 検証インジケータ
+        input_row = ctk.CTkFrame(manual_frame, fg_color="transparent")
+        input_row.pack(fill="x")
+
         self.channel_manual_radio = ctk.CTkRadioButton(
-            manual_frame, text="別のチャンネル:",
+            input_row, text="別のチャンネル:",
             variable=self.channel_mode, value="manual",
             font=("Segoe UI", 11), command=self._on_channel_mode_change
         )
         self.channel_manual_radio.pack(side="left")
 
         self.channel_entry = ctk.CTkComboBox(
-            manual_frame, variable=self.channel,
+            input_row, variable=self.channel,
             values=self._channel_history_values(),
             height=28, width=120,
             command=lambda v: None,
         )
         self.channel_entry.pack(side="left", padx=(4, 0), fill="x", expand=True)
 
-        self.channel_indicator = ctk.CTkLabel(manual_frame, text="·", width=20, font=("Segoe UI", 14), text_color="#888888")
+        self.channel_indicator = ctk.CTkLabel(input_row, text="·", width=20, font=("Segoe UI", 14), text_color="#888888")
         self.channel_indicator.pack(side="left", padx=(2, 0))
 
+        # 2行目: 履歴ボタン（右寄せ、常に表示）
         ctk.CTkButton(
             manual_frame, text="履歴", width=44, height=28,
             fg_color="#334155", hover_color="#475569",
             command=self._show_channel_history_dialog
-        ).pack(side="left", padx=(4, 0))
+        ).pack(anchor="e", pady=(2, 0))
 
         ctk.CTkLabel(parent, text="※ twitch.tv/○○○ の ○○○ 部分", font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 4))
 
@@ -2968,11 +2973,9 @@ class KototsunaApp:
         # バッジオプション
         tester_mod_var = tk.BooleanVar(value=False)
         tester_sub_var = tk.BooleanVar(value=False)
-        tester_tts_var = tk.BooleanVar(value=False)
 
         ctk.CTkCheckBox(parent, text="モデレーターとして送信", variable=tester_mod_var).pack(anchor="w", pady=2)
         ctk.CTkCheckBox(parent, text="サブスクライバーとして送信", variable=tester_sub_var).pack(anchor="w", pady=2)
-        ctk.CTkCheckBox(parent, text="TTS 読み上げも実行", variable=tester_tts_var).pack(anchor="w", pady=2)
 
         self._add_panel_divider(parent)
 
@@ -3085,16 +3088,6 @@ class KototsunaApp:
                     f"mod={tester_mod_var.get()} sub={tester_sub_var.get()} tts={tester_tts_var.get()}"
                 )
                 _dispatch_test_comment(name, content, tags)
-
-                if tester_tts_var.get():
-                    try:
-                        from src.tts import get_tts_instance
-                        tts = get_tts_instance()
-                        tts.speak(content)
-                        logger.info(f"[tester:{tags['id']}] gui.send manual_tts completed")
-                    except Exception as e:
-                        logger.warning(f"Comment tester TTS error: {e}")
-                        logger.warning(f"[tester:{tags['id']}] gui.send manual_tts failed: {e}")
             except Exception as e:
                 logger.error(f"Comment tester error: {e}", exc_info=True)
                 messagebox.showerror("テスト送信エラー", f"テスト送信に失敗しました:\n{e}")
