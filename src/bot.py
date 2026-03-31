@@ -11,6 +11,7 @@ from src.tts import get_tts_instance, is_japanese
 from src.participant_tracker import get_tracker
 from src.comment_data import create_twitch_comment
 from src.config import load_config, save_config, VALID_TRANSLATE_MODES
+from src.auth import validate_token
 from src.commands import PermissionLevel, CooldownManager, check_permission, substitute_variables
 from src.commands_store import CommandStore
 from src.emote_provider import EmoteProvider
@@ -382,6 +383,24 @@ class TranslateBot(commands.Bot):
                         logger.info(f"Archive cleanup removed {removed} old sessions")
             except Exception as e:
                 logger.error(f"Failed to start session archive: {e}", exc_info=True)
+
+        # Twitchの必須要件: 1時間ごとにOAuthトークンを検証する
+        asyncio.ensure_future(self._periodic_token_validation())
+
+    async def _periodic_token_validation(self) -> None:
+        """1時間ごとにOAuthトークンを検証する（Twitch開発者規約必須要件）。"""
+        INTERVAL = 3600  # 1時間
+        while True:
+            await asyncio.sleep(INTERVAL)
+            token = self.token or ""
+            if not token:
+                logger.warning("Periodic token validation: no token configured, stopping")
+                break
+            result = validate_token(token)
+            if result is False:
+                logger.warning("Periodic token validation failed: token may be expired or revoked")
+            else:
+                logger.info("Periodic token validation: OK")
 
     def _call_gui(self, callback_name: str, *args, **kwargs) -> None:
         """GUI更新をメインスレッドへ橋渡しする。"""
