@@ -1,0 +1,38 @@
+name: Sync Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/wiki/**'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push docs/wiki to GitHub Wiki
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Clone the wiki repo
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki_repo
+
+          # Sync files (overwrite wiki with docs/wiki contents)
+          rsync -av --delete docs/wiki/ wiki_repo/
+
+          # Commit and push if there are changes
+          cd wiki_repo
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to sync."
+          else
+            git commit -m "docs: sync from docs/wiki (${GITHUB_SHA::7})"
+            git push
+          fi
