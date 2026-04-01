@@ -8,7 +8,8 @@
 - [機能一覧](Features)
 - [コマンドリファレンス](Commands)
 - [TTS 読み上げルール](TTS-Rules)
-- [OBS連携](OBS-Setup)
+- [OBSブラウザソース設定](OBS-Setup)
+- [OBS連携（自動制御）](OBS-Integration)
 - [設定](Configuration)
 - [パフォーマンス](Performance)
 
