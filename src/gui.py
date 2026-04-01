@@ -3085,7 +3085,7 @@ class KototsunaApp:
                 logger.info(
                     f"[tester:{tags['id']}] gui.send clicked "
                     f"name={name!r} content={content[:80]!r} "
-                    f"mod={tester_mod_var.get()} sub={tester_sub_var.get()} tts={tester_tts_var.get()}"
+                    f"mod={tester_mod_var.get()} sub={tester_sub_var.get()}"
                 )
                 _dispatch_test_comment(name, content, tags)
             except Exception as e:
