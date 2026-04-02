@@ -138,6 +138,14 @@ except Exception as e:
 # srcパッケージ内の全サブモジュールを収集
 hiddenimports += collect_submodules('src')
 
+# obsws-python（OBS WebSocket連携）を明示的に収集
+try:
+    tmp_ret = collect_all('obsws_python')
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+    print(f"[SPEC] obsws_python collect_all: datas={len(tmp_ret[0])}, binaries={len(tmp_ret[1])}, hiddenimports={len(tmp_ret[2])}")
+except Exception as e:
+    print(f"[SPEC] WARNING: obsws_python collect_all failed: {e}")
+
 # アイコンファイルを含める（PNGとICOの両方）
 datas += [('assets/icon.png', 'assets'), ('assets/icon_fullsize.ico', 'assets')]
 datas += [('src', 'src')] # srcフォルダごとデータとしてコピーもしておく（念のため）
