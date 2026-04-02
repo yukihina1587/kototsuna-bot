@@ -61,6 +61,10 @@ propcache==0.4.1
     #   yarl
 protobuf==7.34.1
     # via onnxruntime
+obsws-python==1.8.0
+    # via translation-bot
+websocket-client==1.9.0
+    # via obsws-python
 psutil==7.2.2
     # via translation-bot
 pycparser==3.0 ; implementation_name != 'PyPy'
