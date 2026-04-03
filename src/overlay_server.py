@@ -58,12 +58,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(history).encode('utf-8'))
-        elif self.path == '/api/subtitle':
+        elif self.path.split('?')[0] == '/api/subtitle':
             with _subtitle_lock:
                 payload = dict(_subtitle_state)
             self.send_response(200)
             self.send_header('Content-type', 'application/json; charset=utf-8')
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
             self.end_headers()
             self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
         elif self.path == '/api/giveaway':

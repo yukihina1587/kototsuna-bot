@@ -2439,7 +2439,7 @@ class KototsunaApp:
 
   async function poll() {{
     try {{
-      var r = await fetch('/api/subtitle');
+      var r = await fetch('/api/subtitle?t=' + Date.now());
       var data = await r.json();
       if (!data.enabled) {{ hide(); return; }}
       if (data.id !== lastId) {{
@@ -4844,6 +4844,7 @@ class KototsunaApp:
 const newestFirst = {str(newest_first).lower()};
 let updateInterval = null;
 let consecutiveErrors = 0;
+let isUpdating = false;
 
 function getMessageIds(root) {{
     return Array.from(root.querySelectorAll('.msg')).map(msg => msg.dataset.id);
@@ -4856,7 +4857,14 @@ function arraysEqual(left, right) {{
     return left.every((value, index) => value === right[index]);
 }}
 
+function startPolling() {{
+    if (updateInterval) return;
+    updateInterval = setInterval(syncChat, 1200);
+}}
+
 function syncChat() {{
+    if (isUpdating) return;
+    isUpdating = true;
     fetch(window.location.href + '?t=' + Date.now(), {{ cache: 'no-store' }})
         .then(response => response.ok ? response.text() : '')
         .then(html => {{
@@ -4915,13 +4923,28 @@ function syncChat() {{
             if (consecutiveErrors >= 5) {{
                 window.location.reload();
             }}
+        }})
+        .finally(() => {{
+            isUpdating = false;
         }});
 }}
 
 window.onload = function() {{
     {scroll_script}
-    updateInterval = setInterval(syncChat, 1200);
+    startPolling();
 }};
+
+// OBS BrowserSourceがキャッシュから復元された時にポーリングを再開
+document.addEventListener('visibilitychange', function() {{
+    if (document.visibilityState === 'visible') {{
+        startPolling();
+        syncChat();
+    }}
+}});
+window.addEventListener('pageshow', function() {{
+    startPolling();
+    syncChat();
+}});
 """
 
         return f"""<!DOCTYPE html>
