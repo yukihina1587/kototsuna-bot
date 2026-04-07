@@ -146,6 +146,55 @@ class ObsController:
             if fire_scene and self._on_scene_change:
                 self._on_scene_change(scene_name)
 
+    def refresh_chat_browser_source(self, chat_url: str) -> int:
+        """チャットオーバーレイURLを持つBrowser Sourceを全シーンで検索し、キャッシュ強制リフレッシュする。
+
+        Returns:
+            リフレッシュしたソース数
+        """
+        with self._lock:
+            req_client = self._client
+        if req_client is None:
+            return 0
+
+        refreshed = 0
+        try:
+            inputs_resp = self._call_method(req_client, "get_input_list")
+            inputs = getattr(inputs_resp, "inputs", None) or []
+        except Exception as e:
+            logger.debug(f"[OBS] get_input_list failed: {e}")
+            return 0
+
+        for inp in inputs:
+            kind = inp.get("inputKind", "") if isinstance(inp, dict) else getattr(inp, "input_kind", "")
+            if kind != "browser_source":
+                continue
+            name = inp.get("inputName", "") if isinstance(inp, dict) else getattr(inp, "input_name", "")
+            if not name:
+                continue
+            try:
+                settings_resp = self._call_method(req_client, "get_input_settings", inputName=name)
+                settings = getattr(settings_resp, "input_settings", {}) or {}
+                url = settings.get("url", "")
+            except Exception:
+                continue
+            # URLがチャットオーバーレイのものかチェック（クエリパラメータを除いて比較）
+            if url.split("?")[0].rstrip("/") != chat_url.rstrip("/"):
+                continue
+            try:
+                self._call_method(
+                    req_client,
+                    "press_input_properties_button",
+                    inputName=name,
+                    propertyName="refreshnocache",
+                )
+                logger.info(f"[OBS] Refreshed browser source: {name}")
+                refreshed += 1
+            except Exception as e:
+                logger.debug(f"[OBS] Failed to refresh {name}: {e}")
+
+        return refreshed
+
     def set_source_visible(self, source_name: str, visible: bool, scene_name: Optional[str] = None) -> bool:
         """現在シーンまたは指定シーンでソース表示状態を切り替える。"""
         with self._lock:

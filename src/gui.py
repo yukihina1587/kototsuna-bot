@@ -367,6 +367,10 @@ class KototsunaApp:
     def _handle_obs_connection_change(self, connected: bool) -> None:
         msg = "OBS WebSocket 接続済み" if connected else "OBS WebSocket 未接続"
         logger.info(msg)
+        if connected:
+            # OBS接続時にチャットBrowser Sourceをリフレッシュ
+            # （Kototsuna未起動中にOBSが開いていた場合の空白ページを回復）
+            self.master.after(1500, self._refresh_obs_chat_source)
 
     def _on_obs_stream_state_change(self, is_active: bool) -> None:
         self.master.after(0, lambda: self._handle_obs_stream_state_change(is_active))
@@ -387,6 +391,17 @@ class KototsunaApp:
                 return
             self.log_message("OBS配信終了を検知: BOTを自動停止します")
             self.stop_bot()
+
+    def _refresh_obs_chat_source(self) -> None:
+        """OBS接続後にチャットBrowser Sourceをリフレッシュする。"""
+        if not hasattr(self, "obs_controller") or not self.obs_controller:
+            return
+        from src.overlay_server import get_overlay_port
+        port = get_overlay_port()
+        chat_url = f"http://localhost:{port}/chat"
+        count = self.obs_controller.refresh_chat_browser_source(chat_url)
+        if count > 0:
+            logger.info(f"[OBS] チャットBrowser Source を {count} 件リフレッシュしました")
 
     def _on_obs_scene_change(self, scene_name: str) -> None:
         self.master.after(0, lambda: self._handle_obs_scene_change(scene_name))
@@ -4918,10 +4933,13 @@ function syncChat() {{
         }})
         .catch(err => {{
             consecutiveErrors++;
-            console.error('Update failed:', err);
-            // サーバーが再起動した場合に自動で再接続するためページをリロード
+            // ページリロードは行わない（リロード→接続拒否→JS消滅のループを防ぐ）
+            // 代わりに間隔を空けて再試行し、サーバー復帰後に自動で再接続する
             if (consecutiveErrors >= 5) {{
-                window.location.reload();
+                clearInterval(updateInterval);
+                updateInterval = null;
+                const backoff = Math.min(30000, 2000 * Math.pow(2, consecutiveErrors - 5));
+                setTimeout(startPolling, backoff);
             }}
         }})
         .finally(() => {{
