@@ -146,7 +146,7 @@ class ObsController:
             if fire_scene and self._on_scene_change:
                 self._on_scene_change(scene_name)
 
-    def refresh_chat_browser_source(self, chat_url: str) -> int:
+    def refresh_chat_browser_source(self, chat_url: str, desired_url: Optional[str] = None) -> int:
         """チャットオーバーレイURLを持つBrowser Sourceを全シーンで検索し、キャッシュ強制リフレッシュする。
 
         Returns:
@@ -182,6 +182,10 @@ class ObsController:
             if url.split("?")[0].rstrip("/") != chat_url.rstrip("/"):
                 continue
             try:
+                if desired_url and url != desired_url:
+                    updated_settings = dict(settings)
+                    updated_settings["url"] = desired_url
+                    self._set_input_settings(req_client, name, updated_settings)
                 self._call_method(
                     req_client,
                     "press_input_properties_button",
@@ -194,6 +198,38 @@ class ObsController:
                 logger.debug(f"[OBS] Failed to refresh {name}: {e}")
 
         return refreshed
+
+    def _set_input_settings(self, req_client: Any, input_name: str, settings: dict[str, Any]) -> None:
+        try:
+            self._call_method(
+                req_client,
+                "set_input_settings",
+                inputName=input_name,
+                inputSettings=settings,
+                overlay=False,
+            )
+            return
+        except Exception:
+            pass
+
+        try:
+            self._call_method(
+                req_client,
+                "set_input_settings",
+                input_name=input_name,
+                input_settings=settings,
+                overlay=False,
+            )
+            return
+        except Exception:
+            pass
+
+        self._call_method(
+            req_client,
+            "set_input_settings",
+            inputName=input_name,
+            inputSettings=settings,
+        )
 
     def set_source_visible(self, source_name: str, visible: bool, scene_name: Optional[str] = None) -> bool:
         """現在シーンまたは指定シーンでソース表示状態を切り替える。"""

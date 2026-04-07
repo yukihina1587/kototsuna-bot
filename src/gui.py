@@ -254,6 +254,7 @@ class KototsunaApp:
         self.chat_html_path = tk.StringVar(value=self._default_chat_html_path(self.config.get("chat_html_path", "")))
         self.chat_html_newest_first = tk.BooleanVar(value=self.config.get("chat_html_newest_first", False))
         self.chat_html_max_entries_var = tk.IntVar(value=self.config.get("chat_html_max_entries", 200))
+        self._chat_overlay_session = uuid.uuid4().hex[:12]
         # アップデート設定
         self.auto_update_check = tk.BooleanVar(value=self.config.get("auto_update_check", True))
         self.include_prerelease = tk.BooleanVar(value=self.config.get("include_prerelease", False))
@@ -396,12 +397,16 @@ class KototsunaApp:
         """OBS接続後にチャットBrowser Sourceをリフレッシュする。"""
         if not hasattr(self, "obs_controller") or not self.obs_controller:
             return
-        from src.overlay_server import get_overlay_port
-        port = get_overlay_port()
-        chat_url = f"http://localhost:{port}/chat"
-        count = self.obs_controller.refresh_chat_browser_source(chat_url)
+        chat_url = self._current_chat_overlay_url()
+        count = self.obs_controller.refresh_chat_browser_source(chat_url, desired_url=chat_url)
         if count > 0:
             logger.info(f"[OBS] チャットBrowser Source を {count} 件リフレッシュしました")
+
+    def _current_chat_overlay_url(self) -> str:
+        """OBS Browser Source用のチャットURLを返す。"""
+        from src.overlay_server import get_overlay_port
+        port = get_overlay_port()
+        return f"http://localhost:{port}/chat?session={self._chat_overlay_session}"
 
     def _on_obs_scene_change(self, scene_name: str) -> None:
         self.master.after(0, lambda: self._handle_obs_scene_change(scene_name))
@@ -447,24 +452,21 @@ class KototsunaApp:
         """起動時にチャットHTML出力パスを設定する"""
         try:
             self._export_chat_html(force=True)
+            chat_url = self._current_chat_overlay_url()
             # OBS Browser Source用のURLをシステムログに表示
-            from src.overlay_server import get_overlay_port
-            port = get_overlay_port()
             self.log_message(
-                f"OBS Browser Source URL: http://localhost:{port}/chat",
+                f"OBS Browser Source URL: {chat_url}",
                 log_type="info"
             )
             # サイドバーのURLラベルを実際のポートで更新
             if hasattr(self, 'obs_url_label'):
-                self.obs_url_label.configure(text=f"http://localhost:{port}/chat")
+                self.obs_url_label.configure(text=chat_url)
         except Exception as e:
             logger.error(f"Failed to initialize chat HTML: {e}", exc_info=True)
 
     def _copy_obs_url(self):
         """OBS Browser Source URLをクリップボードにコピー"""
-        from src.overlay_server import get_overlay_port
-        port = get_overlay_port()
-        url = f"http://localhost:{port}/chat"
+        url = self._current_chat_overlay_url()
         self.master.clipboard_clear()
         self.master.clipboard_append(url)
         self.log_message("OBS URLをクリップボードにコピーしました", log_type="info")
@@ -4880,7 +4882,9 @@ function startPolling() {{
 function syncChat() {{
     if (isUpdating) return;
     isUpdating = true;
-    fetch(window.location.href + '?t=' + Date.now(), {{ cache: 'no-store' }})
+    const pollUrl = new URL(window.location.href);
+    pollUrl.searchParams.set('_t', Date.now().toString());
+    fetch(pollUrl.toString(), {{ cache: 'no-store' }})
         .then(response => response.ok ? response.text() : '')
         .then(html => {{
             consecutiveErrors = 0;

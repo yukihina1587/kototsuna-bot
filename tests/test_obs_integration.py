@@ -15,6 +15,10 @@ class _FakeClient:
         self.scenes = ["待機", "休憩"]
         self._i = 0
         self.calls = []
+        self.browser_settings = {
+            "Chat Overlay": {"url": "http://localhost:8080/chat"},
+            "Other Source": {"url": "http://localhost:8080/subtitle"},
+        }
 
     def get_stream_status(self):
         idx = min(self._i, len(self.stream_states) - 1)
@@ -31,6 +35,23 @@ class _FakeClient:
 
     def set_scene_item_enabled(self, scene_name, scene_item_id, scene_item_enabled):
         self.calls.append(("set_scene_item_enabled", scene_name, scene_item_id, scene_item_enabled))
+
+    def get_input_list(self):
+        return _Resp(inputs=[
+            {"inputKind": "browser_source", "inputName": "Chat Overlay"},
+            {"inputKind": "browser_source", "inputName": "Other Source"},
+            {"inputKind": "ffmpeg_source", "inputName": "Movie"},
+        ])
+
+    def get_input_settings(self, inputName):
+        return _Resp(input_settings=dict(self.browser_settings[inputName]))
+
+    def set_input_settings(self, inputName, inputSettings, overlay=False):
+        self.calls.append(("set_input_settings", inputName, dict(inputSettings), overlay))
+        self.browser_settings[inputName] = dict(inputSettings)
+
+    def press_input_properties_button(self, inputName, propertyName):
+        self.calls.append(("press_input_properties_button", inputName, propertyName))
 
 
 class _ErrorClient:
@@ -166,6 +187,21 @@ def test_set_source_visible_returns_false_when_no_client():
     ctrl = ObsController(config_getter=lambda: {})
     ok = ctrl.set_source_visible("Alert", True, scene_name="休憩")
     assert ok is False
+
+
+def test_refresh_chat_browser_source_updates_matching_url_and_refreshes():
+    ctrl = ObsController(config_getter=lambda: {})
+    client = _FakeClient()
+    ctrl._client = client
+
+    refreshed = ctrl.refresh_chat_browser_source(
+        "http://localhost:8080/chat",
+        desired_url="http://localhost:8080/chat?session=abc123",
+    )
+
+    assert refreshed == 1
+    assert client.browser_settings["Chat Overlay"]["url"] == "http://localhost:8080/chat?session=abc123"
+    assert ("press_input_properties_button", "Chat Overlay", "refreshnocache") in client.calls
 
 
 # ------------------------------------------------------------------
