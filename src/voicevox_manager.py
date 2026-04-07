@@ -101,6 +101,7 @@ class VoicevoxEngineManager:
                 self.process = subprocess.Popen(
                     [self.engine_path],
                     creationflags=CREATE_NO_WINDOW,
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
