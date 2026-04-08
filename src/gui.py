@@ -4540,7 +4540,7 @@ class KototsunaApp:
             pass
 
     def _sync_comment_tile_order(self) -> None:
-        """HTML設定に合わせてアプリ内コメントログの表示順も同期する。"""
+        """設定変更時に全タイルの表示順を同期する（新規追加時は呼ばない）。"""
         if not hasattr(self, "comment_tiles") or not self.comment_tiles:
             return
 
@@ -5209,16 +5209,19 @@ window.addEventListener('pageshow', function() {{
                     text_color="#B3D4FF"
                 ).pack(fill="x", pady=(3, 1))
 
-            tile.pack(fill="x", padx=6, pady=3)
+            # 「上が新しい」モードは既存タイルを触らず先頭に差し込む
+            # （全タイルをpack_forget→再packする_sync_comment_tile_orderは呼ばない）
+            if self.chat_html_newest_first.get() and self.comment_tiles:
+                tile.pack(fill="x", padx=6, pady=3, before=self.comment_tiles[-1])
+            else:
+                tile.pack(fill="x", padx=6, pady=3)
+
             self.comment_tiles.append(tile)
             if len(self.comment_tiles) > self.comment_tile_limit:
                 oldest = self.comment_tiles.pop(0)
                 oldest.destroy()
 
-            if self.chat_html_newest_first.get():
-                self._sync_comment_tile_order()
-            else:
-                self._scroll_comment_tiles_to_edge()
+            self._scroll_comment_tiles_to_edge()
 
             logger.debug(f"Comment tile added: {comment.display_username}")
             if trace_id:
