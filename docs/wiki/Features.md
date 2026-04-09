@@ -183,11 +183,17 @@ OBS WebSocket と接続し、配信状態やシーン切り替えに応じて BO
 
 ## オーバーレイ
 
-OBSなどの配信ソフトで使用できる翻訳オーバーレイを提供します。
+OBSなどの配信ソフトの Browser Source で使用できるオーバーレイを提供します。
 
-- **URL**: `http://localhost:8080/overlay.html`
-- リアルタイム更新
-- 詳細は[API参照](API-Reference)を参照
+| URL | 内容 |
+|-----|------|
+| `http://localhost:8080/chat` | チャットログ（コメント一覧） |
+| `http://localhost:8080/subtitle` | 字幕（最新コメント・翻訳） |
+| `http://localhost:8080/overlay.html` | 翻訳テキスト表示 |
+
+- コメントが届くたびにリアルタイム更新（ポーリング間隔 1.2 秒）
+- OBS WebSocket 連携が有効な場合、ことつな起動時に Browser Source を自動リフレッシュ
+- 詳細は[API参照](API-Reference)・[OBS連携](OBS-Setup)を参照
 
 ---
 
