@@ -169,9 +169,10 @@ def _format_release_body_for_display(body: str) -> str:
 
 
 class KototsunaApp:
-    def __init__(self, master, safe_mode: bool = False):
+    def __init__(self, master, safe_mode: bool = False, diag_bundle_path=None):
         self.master = master
         self.safe_mode = safe_mode
+        self.diag_bundle_path = diag_bundle_path
         self.master.title("ことつな！")
 
         # ウィンドウアイコンを設定（build_widgetsの後に移動）
@@ -568,6 +569,10 @@ class KototsunaApp:
         if self.safe_mode:
             self._build_safe_mode_banner()
 
+        # 診断バンドル自動収集バナー
+        if self.diag_bundle_path:
+            self._build_diag_bundle_banner(self.diag_bundle_path)
+
         # === ヘッダー構築 ===
         self._build_header()
 
@@ -610,6 +615,55 @@ class KototsunaApp:
             width=160,
             height=28,
         ).pack(side="right", padx=8)
+
+    def _build_diag_bundle_banner(self, zip_path) -> None:
+        """診断バンドル自動収集完了バナーをウィンドウ上部に表示する。"""
+        banner = ctk.CTkFrame(self.main_frame, fg_color="#1C3A5E", height=38, corner_radius=0)
+        banner.pack(fill="x", side="top")
+        banner.pack_propagate(False)
+
+        zip_str = str(zip_path)
+
+        ctk.CTkLabel(
+            banner,
+            text=f"🩺 前回クラッシュの診断バンドルを自動保存しました: {zip_str}",
+            font=("Segoe UI", 10),
+            text_color="#BAE6FD",
+        ).pack(side="left", padx=12)
+
+        def _open_folder() -> None:
+            import subprocess as _sp
+            import os as _os
+            folder = _os.path.dirname(zip_str)
+            try:
+                _sp.Popen(["explorer", folder])
+            except Exception:
+                pass
+
+        ctk.CTkButton(
+            banner,
+            text="📂 フォルダを開く",
+            command=_open_folder,
+            fg_color="transparent",
+            hover_color="#1E3A5F",
+            text_color="#BAE6FD",
+            width=130,
+            height=28,
+        ).pack(side="right", padx=8)
+
+        def _dismiss() -> None:
+            banner.destroy()
+
+        ctk.CTkButton(
+            banner,
+            text="×",
+            command=_dismiss,
+            fg_color="transparent",
+            hover_color="#1E3A5F",
+            text_color="#BAE6FD",
+            width=30,
+            height=28,
+        ).pack(side="right", padx=2)
 
     # ========================================
     # 新レイアウトコンポーネント
@@ -7032,6 +7086,15 @@ window.addEventListener('pageshow', function() {{
             hover_color="#1EA4D8"
         ).pack(side="left", padx=5)
 
+        ctk.CTkButton(
+            button_frame,
+            text="🩺 診断バンドルを出力",
+            command=self.export_diagnostic_bundle,
+            width=190,
+            fg_color="#2563EB",
+            hover_color="#1D4ED8"
+        ).pack(side="left", padx=5)
+
         # 自動更新タイマー
         self.resource_update_timer = None
         self.update_resource_display()
@@ -7197,6 +7260,26 @@ window.addEventListener('pageshow', function() {{
         self.master.clipboard_clear()
         self.master.clipboard_append(debug_text)
         self.log_message("デバッグ情報をクリップボードにコピーしました", log_type="system")
+
+    def export_diagnostic_bundle(self) -> None:
+        """診断バンドルZIPを手動で出力する。"""
+        try:
+            from src.diagnostic import DiagnosticCollector
+            self.log_message("🩺 診断バンドルを収集中...", log_type="system")
+            zip_path = DiagnosticCollector().collect(reason="manual")
+            if zip_path:
+                self.log_message(f"🩺 診断バンドルを保存しました: {zip_path}", log_type="system")
+                messagebox.showinfo(
+                    "診断バンドル出力完了",
+                    f"診断バンドルを保存しました:\n{zip_path}\n\n"
+                    "問題報告時にこのファイルを添付してください。",
+                )
+            else:
+                self.log_message("🩺 診断バンドルの収集に失敗しました", log_type="system")
+                messagebox.showerror("診断バンドル出力エラー", "診断バンドルの収集に失敗しました。ログを確認してください。")
+        except Exception as e:
+            logger.error(f"export_diagnostic_bundle error: {e}", exc_info=True)
+            messagebox.showerror("診断バンドル出力エラー", f"エラーが発生しました:\n{e}")
 
     def toggle_tracking(self):
         """参加者追跡の有効/無効を切り替え"""

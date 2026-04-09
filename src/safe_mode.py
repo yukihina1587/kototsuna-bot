@@ -2,13 +2,15 @@
 
 起動するたびにカウンタを増加させ、正常終了時にリセットする。
 CRASH_THRESHOLD 回以上連続クラッシュした場合、セーフモードを提案する。
+クラッシュ後の初回起動時に診断バンドルを自動収集する。
 """
 
 import json
 import os
 import sys
 from datetime import datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 from src.logger import logger
 
@@ -90,3 +92,21 @@ def should_offer_post_update_rollback(
 ) -> bool:
     """アップデート直後のロールバック提案を出すべきか返す。"""
     return just_updated and has_rollback_info and crash_count >= CRASH_THRESHOLD
+
+
+def collect_crash_diagnostics() -> Optional[Path]:
+    """クラッシュ後の診断バンドルZIPを収集して保存パスを返す。
+
+    Returns:
+        作成したZIPファイルのパス。失敗した場合は None。
+    """
+    try:
+        from src.diagnostic import DiagnosticCollector
+        logger.info("Collecting crash recovery diagnostic bundle...")
+        zip_path = DiagnosticCollector().collect(reason="crash_recovery")
+        if zip_path:
+            logger.info(f"Diagnostic bundle saved: {zip_path}")
+        return zip_path
+    except Exception as e:
+        logger.warning(f"Failed to collect crash diagnostics: {e}")
+        return None

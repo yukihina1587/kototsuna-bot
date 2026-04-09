@@ -100,6 +100,28 @@ if getattr(sys, 'frozen', False):
                 os.close(_fd)
             except Exception:
                 pass
+        # 最小限のシステム情報をkototsuna_diag.txtに記録（次回起動時のZIP収集用マーカー）
+        # os/sys/platformのみ使用（AV隔離下でも動作するよう依存を最小化）
+        try:
+            import platform as _platform
+            _diag_path = os.path.join(
+                _exe_dir or os.environ.get('TEMP', os.environ.get('TMP', '.')),
+                'kototsuna_diag.txt'
+            )
+            _diag_lines = [
+                f"crashed_at={_time.strftime('%Y-%m-%dT%H:%M:%S')}",
+                f"exc_type={exc_type.__name__ if exc_type else 'unknown'}",
+                f"exc_value={str(exc_value)[:200]}",
+                f"platform={_platform.platform()}",
+                f"python={sys.version.split()[0]}",
+                f"executable={sys.executable}",
+            ]
+            _diag_text = '\n'.join(_diag_lines) + '\n'
+            _dfd = os.open(_diag_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            os.write(_dfd, _diag_text.encode('utf-8', errors='replace'))
+            os.close(_dfd)
+        except Exception:
+            pass
         # stderrへの出力も試行
         try:
             sys.__excepthook__(exc_type, exc_value, exc_tb)
@@ -415,8 +437,14 @@ if __name__ == '__main__':
         reset_crash_count,
         should_offer_post_update_rollback,
         should_suggest_safe_mode,
+        collect_crash_diagnostics,
     )
     _crash_count = record_startup()
+
+    # クラッシュ後の初回起動時に診断バンドルを自動収集
+    _diag_bundle_path = None
+    if _crash_count > 0:
+        _diag_bundle_path = collect_crash_diagnostics()
 
     # アップデート直後かどうか確認
     from src.config import load_config as _load_config
@@ -487,7 +515,7 @@ if __name__ == '__main__':
     def init_app():
         global app
         try:
-            app = KototsunaApp(root, safe_mode=_safe_mode_active)
+            app = KototsunaApp(root, safe_mode=_safe_mode_active, diag_bundle_path=_diag_bundle_path)
             # ウィンドウを閉じる際のプロトコルを設定
             root.protocol("WM_DELETE_WINDOW", on_closing)
             # スプラッシュスクリーンを閉じる
