@@ -17,7 +17,7 @@ from src.commands_store import CommandStore
 from src.emote_provider import EmoteProvider
 from src.tts_dictionary import get_dictionary
 from src.viewer_store import get_viewer_store
-from src.channel_manager import search_game, update_channel_info
+from src.channel_manager import search_game, update_channel_info, create_clip
 from src.plugin_manager import get_plugin_manager
 from src.session_archive import get_session_archive
 from src.bot_filter import BotFilter
@@ -868,6 +868,7 @@ class TranslateBot(commands.Bot):
             "queue": self._cmd_queue,
             "leave": self._cmd_leave,
             "stream": self._cmd_stream,
+            "clip": self._cmd_clip,
             # ゲームコマンド
             "fortune": self._cmd_fortune,
             "dice": self._cmd_dice,
@@ -905,7 +906,7 @@ class TranslateBot(commands.Bot):
             "!help", "!translate", "!lang", "!lang2",
             "!tts", "!translation", "!voicechat", "!voicelang", "!voicelang2",
             "!dict", "!voice", "!myvoice", "!visits",
-            "!queue", "!leave", "!nextround", "!roundreset", "!played", "!stream",
+            "!queue", "!leave", "!nextround", "!roundreset", "!played", "!stream", "!clip",
             "!fortune", "!dice", "!coin", "!slot", "!roulette", "!janken",
             "!startguess", "!guess", "!endguess", "!giveaway", "!enter",
         ]
@@ -1615,6 +1616,52 @@ class TranslateBot(commands.Bot):
             await message.channel.send(
                 "使い方: !stream title <タイトル> | !stream game <ゲーム名>" + '\u200B'
             )
+
+    async def _cmd_clip(self, message, args: str) -> None:
+        """!clip — クリップを作成する（モデレーター以上、権限はconfig で変更可能）"""
+        # 機能有効チェック
+        if not self.config.get("clip_enabled", True):
+            return
+
+        # 権限チェック
+        required_level = PermissionLevel(self.config.get("clip_permission_level", 3))
+        if not check_permission(message.author, required_level, self.channel_name):
+            await message.channel.send("このコマンドは使用できません" + '\u200B')
+            return
+
+        # グローバルクールダウンチェック
+        cooldown = int(self.config.get("clip_cooldown", 60))
+        allowed, remaining = self._cooldown_manager.check("clip", "__global__", cooldown, 0)
+        if not allowed:
+            await message.channel.send(
+                f"クリップはあと {int(remaining)} 秒後に作成できます" + '\u200B'
+            )
+            return
+
+        # broadcaster_id 取得
+        broadcaster_id = None
+        if self._eventsub_handler:
+            broadcaster_id = getattr(self._eventsub_handler, '_broadcaster_id', None)
+        if not broadcaster_id:
+            await message.channel.send("配信者IDを取得できませんでした（Twitch接続を確認してください）" + '\u200B')
+            return
+
+        self._cooldown_manager.record("clip", "__global__")
+
+        token = self.token
+        client_id = self.client_id or ""
+        success, result = await asyncio.to_thread(
+            create_clip, token, client_id, broadcaster_id
+        )
+
+        if success:
+            logger.info(f"Clip created: {result} by {message.author.name}")
+            self._call_gui("log_message", f"🎬 クリップ作成: {result}", "system")
+            if self.config.get("clip_reply", True):
+                await message.channel.send(f"🎬 クリップを作成しました: {result}" + '\u200B')
+        else:
+            logger.warning(f"Clip creation failed: {result}")
+            await message.channel.send(f"クリップの作成に失敗しました: {result}" + '\u200B')
 
     # ===== Game Commands =====
 

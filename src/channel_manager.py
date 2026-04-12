@@ -198,3 +198,57 @@ def update_channel_info(
     except Exception as e:
         logger.warning(f"Channel info update failed: {e}")
         return False, f"通信エラー: {e}"
+
+
+def create_clip(
+    token: str,
+    client_id: str,
+    broadcaster_id: str,
+    *,
+    has_delay: bool = False,
+) -> tuple[bool, str]:
+    """
+    POST /helix/clips でクリップを作成する。
+
+    Args:
+        token: OAuth アクセストークン（clips:edit スコープが必要）
+        client_id: Twitch Client ID
+        broadcaster_id: 配信者のユーザー ID
+        has_delay: True にすると5秒遅延クリップ（配信者用）
+
+    Returns:
+        (success: bool, clip_url_or_error_message: str)
+        成功時: (True, "https://clips.twitch.tv/{id}")
+        失敗時: (False, エラーメッセージ)
+    """
+    bearer = token.replace("oauth:", "")
+
+    try:
+        import requests as _requests
+        resp = _requests.post(
+            "https://api.twitch.tv/helix/clips",
+            params={"broadcaster_id": broadcaster_id, "has_delay": str(has_delay).lower()},
+            headers={
+                "Authorization": f"Bearer {bearer}",
+                "Client-Id": client_id,
+            },
+            timeout=10,
+        )
+        if resp.status_code == 202:
+            data = resp.json().get("data", [])
+            if data:
+                clip_id = data[0]["id"]
+                return True, f"https://clips.twitch.tv/{clip_id}"
+            return False, "クリップIDの取得に失敗しました"
+        if resp.status_code == 401:
+            return False, "認証エラー（clips:edit スコープが必要です。再認証してください）"
+        if resp.status_code == 403:
+            return False, "権限エラー（clips:edit スコープが必要です。再認証してください）"
+        if resp.status_code == 404:
+            return False, "配信中のみクリップを作成できます"
+        if resp.status_code == 429:
+            return False, "クリップの作成回数が上限に達しました。しばらく待ってから試してください"
+        return False, f"APIエラー: {resp.status_code}"
+    except Exception as e:
+        logger.warning(f"Create clip failed: {e}")
+        return False, f"通信エラー: {e}"

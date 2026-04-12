@@ -81,6 +81,11 @@ DEFAULT_CONFIG = {
     "chat_html_window_geometry": "350x900+50+50",  # HTMLウィンドウのサイズと位置
     # コマンド機能
     "commands_enabled": True,
+    # !clip コマンド設定
+    "clip_enabled": True,
+    "clip_permission_level": 3,   # PermissionLevel: 0=全員 1=サブスク 2=VIP 3=モデレーター 4=配信者
+    "clip_cooldown": 60,           # グローバルクールダウン（秒）
+    "clip_reply": True,            # クリップURLをチャットに返信するか
     # ボイス割り当て設定
     "voice_assign_mode": "mod_only",  # mod_only / self_service / disabled
     "voice_self_assign_min_visits": 5,  # セルフ割り当てに必要な最低視聴回数

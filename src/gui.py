@@ -1578,7 +1578,53 @@ class KototsunaApp:
             self._add_panel_divider(parent)
 
             # =====================================
-            # セクション2: カスタムコマンド追加
+            # セクション2: !clip コマンド設定
+            # =====================================
+            self._add_panel_section(parent, "!clip コマンド")
+            cfg = load_config()
+
+            # 有効/無効トグル
+            clip_toggle_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            clip_toggle_frame.pack(fill="x", pady=(0, 6))
+            ctk.CTkLabel(clip_toggle_frame, text="!clip コマンドを有効にする", font=FONT_LABEL).pack(side="left")
+            self.clip_enabled_var = tk.BooleanVar(value=cfg.get("clip_enabled", True))
+            ctk.CTkSwitch(clip_toggle_frame, text="", variable=self.clip_enabled_var,
+                          command=self._on_clip_settings_changed).pack(side="right")
+
+            # 権限・クールダウン
+            clip_opts_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            clip_opts_frame.pack(fill="x", pady=(0, 4))
+            ctk.CTkLabel(clip_opts_frame, text="権限:", font=FONT_BODY, text_color=TEXT_SUBTLE).pack(side="left")
+            _perm_labels = ["全員", "サブスク", "VIP", "モデレーター", "配信者"]
+            _perm_values = [0, 1, 2, 3, 4]
+            _cur_perm = cfg.get("clip_permission_level", 3)
+            self.clip_permission_var = tk.StringVar(value=_perm_labels[_cur_perm])
+            ctk.CTkOptionMenu(
+                clip_opts_frame, variable=self.clip_permission_var,
+                values=_perm_labels, width=120, height=26,
+                command=lambda _: self._on_clip_settings_changed()
+            ).pack(side="left", padx=(4, 12))
+            ctk.CTkLabel(clip_opts_frame, text="クールダウン:", font=FONT_BODY, text_color=TEXT_SUBTLE).pack(side="left")
+            self.clip_cooldown_var = tk.StringVar(value=str(cfg.get("clip_cooldown", 60)))
+            ctk.CTkEntry(clip_opts_frame, textvariable=self.clip_cooldown_var,
+                         width=50, height=26).pack(side="left", padx=(4, 4))
+            ctk.CTkLabel(clip_opts_frame, text="秒", font=FONT_BODY, text_color=TEXT_SUBTLE).pack(side="left")
+
+            # URL返信トグル
+            clip_reply_frame = ctk.CTkFrame(parent, fg_color="transparent")
+            clip_reply_frame.pack(fill="x", pady=(0, 8))
+            ctk.CTkLabel(clip_reply_frame, text="クリップURLをチャットに返信する", font=FONT_BODY, text_color=TEXT_SUBTLE).pack(side="left")
+            self.clip_reply_var = tk.BooleanVar(value=cfg.get("clip_reply", True))
+            ctk.CTkSwitch(clip_reply_frame, text="", variable=self.clip_reply_var,
+                          command=self._on_clip_settings_changed).pack(side="right")
+
+            # クールダウン変更をEnterキーでも保存
+            self.clip_cooldown_var.trace_add("write", lambda *_: self._on_clip_settings_changed())
+
+            self._add_panel_divider(parent)
+
+            # =====================================
+            # セクション3: カスタムコマンド追加
             # =====================================
             self._add_panel_section(parent, "カスタムコマンド追加")
             ctk.CTkLabel(parent, text="変数: {user} {time} {date} {channel}",
@@ -1653,6 +1699,28 @@ class KototsunaApp:
         save_config(config)
         if hasattr(self, 'bot_instance') and self.bot_instance:
             self.bot_instance.set_commands_enabled(enabled)
+
+    def _on_clip_settings_changed(self) -> None:
+        """!clip コマンド設定が変更された際に config を保存する。"""
+        _perm_map = {"全員": 0, "サブスク": 1, "VIP": 2, "モデレーター": 3, "配信者": 4}
+        try:
+            cooldown = int(self.clip_cooldown_var.get())
+        except ValueError:
+            cooldown = 60
+        config = load_config()
+        config["clip_enabled"] = self.clip_enabled_var.get()
+        config["clip_permission_level"] = _perm_map.get(self.clip_permission_var.get(), 3)
+        config["clip_cooldown"] = cooldown
+        config["clip_reply"] = self.clip_reply_var.get()
+        save_config(config)
+        # bot が起動中なら即時反映
+        if hasattr(self, 'bot_instance') and self.bot_instance:
+            self.bot_instance.config.update({
+                "clip_enabled": config["clip_enabled"],
+                "clip_permission_level": config["clip_permission_level"],
+                "clip_cooldown": config["clip_cooldown"],
+                "clip_reply": config["clip_reply"],
+            })
 
     def _add_custom_command(self):
         """カスタムコマンドを追加"""

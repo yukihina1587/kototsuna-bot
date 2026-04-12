@@ -8,7 +8,7 @@ from src.logger import logger
 load_dotenv()
 
 REDIRECT_URI = 'http://localhost:8787/redirect.html'
-SCOPES = ['chat:read', 'chat:edit', 'moderator:read:followers', 'channel:manage:broadcast']
+SCOPES = ['chat:read', 'chat:edit', 'moderator:read:followers', 'channel:manage:broadcast', 'clips:edit']
 
 
 def check_missing_scopes(token_scopes: list[str]) -> list[str]:

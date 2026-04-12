@@ -1,2 +1,2 @@
 """ことつな！ - Twitch翻訳BOT"""
-__version__ = "1.8.5"
+__version__ = "1.8.6-beta.1"
