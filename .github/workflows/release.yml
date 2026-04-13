@@ -92,6 +92,19 @@ jobs:
           Write-Host "Pillow version OK: 12.1.0"
         shell: pwsh
 
+      - name: Embed Client ID into build
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+        run: |
+          if (-not $env:TWITCH_CLIENT_ID) {
+            Write-Error "Secret TWITCH_CLIENT_ID is not set. Add it in GitHub repo Settings > Secrets."
+            exit 1
+          }
+          $content = "# Auto-generated at build time. Do not commit.`nTWITCH_CLIENT_ID = `"$env:TWITCH_CLIENT_ID`"`n"
+          [System.IO.File]::WriteAllText("src\_client_id.py", $content, [System.Text.Encoding]::UTF8)
+          Write-Host "src\_client_id.py generated (Client ID length: $($env:TWITCH_CLIENT_ID.Length))"
+        shell: pwsh
+
       - name: Build with PyInstaller
         run: |
           pyinstaller --clean Kototsuna.spec

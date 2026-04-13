@@ -24,6 +24,9 @@ ngrok.exe
 .claude/
 AGENTS.md
 
+# Build-time generated (contains baked-in Client ID, never commit)
+src/_client_id.py
+
 # STT models (downloaded at build time)
 models/
 

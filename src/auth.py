@@ -15,9 +15,27 @@ def check_missing_scopes(token_scopes: list[str]) -> list[str]:
     """必要なスコープのうちトークンに含まれないものを返す"""
     return [s for s in SCOPES if s not in token_scopes]
 
-# アプリ同梱のデフォルトClient ID（.env の TWITCH_CLIENT_ID から読み込む）
-# リポジトリオーナーが dev.twitch.tv でアプリ登録して .env に設定しておく
-APP_DEFAULT_CLIENT_ID: str = os.environ.get("TWITCH_CLIENT_ID", "")
+
+def _get_default_client_id() -> str:
+    """デフォルトClient IDを返す。
+
+    優先順位:
+    1. 環境変数 TWITCH_CLIENT_ID（.env / 開発環境）
+    2. ビルド時に埋め込まれた src/_client_id.py（配布exe）
+    """
+    env_id = os.environ.get("TWITCH_CLIENT_ID", "").strip()
+    if env_id:
+        return env_id
+    try:
+        from src._client_id import TWITCH_CLIENT_ID  # type: ignore[import]
+        return TWITCH_CLIENT_ID.strip()
+    except ImportError:
+        pass
+    return ""
+
+
+# アプリ同梱のデフォルトClient ID
+APP_DEFAULT_CLIENT_ID: str = _get_default_client_id()
 
 
 def get_effective_client_id(user_client_id: str = "") -> str:
