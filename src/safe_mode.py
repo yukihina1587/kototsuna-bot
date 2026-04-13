@@ -67,13 +67,25 @@ def record_startup() -> int:
 
 
 def reset_crash_count() -> None:
-    """正常起動完了時にクラッシュカウントをリセットする。"""
+    """正常起動完了時にクラッシュカウントをリセットする。
+
+    アップデート直後フラグ (just_updated) もここでクリアする。
+    クリアしないと crash_count が閾値以上になった後、
+    should_offer_post_update_rollback() が永遠に True を返し続ける。
+    """
     state = _load_state()
     if state.get("crash_count", 0) != 0:
         state["crash_count"] = 0
         state["last_success"] = datetime.now().isoformat()
         _save_state(state)
         logger.info("Crash count reset after successful startup")
+
+    # just_updated フラグを安全にクリア（updater モジュールが使えない場合も考慮）
+    try:
+        from src.updater import clear_rollback_info
+        clear_rollback_info()
+    except Exception as e:
+        logger.warning(f"Failed to clear rollback info on reset: {e}")
 
 
 def should_suggest_safe_mode(crash_count: int) -> bool:

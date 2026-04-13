@@ -185,11 +185,17 @@ class DiagnosticCollector:
                     pass
 
     def _add_error_file(self, zf: zipfile.ZipFile) -> None:
-        """kototsuna_error.txt が存在する場合にZIPへ追加する。"""
+        """kototsuna_error.txt が存在する場合にZIPへ追加する。
+
+        _kototsuna_excepthook は exeフォルダが書き込み不可の場合に
+        %TEMP%\kototsuna_error.txt へフォールバックするため、
+        TEMP も候補に含める。
+        """
         exe_dir = _get_exe_dir()
         for candidate in [
             exe_dir / "kototsuna_error.txt",
             Path(os.environ.get("LOCALAPPDATA", "")) / "Kototsuna" / "kototsuna_error.txt",
+            Path(os.environ.get("TEMP", "")) / "kototsuna_error.txt",
         ]:
             if candidate.exists():
                 try:
