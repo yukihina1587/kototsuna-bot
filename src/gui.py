@@ -33,7 +33,16 @@ from src.bot import TranslateBot
 from src.config import load_config, save_config, backup_config, restore_config, reset_config, validate_twitch_client_id
 from src.commands_store import CommandStore, CustomCommand
 from src.voice_listener import VoiceTranslator
-from src.overlay_server import update_translation, update_subtitle, set_subtitle_enabled, set_subtitle_html_path, run_server_thread
+from src.overlay_server import (
+    update_translation,
+    update_subtitle,
+    set_subtitle_enabled,
+    set_subtitle_html_path,
+    run_server_thread,
+    add_chat_message as overlay_add_chat_message,
+    replace_chat_messages as overlay_replace_chat_messages,
+    set_chat_config as overlay_set_chat_config,
+)
 from src.logger import logger, set_log_level
 from src.tts import get_tts_instance
 import src.channel_manager as channel_manager
@@ -2460,6 +2469,11 @@ class KototsunaApp:
         os.makedirs(base_dir, exist_ok=True)
         path = os.path.join(base_dir, 'subtitle.html')
 
+        # OBS が file:// で開いても API にアクセスできるように絶対URLを焼き込む
+        from src.overlay_server import get_overlay_port
+        subtitle_port = get_overlay_port() or 8080
+        subtitle_api = f"http://localhost:{subtitle_port}/api/subtitle"
+
         cfg = load_config()
         font_family = cfg.get("subtitle_font_family", "Noto Sans JP")
         font_size = int(cfg.get("subtitle_font_size", 32))
@@ -2470,6 +2484,9 @@ class KototsunaApp:
 
         # Google Fonts のURLを組み立て（スペースを+に変換）
         font_url_name = font_family.replace(" ", "+")
+
+        # JSリテラルとしてAPI URLを埋め込む（引用符エスケープ）
+        subtitle_api_literal = json.dumps(subtitle_api)
 
         html = f"""<!DOCTYPE html>
 <html lang="ja">
@@ -2576,16 +2593,21 @@ class KototsunaApp:
       .replace(/"/g, '&quot;');
   }}
 
+  var ABSOLUTE_API = {subtitle_api_literal};
+  var API = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+    ? (window.location.origin + '/api/subtitle')
+    : ABSOLUTE_API;
+
   async function poll() {{
     try {{
-      var r = await fetch('/api/subtitle?t=' + Date.now());
+      var r = await fetch(API + '?t=' + Date.now(), {{ cache: 'no-store' }});
       var data = await r.json();
       if (!data.enabled) {{ hide(); return; }}
       if (data.id !== lastId) {{
         lastId = data.id;
         show(data);
       }}
-    }} catch(e) {{ /* ignore */ }}
+    }} catch(e) {{ /* ignore; キャッシュ更新なしでサーバー復帰後に自動再開 */ }}
   }}
 
   setInterval(poll, 1000);
@@ -4614,7 +4636,12 @@ class KototsunaApp:
                 "emotes": comment_data.emotes if comment_data and comment_data.emotes else [],
             }
             self.chat_history.append(entry)
-            self._export_chat_html()
+            # OBSへはJSON API経由でのみ通知（HTMLファイルは書き換えないことで
+            # 書き換え途中のファイル読み取り → OBS側の表示停止を防ぐ）
+            try:
+                overlay_add_chat_message(self._build_chat_message_payload(entry))
+            except Exception as e:
+                logger.debug(f"Failed to push chat message to overlay server: {e}")
 
     def _generate_chat_entry_id(self) -> str:
         """チャットHTML差分更新用の安定IDを採番する。"""
@@ -4759,10 +4786,15 @@ class KototsunaApp:
 
     def _export_chat_html(self, force=False):
         """
-        チャットHTMLをファイルに書き出す
+        チャット用の静的HTMLシェルをファイルへ書き出し、オーバーレイサーバーの
+        チャット状態（表示順・最大件数・メッセージ一覧）を同期する。
+
+        メッセージ本体は JSON API 経由でのみ配信するため、通常の新着受信では
+        本メソッドを呼ばない（書き換え途中のファイル破損を避けるため）。設定変更・
+        起動時・終了時クリアのときにのみ呼ぶ。
 
         Args:
-            force: Trueの場合、チャット履歴が空でもエクスポートする
+            force: Trueの場合、チャット履歴が空でもエクスポートする（互換用の引数）
         """
         path = self.chat_html_path.get().strip() or self._default_chat_html_path("")
         try:
@@ -4772,9 +4804,24 @@ class KototsunaApp:
                 os.makedirs(dir_path, exist_ok=True)
                 logger.debug(f"Created directory: {dir_path}")
 
-            # HTMLファイルを書き出し
-            with open(path, "w", encoding="utf-8") as f:
+            newest_first = bool(self.chat_html_newest_first.get())
+            max_entries = max(1, min(5000, int(self.config.get("chat_html_max_entries", 200) or 200)))
+
+            # オーバーレイサーバーの state を先に揃える（HTMLロード直後のポーリングで
+            # 正しい順序・件数が返るように）。セッションIDを更新してクライアントDOMを
+            # リセットさせる。
+            overlay_set_chat_config(newest_first, max_entries, bump_session=True)
+            payloads = [
+                self._build_chat_message_payload(entry)
+                for entry in list(self.chat_history)[-max_entries:]
+            ]
+            overlay_replace_chat_messages(payloads)
+
+            # HTMLシェルを書き出し（原子的置換でレース回避）
+            tmp_path = f"{path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(self._build_chat_html())
+            os.replace(tmp_path, path)
             logger.debug(f"Chat HTML exported to {path}")
 
             # オーバーレイサーバーにパスを通知（OBS Browser Source用）
@@ -4925,14 +4972,40 @@ class KototsunaApp:
             parts.append(text.replace("<", "&lt;").replace(">", "&gt;"))
         return "".join(parts)
 
+    def _build_chat_message_payload(self, entry: dict) -> dict:
+        """チャット1件を OBS用JSON 向けに整形する（HTMLエスケープ済み文字列を返す）。"""
+        name = str(entry.get("name", "")).replace("<", "&lt;").replace(">", "&gt;")
+        body_html = self._replace_emotes_with_images(
+            str(entry.get("message", "")), entry.get("emotes") or []
+        )
+        translated_raw = entry.get("translated")
+        translated_html = (
+            str(translated_raw).replace("<", "&lt;").replace(">", "&gt;")
+            if translated_raw
+            else ""
+        )
+        return {
+            "id": str(entry.get("id", "")),
+            "time": str(entry.get("time", "")),
+            "name_html": name,
+            "body_html": body_html,
+            "translated_html": translated_html,
+        }
+
     def _build_chat_html(self) -> str:
+        """OBS 用のチャット HTML（静的シェル）を生成する。
+
+        メッセージ本体は /api/chat から JSON ポーリングで取得するため、
+        HTML ファイル自体はセッション内でほぼ書き換わらない。これにより
+        OBS が書き換え途中のファイルを読む（→空のDOMでフリーズ）現象と、
+        全件再レンダリングによる点滅を根本的に防ぐ。
+        """
         self._ensure_chat_history_entry_ids()
         style_name = self.comment_bubble_style.get()
         css = self._get_css_style(style_name)
 
         # テンプレート読み込み (custom.css)
         try:
-            # HTML出力先と同じフォルダの custom.css を探す
             output_dir = os.path.dirname(self.chat_html_path.get() or self._default_chat_html_path(""))
             custom_css_path = os.path.join(output_dir, "custom.css")
             if os.path.exists(custom_css_path):
@@ -4941,164 +5014,149 @@ class KototsunaApp:
         except Exception as e:
             logger.error(f"Failed to load custom.css: {e}")
 
-        # コメントの表示順序を設定に応じて変更
-        max_entries = self.config.get("chat_html_max_entries", 200)
-        chat_list = list(self.chat_history)[-max_entries:]
-        newest_first = self.chat_html_newest_first.get()
-        if newest_first:
-            chat_list.reverse()  # 上が新しい（逆順）
+        # /api/chat のURL：
+        #  - OBSが http://localhost:PORT/chat で読み込んだ場合 → 同一オリジン（ポート自動追従）
+        #  - OBSが file:// でHTMLを直接開いている場合 → 焼き込んだ絶対URLにフォールバック
+        from src.overlay_server import get_overlay_port
+        port = get_overlay_port() or 8080
+        absolute_api_url = f"http://localhost:{port}/api/chat"
 
-        items = []
-        for c in chat_list:
-            # HTMLエスケープ（簡易）
-            name = str(c['name']).replace("<", "&lt;").replace(">", "&gt;")
-            message = self._replace_emotes_with_images(str(c['message']), c.get('emotes', []))
-            translated = str(c['translated']).replace("<", "&lt;").replace(">", "&gt;") if c.get("translated") else ""
-
-            sub_html = f"<div class='sub'>{translated}</div>" if translated else ""
-
-            msg_id = str(c["id"])
-
-            line = f"""
-            <div class='msg' data-id='{msg_id}'>
-                <div class='meta'>
-                    <span class='time'>{c['time']}</span>
-                    <span class='name'>{name}</span>
-                </div>
-                <div class='content'>
-                    <div class='body'>{message}</div>
-                    {sub_html}
-                </div>
-            </div>
-            """
-            items.append(line)
-
-        body = "\n".join(items)
-
-        # スクロール位置の設定（上が新しい場合は上に、下が新しい場合は下に）
-        scroll_script = "window.scrollTo(0, 0);" if newest_first else "window.scrollTo(0, document.body.scrollHeight);"
-
-        # JavaScriptで点滅を最小化：既存のメッセージはそのまま、新しいメッセージだけを追加
         js_code = f"""
-const newestFirst = {str(newest_first).lower()};
-let updateInterval = null;
-let consecutiveErrors = 0;
-let isUpdating = false;
+(function() {{
+  const ABSOLUTE_API = {json.dumps(absolute_api_url)};
+  const API = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+    ? (window.location.origin + '/api/chat')
+    : ABSOLUTE_API;
+  const POLL_INTERVAL_MS = 1200;
+  let currentSession = '';
+  const seenIds = new Set();
+  let pollTimer = null;
+  let inFlight = false;
 
-function getMessageIds(root) {{
-    return Array.from(root.querySelectorAll('.msg')).map(msg => msg.dataset.id);
-}}
+  function getRoot() {{
+    return document.getElementById('chat-root');
+  }}
 
-function arraysEqual(left, right) {{
-    if (left.length !== right.length) {{
-        return false;
+  function scrollToEdge(newestFirst) {{
+    if (newestFirst) {{
+      window.scrollTo(0, 0);
+    }} else {{
+      window.scrollTo(0, document.body.scrollHeight);
     }}
-    return left.every((value, index) => value === right[index]);
-}}
+  }}
 
-function startPolling() {{
-    if (updateInterval) return;
-    updateInterval = setInterval(syncChat, 1200);
-}}
+  function renderMessage(msg) {{
+    const el = document.createElement('div');
+    el.className = 'msg';
+    el.dataset.id = msg.id;
+    const sub = msg.translated_html
+      ? '<div class="sub">' + msg.translated_html + '</div>'
+      : '';
+    el.innerHTML =
+      '<div class="meta">' +
+        '<span class="time">' + (msg.time || '') + '</span>' +
+        '<span class="name">' + (msg.name_html || '') + '</span>' +
+      '</div>' +
+      '<div class="content">' +
+        '<div class="body">' + (msg.body_html || '') + '</div>' +
+        sub +
+      '</div>';
+    return el;
+  }}
 
-function syncChat() {{
-    if (isUpdating) return;
-    isUpdating = true;
-    const pollUrl = new URL(window.location.href);
-    pollUrl.searchParams.set('_t', Date.now().toString());
-    fetch(pollUrl.toString(), {{ cache: 'no-store' }})
-        .then(response => response.ok ? response.text() : '')
-        .then(html => {{
-            consecutiveErrors = 0;
-            if (!html) {{
-                return;
-            }}
+  function resetDom() {{
+    seenIds.clear();
+    const root = getRoot();
+    if (root) root.innerHTML = '';
+  }}
 
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            const currentRoot = document.getElementById('chat-root');
-            const nextRoot = doc.getElementById('chat-root');
-            if (!currentRoot || !nextRoot) {{
-                return;
-            }}
+  async function poll() {{
+    if (inFlight) return;
+    inFlight = true;
+    try {{
+      const res = await fetch(API + '?_t=' + Date.now(), {{ cache: 'no-store' }});
+      if (!res.ok) throw new Error('bad status ' + res.status);
+      const data = await res.json();
 
-            const currentIds = getMessageIds(currentRoot);
-            const nextMessages = Array.from(nextRoot.querySelectorAll('.msg'));
-            const nextIds = nextMessages.map(msg => msg.dataset.id);
+      // セッション変更時はDOMをリセット
+      if (data.session && data.session !== currentSession) {{
+        currentSession = data.session;
+        resetDom();
+      }}
 
-            if (arraysEqual(currentIds, nextIds)) {{
-                return;
-            }}
+      const root = getRoot();
+      if (!root) return;
 
-            const canIncrementallySync = currentIds.length <= nextIds.length &&
-                (newestFirst
-                    ? arraysEqual(currentIds, nextIds.slice(nextIds.length - currentIds.length))
-                    : arraysEqual(currentIds, nextIds.slice(0, currentIds.length)));
+      const newestFirst = !!data.newest_first;
+      const messages = Array.isArray(data.messages) ? data.messages : [];
 
-            if (canIncrementallySync) {{
-                const diffCount = nextIds.length - currentIds.length;
-                const incoming = newestFirst
-                    ? nextMessages.slice(0, diffCount)
-                    : nextMessages.slice(nextMessages.length - diffCount);
-                const fragment = document.createDocumentFragment();
+      // サーバーから消えた（最大件数超過でトリムされた）メッセージはDOMから削除
+      const serverIds = new Set(messages.map(function(m) {{ return m.id; }}));
+      const removeList = [];
+      for (let i = 0; i < root.children.length; i++) {{
+        const child = root.children[i];
+        if (!serverIds.has(child.dataset.id)) removeList.push(child);
+      }}
+      for (const el of removeList) {{
+        if (el.dataset && el.dataset.id) seenIds.delete(el.dataset.id);
+        el.remove();
+      }}
 
-                incoming.forEach(msg => {{
-                    fragment.appendChild(msg.cloneNode(true));
-                }});
+      // 新規メッセージだけ追加（既存DOMには触れない＝点滅なし）
+      let appended = 0;
+      for (const m of messages) {{
+        if (!m || !m.id || seenIds.has(m.id)) continue;
+        seenIds.add(m.id);
+        const el = renderMessage(m);
+        if (newestFirst) {{
+          root.insertBefore(el, root.firstChild);
+        }} else {{
+          root.appendChild(el);
+        }}
+        appended++;
+      }}
 
-                if (newestFirst) {{
-                    currentRoot.prepend(fragment);
-                }} else {{
-                    currentRoot.appendChild(fragment);
-                }}
-            }} else {{
-                currentRoot.innerHTML = nextRoot.innerHTML;
-            }}
+      // クライアント側でも最大件数を守る
+      const maxEntries = Math.max(1, (data.max_entries | 0) || 200);
+      while (root.children.length > maxEntries) {{
+        const target = newestFirst ? root.lastElementChild : root.firstElementChild;
+        if (!target) break;
+        if (target.dataset && target.dataset.id) seenIds.delete(target.dataset.id);
+        target.remove();
+      }}
 
-            {scroll_script}
-        }})
-        .catch(err => {{
-            consecutiveErrors++;
-            // ページリロードは行わない（リロード→接続拒否→JS消滅のループを防ぐ）
-            // 代わりに間隔を空けて再試行し、サーバー復帰後に自動で再接続する
-            if (consecutiveErrors >= 5) {{
-                clearInterval(updateInterval);
-                updateInterval = null;
-                const backoff = Math.min(30000, 2000 * Math.pow(2, consecutiveErrors - 5));
-                setTimeout(startPolling, backoff);
-            }}
-        }})
-        .finally(() => {{
-            isUpdating = false;
-        }});
-}}
-
-window.onload = function() {{
-    {scroll_script}
-    startPolling();
-}};
-
-// OBS BrowserSourceがキャッシュから復元された時にポーリングを再開
-document.addEventListener('visibilitychange', function() {{
-    if (document.visibilityState === 'visible') {{
-        startPolling();
-        syncChat();
+      if (appended > 0) scrollToEdge(newestFirst);
+    }} catch (e) {{
+      // 失敗してもページリロードはしない（キャッシュ更新なしで自動復帰させるため）
+    }} finally {{
+      inFlight = false;
     }}
-}});
-window.addEventListener('pageshow', function() {{
-    startPolling();
-    syncChat();
-}});
+  }}
+
+  function startPolling() {{
+    if (pollTimer) return;
+    pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+    poll();
+  }}
+
+  window.addEventListener('load', startPolling);
+  document.addEventListener('visibilitychange', function() {{
+    if (document.visibilityState === 'visible') poll();
+  }});
+  window.addEventListener('pageshow', poll);
+}})();
 """
 
-        return f"""<!DOCTYPE html>
-<html><head><meta charset='utf-8'><style>
-{css}
-        </style>
-<script>
-{js_code}
-</script>
-</head><body><div id='chat-root'>{body}</div></body></html>"""
+        return (
+            "<!DOCTYPE html>\n"
+            "<html><head><meta charset='utf-8'><style>\n"
+            f"{css}\n"
+            "        </style>\n"
+            "<script>\n"
+            f"{js_code}\n"
+            "</script>\n"
+            "</head><body><div id='chat-root'></div></body></html>"
+        )
 
 
     # =========================================

@@ -3,6 +3,7 @@ import socketserver
 import json
 import threading
 import os
+import uuid
 from datetime import datetime
 from functools import partial
 from src.logger import logger
@@ -21,6 +22,17 @@ _subtitle_state = {
     "config": {}
 }
 _subtitle_lock = threading.Lock()
+
+# チャットメッセージのインメモリ状態
+# OBSブラウザソースはJSONを /api/chat から取得するため、チャットHTMLファイル自体は
+# 起動時と設定変更時にしか書き換えない（書き換え中のファイル読み取り破損を避ける）。
+_chat_state = {
+    "messages": [],
+    "newest_first": False,
+    "max_entries": 200,
+    "session": uuid.uuid4().hex[:12],
+}
+_chat_lock = threading.Lock()
 
 
 def _normalize_subtitle_lines(original: str, translated: str, config: dict | None) -> tuple[str, str]:
@@ -76,6 +88,22 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(state, ensure_ascii=False).encode('utf-8'))
+        elif self.path.split('?')[0] == '/api/chat':
+            with _chat_lock:
+                payload = {
+                    "messages": list(_chat_state["messages"]),
+                    "newest_first": _chat_state["newest_first"],
+                    "max_entries": _chat_state["max_entries"],
+                    "session": _chat_state["session"],
+                }
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
+            self.end_headers()
+            self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
         elif self.path.startswith('/subtitle'):
             self._serve_subtitle_html()
         elif self.path.startswith('/chat'):
@@ -232,6 +260,52 @@ def set_chat_html_path(path: str):
     global _chat_html_path
     _chat_html_path = path
     logger.info(f"Chat HTML path set to: {path}")
+
+
+def add_chat_message(entry: dict) -> None:
+    """チャットメッセージを1件追加する（JSONポーリング用）。"""
+    with _chat_lock:
+        messages = _chat_state["messages"]
+        messages.append(entry)
+        max_entries = int(_chat_state.get("max_entries", 200) or 200)
+        if len(messages) > max_entries:
+            _chat_state["messages"] = messages[-max_entries:]
+
+
+def replace_chat_messages(entries: list) -> None:
+    """現在のメッセージ一覧を一括置換する（起動時の復元など用途）。"""
+    with _chat_lock:
+        max_entries = int(_chat_state.get("max_entries", 200) or 200)
+        trimmed = list(entries)[-max_entries:]
+        _chat_state["messages"] = trimmed
+
+
+def clear_chat_messages() -> None:
+    """チャットメッセージを全消去してセッションIDを更新する。"""
+    with _chat_lock:
+        _chat_state["messages"] = []
+        _chat_state["session"] = uuid.uuid4().hex[:12]
+
+
+def set_chat_config(newest_first: bool, max_entries: int, bump_session: bool = False) -> None:
+    """チャット表示の設定を更新する。表示順や件数が変わる際は bump_session=True でクライアントDOMをリセットさせる。"""
+    with _chat_lock:
+        _chat_state["newest_first"] = bool(newest_first)
+        try:
+            new_max = int(max_entries)
+        except (TypeError, ValueError):
+            new_max = 200
+        _chat_state["max_entries"] = max(1, min(5000, new_max))
+        if len(_chat_state["messages"]) > _chat_state["max_entries"]:
+            _chat_state["messages"] = _chat_state["messages"][-_chat_state["max_entries"]:]
+        if bump_session:
+            _chat_state["session"] = uuid.uuid4().hex[:12]
+
+
+def get_chat_session() -> str:
+    """現在のチャットセッションIDを返す（HTML埋め込み用）。"""
+    with _chat_lock:
+        return _chat_state["session"]
 
 
 def stop_server():
