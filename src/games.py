@@ -290,6 +290,75 @@ class GiveawayManager:
             return self._active
 
 
+# --- 8-Ball ---
+
+EIGHTBALL_POSITIVE = [
+    "そうに違いない！🎱",
+    "確実にYES！🎱",
+    "見通しは良好！🎱",
+    "はい、間違いなく！🎱",
+    "きっとそうなる！🎱",
+]
+
+EIGHTBALL_NEGATIVE = [
+    "それはなさそう...🎱",
+    "NO、絶対に違う。🎱",
+    "見通しは暗い...🎱",
+    "ありえない！🎱",
+    "今日は難しそう...🎱",
+]
+
+EIGHTBALL_NEUTRAL = [
+    "なんとも言えない...🎱",
+    "今は答えられない。後でまた聞いて！🎱",
+    "集中して、もう一度聞いて！🎱",
+    "返答しにくい質問だ...🎱",
+    "見えない... 🎱",
+]
+
+_EIGHTBALL_POOL = EIGHTBALL_POSITIVE + EIGHTBALL_NEGATIVE + EIGHTBALL_NEUTRAL
+
+
+def eightball(question: str) -> str:
+    """Answer a yes/no question Magic 8-Ball style."""
+    if not question.strip():
+        return "質問を入力してください（例: !8ball 今日は良いことある？）"
+    answer = random.choice(_EIGHTBALL_POOL)
+    return f"🎱 「{question.strip()}」→ {answer}"
+
+
+# --- Quote ---
+
+QUOTES = [
+    ("努力は必ず報われる。", "王貞治"),
+    ("夢を見るから、そのことが現実になる。", "ナポレオン・ヒル"),
+    ("人生とは今日一日のことである。", "デール・カーネギー"),
+    ("失敗は成功のもと。", "ことわざ"),
+    ("千里の道も一歩から。", "ことわざ"),
+    ("笑う門には福来たる。", "ことわざ"),
+    ("継続は力なり。", "ことわざ"),
+    ("当たって砕けろ。", "ことわざ"),
+    ("七転び八起き。", "ことわざ"),
+    ("初心忘るべからず。", "世阿弥"),
+    ("明日は明日の風が吹く。", "ことわざ"),
+    ("案ずるより産むが易し。", "ことわざ"),
+    ("急がば回れ。", "ことわざ"),
+    ("類は友を呼ぶ。", "ことわざ"),
+    ("備えあれば憂いなし。", "ことわざ"),
+    ("喜びを分かち合えば二倍になり、悲しみを分かち合えば半分になる。", "ことわざ"),
+    ("今日できることを明日に延ばすな。", "ベンジャミン・フランクリン"),
+    ("すべては練習だ。", "ミケランジェロ"),
+    ("想像力は知識より重要だ。", "アインシュタイン"),
+    ("もし今日が人生最後の日だとしたら、今日しようとしていることは本当にしたいことだろうか？", "スティーブ・ジョブズ"),
+]
+
+
+def random_quote() -> str:
+    """Return a random inspirational quote."""
+    text, author = random.choice(QUOTES)
+    return f"💬 「{text}」— {author}"
+
+
 # --- Module-level singletons ---
 
 _number_guess_game = NumberGuessGame()

@@ -23,7 +23,8 @@ from src.session_archive import get_session_archive
 from src.bot_filter import BotFilter
 from src.games import (
     fortune, roll_dice, coin_toss, spin_slot, spin_roulette,
-    play_janken, get_number_guess_game, get_giveaway_manager,
+    play_janken, eightball, random_quote,
+    get_number_guess_game, get_giveaway_manager,
 )
 
 
@@ -881,6 +882,8 @@ class TranslateBot(commands.Bot):
             "endguess": self._cmd_endguess,
             "giveaway": self._cmd_giveaway,
             "enter": self._cmd_enter,
+            "8ball": self._cmd_8ball,
+            "quote": self._cmd_quote,
             # 後方互換エイリアス
             "remove": self._cmd_remove,
             "clearall": self._cmd_clearall,
@@ -909,6 +912,7 @@ class TranslateBot(commands.Bot):
             "!queue", "!leave", "!nextround", "!roundreset", "!played", "!stream", "!clip",
             "!fortune", "!dice", "!coin", "!slot", "!roulette", "!janken",
             "!startguess", "!guess", "!endguess", "!giveaway", "!enter",
+            "!8ball", "!quote",
         ]
         custom_cmds = [
             f"!{c.name}" for c in self._command_store.list_all() if c.enabled
@@ -1788,6 +1792,26 @@ class TranslateBot(commands.Bot):
             bool(is_sub),
         )
         await message.channel.send(result + '\u200B')
+
+    async def _cmd_8ball(self, message, args: str) -> None:
+        """!8ball <質問> — Magic 8-Ball で質問に答える"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("8ball", user, 5, 5)
+        if not allowed:
+            return
+        self._cooldown_manager.record("8ball", user)
+        result = eightball(args)
+        await message.channel.send(f"@{message.author.display_name} {result}" + '\u200B')
+
+    async def _cmd_quote(self, message, args: str) -> None:
+        """!quote — ランダムな名言を表示する"""
+        user = message.author.name.lower()
+        allowed, _ = self._cooldown_manager.check("quote", user, 30, 30)
+        if not allowed:
+            return
+        self._cooldown_manager.record("quote", user)
+        result = random_quote()
+        await message.channel.send(f"@{message.author.display_name} {result}" + '\u200B')
 
     async def event_raw_usernotice(self, channel, tags: dict):
         """サブスクやギフトなどのUSERNOTICEイベントを処理（twitchio 2.x準拠）"""

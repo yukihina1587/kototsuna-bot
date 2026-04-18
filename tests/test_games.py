@@ -2,7 +2,7 @@
 import pytest
 from src.games import (
     fortune, roll_dice, coin_toss, spin_slot, spin_roulette,
-    play_janken, NumberGuessGame, GiveawayManager,
+    play_janken, eightball, random_quote, NumberGuessGame, GiveawayManager,
 )
 
 
@@ -159,3 +159,35 @@ class TestGiveawayManager:
     def test_subscriber_weight(self):
         g = GiveawayManager()
         assert g.SUBSCRIBER_WEIGHT == 3
+
+
+class TestEightball:
+    def test_returns_answer(self):
+        result = eightball("今日は良いことある？")
+        assert "🎱" in result
+        assert "今日は良いことある？" in result
+
+    def test_empty_question(self):
+        result = eightball("")
+        assert "質問を入力" in result
+
+    def test_whitespace_only_question(self):
+        result = eightball("   ")
+        assert "質問を入力" in result
+
+    def test_multiple_calls_vary(self):
+        results = {eightball("テスト") for _ in range(30)}
+        assert len(results) > 1
+
+
+class TestRandomQuote:
+    def test_returns_string(self):
+        result = random_quote()
+        assert isinstance(result, str)
+        assert "💬" in result
+        assert "「" in result
+        assert "—" in result
+
+    def test_multiple_calls_vary(self):
+        results = {random_quote() for _ in range(30)}
+        assert len(results) > 1
