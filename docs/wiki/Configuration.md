@@ -42,6 +42,15 @@
 |-----|------|-----------|
 | `commands_enabled` | コマンド機能の有効/無効 | `true` |
 
+### クリップコマンド設定
+
+| キー | 説明 | デフォルト |
+|-----|------|-----------|
+| `clip_enabled` | `!clip` コマンドの有効/無効 | `true` |
+| `clip_permission_level` | 必要権限（0=全員〜4=配信者） | `3`（モデレーター） |
+| `clip_cooldown` | グローバルクールダウン（秒） | `60` |
+| `clip_reply` | クリップURLをチャットに返信するか | `true` |
+
 ### カスタムコマンド（custom_commands.json）
 
 カスタムコマンドは `custom_commands.json` に保存されます（`config.json` とは別ファイル）。

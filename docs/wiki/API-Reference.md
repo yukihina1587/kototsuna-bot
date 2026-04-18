@@ -59,6 +59,36 @@ BOT起動時に自動的にHTTPサーバーが起動し、オーバーレイ用�
 
 ---
 
+#### GET /api/giveaway
+
+現在の抽選状態を取得します。OBSオーバーレイなどからリアルタイムで参加者数・当選者を表示するために使用できます。
+
+**レスポンス例（開催中）**:
+```json
+{
+  "active": true,
+  "entry_count": 15,
+  "winners": ["winner1", "winner2"]
+}
+```
+
+**レスポンス例（未開催）**:
+```json
+{
+  "active": false,
+  "entry_count": 0,
+  "winners": []
+}
+```
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `active` | boolean | 抽選が開催中かどうか |
+| `entry_count` | number | 現在のエントリー数 |
+| `winners` | string[] | 当選者のユーザー名一覧 |
+
+---
+
 ## OBSでの使用方法
 
 ### ブラウザソースの追加
