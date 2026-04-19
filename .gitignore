@@ -42,3 +42,6 @@ custom_commands.json
 PENCIL_SETUP.md
 designs/
 bgm/
+
+# Wiki sync workflow working directory (should never be committed)
+wiki_repo/
