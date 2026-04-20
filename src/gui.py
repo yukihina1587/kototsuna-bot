@@ -247,6 +247,9 @@ class KototsunaApp:
         self.voicevox_speaker_id = tk.IntVar(value=self.config.get("voicevox_speaker_id", 14))
         self.voicevox_speaker_name = tk.StringVar(value=self.config.get("voicevox_speaker_name", "冥鳴ひまり / ノーマル"))
         self.voicevox_speakers_cache = []  # スピーカー一覧キャッシュ
+        # TTSエンジン選択（VOICEVOX互換）
+        self.tts_engine_var = tk.StringVar(value=self.config.get("tts_engine", "voicevox"))
+        self.tts_engine_url_var = tk.StringVar(value=self._get_engine_url_from_config(self.tts_engine_var.get()))
         self.bits_sound_path = tk.StringVar(value=self.config.get("bits_sound_path", ""))
         self.bits_volume_var = tk.DoubleVar(value=self.config.get("bits_sound_volume", 80))
         self.sub_sound_path = tk.StringVar(value=self.config.get("subscription_sound_path", ""))
@@ -1367,8 +1370,36 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
-        # VOICEVOX設定
-        self._add_panel_section(parent, "VOICEVOX設定")
+        # TTSエンジン設定
+        self._add_panel_section(parent, "TTSエンジン設定")
+        ctk.CTkLabel(parent, text="エンジン", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
+        engine_display_values = ["VOICEVOX", "COEIROINK", "AivisSpeech", "SHAREVOX"]
+        current_engine_display = self._engine_name_to_display(self.tts_engine_var.get() or "voicevox")
+        self.tts_engine_display_var = tk.StringVar(value=current_engine_display)
+        ctk.CTkOptionMenu(
+            parent,
+            variable=self.tts_engine_display_var,
+            values=engine_display_values,
+            command=self._on_tts_engine_selected,
+            width=280,
+        ).pack(fill="x", pady=(0, 4))
+
+        ctk.CTkLabel(
+            parent,
+            text="エンジンURL（各エンジンのデフォルトポートを自動入力／編集可）",
+            font=("Segoe UI", 9),
+            text_color=TEXT_SUBTLE,
+        ).pack(anchor="w")
+        url_entry = ctk.CTkEntry(parent, textvariable=self.tts_engine_url_var, height=32)
+        url_entry.pack(fill="x", pady=(0, 4))
+        try:
+            self.tts_engine_url_var.trace_add("write", self._on_tts_engine_url_changed)
+        except Exception:
+            # 古いtkinter環境用フォールバック
+            self.tts_engine_url_var.trace("w", self._on_tts_engine_url_changed)
+
+        # VOICEVOX設定（パスと自動起動は VOICEVOX 本家選択時のみ意味を持つ）
+        self._add_panel_section(parent, "VOICEVOX Engineパス（VOICEVOX本家のみ）")
         ctk.CTkLabel(parent, text="VOICEVOXパス", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
         path_frame = ctk.CTkFrame(parent, fg_color="transparent")
         path_frame.pack(fill="x", pady=(0, 4))
@@ -4207,6 +4238,69 @@ class KototsunaApp:
         threading.Thread(target=test_speak, daemon=True).start()
 
         self.log_message("🩺 === TTS診断完了 ===")
+
+    def _get_engine_url_from_config(self, engine_name: str) -> str:
+        """設定から指定エンジンの URL を取得する（未設定ならプリセット値）。"""
+        from src.tts_engines import get_preset_url
+        urls = self.config.get("tts_engine_urls") or {}
+        return urls.get(engine_name) or get_preset_url(engine_name)
+
+    def _engine_name_to_display(self, engine_name: str) -> str:
+        labels = {
+            "voicevox": "VOICEVOX",
+            "coeiroink": "COEIROINK",
+            "aivisspeech": "AivisSpeech",
+            "sharevox": "SHAREVOX",
+        }
+        return labels.get(engine_name, engine_name)
+
+    def _display_to_engine_name(self, display: str) -> str:
+        labels = {
+            "VOICEVOX": "voicevox",
+            "COEIROINK": "coeiroink",
+            "AivisSpeech": "aivisspeech",
+            "SHAREVOX": "sharevox",
+        }
+        return labels.get(display, "voicevox")
+
+    def _on_tts_engine_selected(self, display: str) -> None:
+        """エンジン選択変更時: URLをプリセットに差し替え、TTSインスタンスを更新し、ボイス一覧を再取得する。"""
+        engine_name = self._display_to_engine_name(display)
+        from src.tts_engines import get_preset_url
+        preset_url = get_preset_url(engine_name)
+
+        self.tts_engine_var.set(engine_name)
+        self.tts_engine_url_var.set(preset_url)
+        self.config["tts_engine"] = engine_name
+        urls = dict(self.config.get("tts_engine_urls") or {})
+        urls[engine_name] = preset_url
+        self.config["tts_engine_urls"] = urls
+        save_config(self.config)
+
+        if hasattr(self, "tts") and self.tts:
+            try:
+                self.tts.switch_engine(engine_name, preset_url)
+            except Exception as e:
+                self.log_message(f"⚠️ エンジン切替エラー: {e}")
+
+        self.log_message(f"🎛 TTSエンジンを {display} に切替: {preset_url}")
+        self._refresh_voice_list()
+
+    def _on_tts_engine_url_changed(self, *_args) -> None:
+        """URL 入力が変更されたらconfigに反映する（Entry の write トレース用）。"""
+        engine_name = self.tts_engine_var.get() or "voicevox"
+        url = (self.tts_engine_url_var.get() or "").strip()
+        if not url:
+            return
+        urls = dict(self.config.get("tts_engine_urls") or {})
+        urls[engine_name] = url
+        self.config["tts_engine_urls"] = urls
+        save_config(self.config)
+        if hasattr(self, "tts") and self.tts:
+            try:
+                self.tts.switch_engine(engine_name, url)
+            except Exception:
+                pass
 
     def test_voicevox_connection(self):
         """VOICEVOX Engineへの接続をテスト"""

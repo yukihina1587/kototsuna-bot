@@ -54,6 +54,10 @@ DEFAULT_CONFIG = {
     "voicevox_speaker_id": 14,  # 冥鳴ひまり (Meimei Himari)
     "voicevox_engine_path": "",  # VOICEVOX Engineの実行ファイルパス
     "voicevox_auto_start": True,  # VOICEVOX Engineを自動起動するかどうか
+    # TTSエンジン選択（VOICEVOX互換）: voicevox / coeiroink / aivisspeech / sharevox
+    "tts_engine": "voicevox",
+    # エンジン別URLの上書き（空なら各エンジンのデフォルトポート）
+    "tts_engine_urls": {},
     # ローカルSTT設定
     "stt_num_threads": 2,          # sherpa-onnx CPU threads
     "stt_vad_threshold": 0.3,     # Silero VAD threshold (0.01-1.0)
@@ -154,6 +158,7 @@ VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_VOICE_ASSIGN_MODES = {"mod_only", "self_service", "disabled"}
+VALID_TTS_ENGINES = {"voicevox", "coeiroink", "aivisspeech", "sharevox"}
 def validate_config(config_data):
     """
     設定値を検証し、不足値をデフォルトで補完する
@@ -269,6 +274,31 @@ def validate_config(config_data):
 
     if config_data and any(key in config_data for key in ("deepl_api_key", "translation_engine")):
         changed = True
+
+    # tts_engine
+    if validated.get("tts_engine") not in VALID_TTS_ENGINES:
+        logger.warning(
+            "tts_engine is invalid: %s, fallback to voicevox",
+            validated.get("tts_engine"),
+        )
+        validated["tts_engine"] = "voicevox"
+        changed = True
+
+    # tts_engine_urls は dict[str, str]
+    engine_urls = validated.get("tts_engine_urls")
+    if not isinstance(engine_urls, dict):
+        validated["tts_engine_urls"] = {}
+        changed = True
+    else:
+        normalized_urls: dict[str, str] = {}
+        for key, value in engine_urls.items():
+            if key in VALID_TTS_ENGINES and isinstance(value, str) and value.strip():
+                normalized_urls[key] = value.strip()
+            else:
+                changed = True
+        if normalized_urls != engine_urls:
+            validated["tts_engine_urls"] = normalized_urls
+            changed = True
 
     # voice_assign_mode
     if validated.get("voice_assign_mode") not in VALID_VOICE_ASSIGN_MODES:

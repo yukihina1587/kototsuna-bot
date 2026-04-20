@@ -181,11 +181,32 @@ class ViewerStore:
     # -- Voice assignment ---------------------------------------------------
 
     def get_assigned_voice(self, username: str) -> Optional[int]:
-        """ユーザーに割り当てられた speaker_id を返す。なければ None。"""
+        """ユーザーに割り当てられた voice_id を返す。なければ None。
+
+        後方互換: 旧フォーマット（``speaker_id`` のみ）と新フォーマット
+        （``voice_id``+``engine``）の両方を読める。エンジン情報が必要な場合は
+        ``get_assigned_voice_spec`` を使う。
+        """
         viewer = self.get_viewer(username)
         if viewer and viewer.assigned_voice:
-            return viewer.assigned_voice.get("speaker_id")
+            voice = viewer.assigned_voice
+            return voice.get("voice_id", voice.get("speaker_id"))
         return None
+
+    def get_assigned_voice_spec(self, username: str) -> Optional[dict]:
+        """割り当てられたボイス情報を ``{engine, voice_id, voice_name}`` で返す。
+
+        旧フォーマット（engine キーなし）は ``engine="voicevox"`` として解釈する。
+        """
+        viewer = self.get_viewer(username)
+        if not (viewer and viewer.assigned_voice):
+            return None
+        voice = viewer.assigned_voice
+        return {
+            "engine": voice.get("engine", "voicevox"),
+            "voice_id": voice.get("voice_id", voice.get("speaker_id")),
+            "voice_name": voice.get("voice_name", voice.get("speaker_name", "")),
+        }
 
     def assign_voice(
         self,
@@ -193,14 +214,16 @@ class ViewerStore:
         speaker_id: int,
         speaker_name: str,
         assigned_by: str,
+        engine: str = "voicevox",
     ) -> bool:
         """ユーザーにボイスを割り当てる。
 
         Args:
             username: 対象ユーザー名
-            speaker_id: VOICEVOX スピーカー ID
-            speaker_name: スピーカー表示名
+            speaker_id: 現行エンジンの voice ID
+            speaker_name: 表示名
             assigned_by: 割り当てた人の名前
+            engine: TTS エンジン識別子（voicevox / coeiroink / aivisspeech / sharevox）
 
         Returns:
             常に True
@@ -219,6 +242,11 @@ class ViewerStore:
                 self._viewers[key] = viewer
 
             viewer.assigned_voice = {
+                # 新フォーマット
+                "engine": engine,
+                "voice_id": speaker_id,
+                "voice_name": speaker_name,
+                # 旧フォーマット（後方互換のため残す）
                 "speaker_id": speaker_id,
                 "speaker_name": speaker_name,
                 "assigned_by": assigned_by,
@@ -226,9 +254,10 @@ class ViewerStore:
             }
             self.save()
             logger.info(
-                "ボイス割り当て: %s -> %s (ID: %d) by %s",
+                "ボイス割り当て: %s -> %s (%s ID: %d) by %s",
                 username,
                 speaker_name,
+                engine,
                 speaker_id,
                 assigned_by,
             )

@@ -16,6 +16,7 @@ from pathlib import Path
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 from typing import Optional, Tuple
 from src.logger import logger
+from src.tts_engines import TTSEngine, get_engine, get_preset_url
 
 
 def _get_tts_log_path() -> Path:
@@ -176,17 +177,31 @@ def _init_pygame_audio(timeout: float = 3.0) -> bool:
 
 
 class VoicevoxTTS:
-    """VOICEVOX Text-to-Speech handler with pyttsx3 fallback"""
+    """VOICEVOX-compatible TTS handler with pyttsx3 fallback.
 
-    def __init__(self, api_url: str = VOICEVOX_API_URL, speaker_id: int = MEIMEI_HIMARI_SPEAKER_ID):
+    Despite the name, this class now delegates synthesis to a pluggable
+    ``TTSEngine`` instance. The default engine is VOICEVOX; other
+    API-compatible engines (COEIROINK, AivisSpeech, SHAREVOX) are selected
+    by passing a different ``engine_name`` or a preset URL.
+    """
+
+    def __init__(
+        self,
+        api_url: str = VOICEVOX_API_URL,
+        speaker_id: int = MEIMEI_HIMARI_SPEAKER_ID,
+        engine_name: str = "voicevox",
+    ):
         """
-        Initialize VOICEVOX TTS
+        Initialize TTS.
 
         Args:
-            api_url: VOICEVOX API endpoint URL
-            speaker_id: Speaker ID (default: Meimei Himari)
+            api_url: Engine API endpoint URL (VOICEVOX-compatible HTTP).
+            speaker_id: Voice ID for the current engine.
+            engine_name: ``voicevox`` / ``coeiroink`` / ``aivisspeech`` / ``sharevox``.
         """
-        self.api_url = api_url
+        self.engine_name = engine_name
+        self.engine: TTSEngine = get_engine(engine_name, api_url)
+        self.api_url = self.engine.api_url
         self.speaker_id = speaker_id
         self.enabled = False
 
@@ -213,69 +228,68 @@ class VoicevoxTTS:
         self.voicevox_available = self._check_voicevox_availability()
 
     def _check_voicevox_availability(self):
-        """Check if VOICEVOX API is available (synchronous for init)"""
+        """Check if the active engine endpoint responds (synchronous, init path)."""
         try:
             import requests
-            logger.debug(f"Checking VOICEVOX API at {self.api_url}/version")
+            logger.debug(f"Checking {self.engine_name} API at {self.api_url}/version")
             response = requests.get(f"{self.api_url}/version", timeout=2)
             if response.status_code == 200:
-                logger.info(f"VOICEVOX API is available at {self.api_url}")
-                # スピーカー情報を別途取得
+                logger.info(f"{self.engine_name} API is available at {self.api_url}")
                 self._log_speaker_info()
                 return True
             return False
         except Exception as e:
-            logger.debug(f"VOICEVOX not available: {e}")
+            logger.debug(f"{self.engine_name} not available: {e}")
             return False
 
     def _log_speaker_info(self):
         """Log speaker information (called once at init)"""
         try:
-            import requests
-            response = requests.get(f"{self.api_url}/speakers", timeout=3)
-            if response.status_code == 200:
-                speakers = response.json()
-                for speaker in speakers:
-                    for style in speaker.get('styles', []):
-                        if style.get('id') == self.speaker_id:
-                            logger.info(f"Found speaker: {speaker['name']} - {style['name']} (ID: {self.speaker_id})")
-                            return
-                logger.warning(f"Speaker ID {self.speaker_id} not found")
+            for voice in self.engine.list_voices_sync(timeout=3.0):
+                if voice.get("id") == self.speaker_id:
+                    logger.info(
+                        f"Found speaker: {voice.get('name')} - {voice.get('style')} (ID: {self.speaker_id})"
+                    )
+                    return
+            logger.warning(f"Speaker ID {self.speaker_id} not found")
         except Exception as e:
             logger.debug(f"Failed to get speaker info: {e}")
 
     def get_speakers_list(self) -> list:
-        """
-        VOICEVOX APIから利用可能なスピーカー一覧を取得
-        Returns: List of dicts with 'name', 'style', 'id' keys
-                 e.g. [{'name': '冥鳴ひまり', 'style': 'ノーマル', 'id': 14, 'display': '冥鳴ひまり / ノーマル'}, ...]
+        """Return available voices from the current engine.
+
+        Returns: List of dicts with ``name``/``style``/``id``/``display`` keys.
         """
         try:
-            import requests
-            response = requests.get(f"{self.api_url}/speakers", timeout=5)
-            if response.status_code == 200:
-                speakers = response.json()
-                result = []
-                for speaker in speakers:
-                    name = speaker.get('name', 'Unknown')
-                    for style in speaker.get('styles', []):
-                        style_name = style.get('name', 'Default')
-                        style_id = style.get('id', 0)
-                        result.append({
-                            'name': name,
-                            'style': style_name,
-                            'id': style_id,
-                            'display': f"{name} / {style_name}"
-                        })
-                return result
+            return self.engine.list_voices_sync()
         except Exception as e:
             logger.error(f"スピーカー一覧取得エラー: {e}")
-        return []
+            return []
 
     def set_speaker(self, speaker_id: int):
-        """スピーカーIDを変更"""
+        """Change the active voice ID for the current engine."""
         self.speaker_id = speaker_id
-        logger.info(f"VOICEVOX speaker changed to ID: {speaker_id}")
+        logger.info(f"{self.engine_name} voice changed to ID: {speaker_id}")
+
+    def switch_engine(
+        self,
+        engine_name: str,
+        api_url: Optional[str] = None,
+    ) -> None:
+        """Swap out the underlying TTS engine (keeps workers running).
+
+        Args:
+            engine_name: ``voicevox`` / ``coeiroink`` / ``aivisspeech`` / ``sharevox``.
+            api_url: Optional override. When None, the preset URL is used.
+        """
+        resolved_url = api_url if api_url else get_preset_url(engine_name)
+        self.engine_name = engine_name
+        self.engine = get_engine(engine_name, resolved_url)
+        self.api_url = self.engine.api_url
+        logger.info(
+            f"TTS engine switched to {engine_name} at {self.api_url}"
+        )
+        self.voicevox_available = self._check_voicevox_availability()
 
     def test_voice(self, text: str = "これはテスト音声です") -> bool:
         """テスト音声を再生"""
@@ -287,18 +301,10 @@ class VoicevoxTTS:
             return False
 
     async def _check_voicevox_availability_async(self):
-        """Check if VOICEVOX API is available (async)"""
-        try:
-            if self.aio_session is None:
-                return False
-            async with self.aio_session.get(
-                f"{self.api_url}/version",
-                timeout=aiohttp.ClientTimeout(total=2)
-            ) as response:
-                return response.status == 200
-        except Exception as e:
-            logger.debug(f"VOICEVOX availability check failed: {e}")
+        """Check if the active engine responds (async, used by the worker loop)."""
+        if self.aio_session is None:
             return False
+        return await self.engine.health_check(self.aio_session, timeout=2.0)
 
     def _update_engine_mode(self, new_mode: str):
         """
@@ -328,77 +334,25 @@ class VoicevoxTTS:
     async def _synthesize_voicevox_async(
         self, text: str, speaker_id: Optional[int] = None, retry: bool = True
     ) -> Optional[bytes]:
-        """
-        Synthesize speech from text using VOICEVOX API (async)
-
-        Args:
-            text: Text to synthesize
-            speaker_id: Speaker ID to use (None = use default self.speaker_id)
-            retry: Whether to retry on failure (default: True)
-
-        Returns:
-            WAV audio data as bytes, or None if failed
-        """
+        """Synthesize speech via the active engine (async), with one retry."""
         effective_speaker = speaker_id if speaker_id is not None else self.speaker_id
 
-        try:
-            if self.aio_session is None:
-                return None
-
-            # Step 1: Create audio query
-            async with self.aio_session.post(
-                f"{self.api_url}/audio_query",
-                params={"text": text, "speaker": effective_speaker},
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as response:
-                if response.status != 200:
-                    logger.error(f"Failed to create audio query: {response.status}")
-                    if retry:
-                        logger.info("Retrying VOICEVOX synthesis...")
-                        await asyncio.sleep(0.5)
-                        return await self._synthesize_voicevox_async(
-                            text, speaker_id=effective_speaker, retry=False
-                        )
-                    return None
-                audio_query = await response.json()
-
-            # Step 2: Synthesize speech
-            async with self.aio_session.post(
-                f"{self.api_url}/synthesis",
-                params={"speaker": effective_speaker},
-                headers={"Content-Type": "application/json"},
-                json=audio_query,
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as response:
-                if response.status != 200:
-                    logger.error(f"Failed to synthesize speech: {response.status}")
-                    if retry:
-                        logger.info("Retrying VOICEVOX synthesis...")
-                        await asyncio.sleep(0.5)
-                        return await self._synthesize_voicevox_async(
-                            text, speaker_id=effective_speaker, retry=False
-                        )
-                    return None
-                return await response.read()
-
-        except asyncio.TimeoutError:
-            logger.warning(f"VOICEVOX synthesis timeout for: {text}")
-            if retry:
-                logger.info("Retrying VOICEVOX synthesis after timeout...")
-                await asyncio.sleep(0.5)
-                return await self._synthesize_voicevox_async(
-                    text, speaker_id=effective_speaker, retry=False
-                )
+        if self.aio_session is None:
             return None
-        except Exception as e:
-            logger.error(f"Error during VOICEVOX synthesis: {e}")
-            if retry:
-                logger.info("Retrying VOICEVOX synthesis after error...")
-                await asyncio.sleep(0.5)
-                return await self._synthesize_voicevox_async(
-                    text, speaker_id=effective_speaker, retry=False
-                )
-            return None
+
+        audio = await self.engine.synthesize_async(
+            self.aio_session, text, effective_speaker, timeout=5.0
+        )
+        if audio is not None:
+            return audio
+
+        if retry:
+            logger.info(f"Retrying {self.engine_name} synthesis...")
+            await asyncio.sleep(0.5)
+            return await self._synthesize_voicevox_async(
+                text, speaker_id=effective_speaker, retry=False
+            )
+        return None
 
     def _synthesize_pyttsx3(self, text: str) -> Optional[bytes]:
         """
@@ -782,51 +736,34 @@ class VoicevoxTTS:
         # Add to synthesis queue as (text, speaker_id) tuple
         self.synthesis_queue.put((cleaned_text, speaker_id))
 
-    def set_speaker(self, speaker_id: int):
-        """スピーカーIDを変更"""
-        self.speaker_id = speaker_id
-        logger.info(f"VOICEVOX speaker changed to ID: {speaker_id}")
-
-    def get_speakers_list(self) -> list:
-        """
-        VOICEVOXから利用可能なスピーカー一覧を取得
-
-        Returns:
-            List of dicts: [{'name': '...', 'style': '...', 'id': N, 'display': '...'}]
-        """
-        try:
-            import requests
-            response = requests.get(f"{self.api_url}/speakers", timeout=5)
-            if response.status_code != 200:
-                logger.warning(f"スピーカー一覧取得失敗: {response.status_code}")
-                return []
-
-            speakers = response.json()
-            result = []
-            for speaker in speakers:
-                name = speaker.get('name', 'Unknown')
-                for style in speaker.get('styles', []):
-                    style_name = style.get('name', 'ノーマル')
-                    style_id = style.get('id', 0)
-                    result.append({
-                        'name': name,
-                        'style': style_name,
-                        'id': style_id,
-                        'display': f"{name} / {style_name}"
-                    })
-            logger.info(f"取得したスピーカー数: {len(result)}")
-            return result
-        except Exception as e:
-            logger.error(f"スピーカー一覧取得エラー: {e}")
-            return []
-
 
 # Global TTS instance
 _tts_instance = None
 
+
 def get_tts_instance() -> VoicevoxTTS:
-    """Get or create global TTS instance"""
+    """Get or create the global TTS instance, honoring ``config.json`` overrides."""
     global _tts_instance
     if _tts_instance is None:
-        _tts_instance = VoicevoxTTS()
+        engine_name = "voicevox"
+        api_url = VOICEVOX_API_URL
+        speaker_id = MEIMEI_HIMARI_SPEAKER_ID
+        try:
+            from src.config import load_config
+            cfg = load_config()
+            engine_name = cfg.get("tts_engine", "voicevox") or "voicevox"
+            engine_urls = cfg.get("tts_engine_urls") or {}
+            api_url = (
+                engine_urls.get(engine_name)
+                or cfg.get("voicevox_url")
+                or get_preset_url(engine_name)
+            )
+            speaker_id = int(cfg.get("voicevox_speaker_id", MEIMEI_HIMARI_SPEAKER_ID))
+        except Exception as e:
+            logger.debug(f"Falling back to default TTS config ({e})")
+        _tts_instance = VoicevoxTTS(
+            api_url=api_url,
+            speaker_id=speaker_id,
+            engine_name=engine_name,
+        )
     return _tts_instance
