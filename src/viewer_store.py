@@ -11,9 +11,12 @@ import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from src.logger import logger
+
+
+VoiceId = Union[int, str]
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +183,14 @@ class ViewerStore:
 
     # -- Voice assignment ---------------------------------------------------
 
-    def get_assigned_voice(self, username: str) -> Optional[int]:
+    def get_assigned_voice(self, username: str) -> Optional[VoiceId]:
         """ユーザーに割り当てられた voice_id を返す。なければ None。
 
         後方互換: 旧フォーマット（``speaker_id`` のみ）と新フォーマット
         （``voice_id``+``engine``）の両方を読める。エンジン情報が必要な場合は
         ``get_assigned_voice_spec`` を使う。
+
+        ``voice_id`` は int（VOICEVOX 系）または str（edge-tts 等）のどちらか。
         """
         viewer = self.get_viewer(username)
         if viewer and viewer.assigned_voice:
@@ -211,7 +216,7 @@ class ViewerStore:
     def assign_voice(
         self,
         username: str,
-        speaker_id: int,
+        speaker_id: VoiceId,
         speaker_name: str,
         assigned_by: str,
         engine: str = "voicevox",
@@ -220,10 +225,10 @@ class ViewerStore:
 
         Args:
             username: 対象ユーザー名
-            speaker_id: 現行エンジンの voice ID
+            speaker_id: 現行エンジンの voice ID（int または str）
             speaker_name: 表示名
             assigned_by: 割り当てた人の名前
-            engine: TTS エンジン識別子（voicevox / coeiroink / aivisspeech / sharevox）
+            engine: TTS エンジン識別子（voicevox / coeiroink / aivisspeech / sharevox / edge-tts）
 
         Returns:
             常に True

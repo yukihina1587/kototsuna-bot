@@ -2,7 +2,7 @@
 
 Phase 1: VOICEVOX and its API-compatible siblings (COEIROINK, AivisSpeech,
 SHAREVOX) share a single implementation, differing only in default URL.
-Phase 2 will add Style-Bert-VITS2 which uses a different HTTP schema.
+Phase 2: Edge TTS（edge-tts ライブラリ／オンライン・APIキー不要・サーバー起動不要）を追加。
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Optional
 
 from src.tts_engines.base import TTSEngine
+from src.tts_engines.edge import EdgeTtsEngine
 from src.tts_engines.voicevox import VoicevoxEngine
 
 
@@ -19,6 +20,7 @@ _FACTORIES = {
     "coeiroink": lambda url=None: VoicevoxEngine(url, name="coeiroink"),
     "aivisspeech": lambda url=None: VoicevoxEngine(url, name="aivisspeech"),
     "sharevox": lambda url=None: VoicevoxEngine(url, name="sharevox"),
+    "edge-tts": lambda url=None: EdgeTtsEngine(url, name="edge-tts"),
 }
 
 
@@ -51,17 +53,28 @@ def list_available_engines() -> list[dict]:
             "display": "SHAREVOX",
             "default_url": VoicevoxEngine.PRESETS["sharevox"],
         },
+        {
+            "name": "edge-tts",
+            "display": "Edge TTS (オンライン)",
+            "default_url": "",
+        },
     ]
 
 
 def get_preset_url(engine_name: str) -> str:
-    """Return the default URL for a VOICEVOX-compatible engine preset."""
+    """Return the default URL for a VOICEVOX-compatible engine preset.
+
+    Edge TTS のようにローカル URL を持たないエンジンは空文字列を返す。
+    """
+    if engine_name == "edge-tts":
+        return ""
     return VoicevoxEngine.PRESETS.get(engine_name, VoicevoxEngine.default_url)
 
 
 __all__ = [
     "TTSEngine",
     "VoicevoxEngine",
+    "EdgeTtsEngine",
     "get_engine",
     "list_available_engines",
     "get_preset_url",

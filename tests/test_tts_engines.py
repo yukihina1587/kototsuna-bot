@@ -36,16 +36,36 @@ class TestEngineRegistry:
         engine = get_engine("coeiroink", "http://192.168.1.10:50032")
         assert engine.api_url == "http://192.168.1.10:50032"
 
-    def test_list_available_engines_includes_all_four(self) -> None:
+    def test_list_available_engines_includes_all(self) -> None:
         from src.tts_engines import list_available_engines
         names = {e["name"] for e in list_available_engines()}
-        assert names == {"voicevox", "coeiroink", "aivisspeech", "sharevox"}
+        assert names == {
+            "voicevox",
+            "coeiroink",
+            "aivisspeech",
+            "sharevox",
+            "edge-tts",
+        }
 
     def test_get_preset_url_returns_default_for_unknown(self) -> None:
         from src.tts_engines import get_preset_url
         assert get_preset_url("voicevox") == "http://localhost:50021"
         # Unknown falls back to the base default.
         assert get_preset_url("__missing__") == "http://localhost:50021"
+
+    def test_edge_tts_preset_url_is_empty(self) -> None:
+        """Edge TTS はローカル URL を持たない。"""
+        from src.tts_engines import get_preset_url
+        assert get_preset_url("edge-tts") == ""
+
+    def test_get_engine_returns_edge_tts(self) -> None:
+        from src.tts_engines import get_engine
+        from src.tts_engines.edge import EdgeTtsEngine
+        engine = get_engine("edge-tts")
+        assert isinstance(engine, EdgeTtsEngine)
+        assert engine.name == "edge-tts"
+        assert engine.api_url == ""
+        assert engine.audio_format == "mp3"
 
 
 class TestVoicevoxEngineListVoices:
@@ -87,6 +107,102 @@ class TestVoicevoxEngineListVoices:
         mock_response.status_code = 503
         mock_get.return_value = mock_response
         assert VoicevoxEngine().list_voices_sync() == []
+
+
+class TestEdgeTtsEngine:
+    """Edge TTS エンジン（オンライン・APIキー不要・サーバー起動不要）。"""
+
+    def test_list_voices_sync_returns_curated_jp_voices(self) -> None:
+        from src.tts_engines.edge import EdgeTtsEngine
+        voices = EdgeTtsEngine().list_voices_sync()
+        # 少なくとも Nanami / Keita は含まれ、すべて string の voice ID
+        ids = {v["id"] for v in voices}
+        assert "ja-JP-NanamiNeural" in ids
+        assert "ja-JP-KeitaNeural" in ids
+        for v in voices:
+            assert isinstance(v["id"], str)
+            assert v["id"].startswith("ja-JP-")
+            assert "Edge /" in v["display"]
+
+    def test_synthesize_async_falls_back_to_default_voice(self) -> None:
+        """int や None が渡ってもクラッシュせず、デフォルト声にフォールバックする。"""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.tts_engines.edge import EdgeTtsEngine
+
+        async def _fake_stream():
+            yield {"type": "audio", "data": b"\x00\x01\x02"}
+            yield {"type": "WordBoundary"}
+            yield {"type": "audio", "data": b"\x03"}
+
+        mock_communicate = MagicMock()
+        mock_communicate.stream = lambda: _fake_stream()
+
+        with patch.dict("sys.modules", {"edge_tts": MagicMock(Communicate=MagicMock(return_value=mock_communicate))}):
+            engine = EdgeTtsEngine()
+            result = asyncio.run(
+                engine.synthesize_async(
+                    session=AsyncMock(),
+                    text="テスト",
+                    voice_id=14,  # int でも落ちない
+                    timeout=5.0,
+                )
+            )
+        assert result == b"\x00\x01\x02\x03"
+
+    def test_synthesize_async_returns_none_when_library_missing(self) -> None:
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from src.tts_engines.edge import EdgeTtsEngine
+
+        # edge_tts が import できない状況を模擬
+        with patch.dict("sys.modules", {"edge_tts": None}):
+            engine = EdgeTtsEngine()
+            result = asyncio.run(
+                engine.synthesize_async(
+                    session=AsyncMock(),
+                    text="テスト",
+                    voice_id="ja-JP-NanamiNeural",
+                )
+            )
+        assert result is None
+
+
+class TestVoicevoxTtsEdgeFallback:
+    """primary(VOICEVOX系) が失敗したとき edge-tts にフォールバックする。"""
+
+    def test_edge_fallback_is_usable_for_voicevox_family(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from src.tts import VoicevoxTTS
+
+        # VOICEVOX primary を想定
+        with patch("src.tts.VoicevoxTTS._check_voicevox_availability", return_value=True):
+            tts = VoicevoxTTS(engine_name="voicevox")
+        with patch.dict("sys.modules", {"edge_tts": MagicMock()}):
+            assert tts._is_edge_fallback_usable() is True
+
+    def test_edge_fallback_is_not_usable_when_primary_is_edge(self) -> None:
+        from unittest.mock import patch
+
+        from src.tts import VoicevoxTTS
+
+        with patch("src.tts.VoicevoxTTS._check_voicevox_availability", return_value=True):
+            tts = VoicevoxTTS(engine_name="edge-tts", api_url="")
+        # primary が edge-tts の場合は二重フォールバック不要
+        assert tts._is_edge_fallback_usable() is False
+
+    def test_edge_fallback_is_not_usable_when_library_missing(self) -> None:
+        from unittest.mock import patch
+
+        from src.tts import VoicevoxTTS
+
+        with patch("src.tts.VoicevoxTTS._check_voicevox_availability", return_value=True):
+            tts = VoicevoxTTS(engine_name="voicevox")
+        with patch.dict("sys.modules", {"edge_tts": None}):
+            assert tts._is_edge_fallback_usable() is False
 
 
 class TestViewerStoreAssignedVoiceMigration:

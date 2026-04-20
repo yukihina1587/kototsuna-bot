@@ -1,6 +1,6 @@
 [project]
 name = "translation-bot"
-version = "1.9.0-beta.1"
+version = "1.9.0-beta.2"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -24,4 +24,6 @@ dependencies = [
     "psutil>=7.2.2",
     # OBS WebSocket連携
     "obsws-python>=1.7.2",
+    # Edge TTS（オンライン・APIキー不要）
+    "edge-tts>=7.0.0",
 ]

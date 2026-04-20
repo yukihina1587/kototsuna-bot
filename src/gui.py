@@ -247,9 +247,11 @@ class KototsunaApp:
         self.voicevox_speaker_id = tk.IntVar(value=self.config.get("voicevox_speaker_id", 14))
         self.voicevox_speaker_name = tk.StringVar(value=self.config.get("voicevox_speaker_name", "冥鳴ひまり / ノーマル"))
         self.voicevox_speakers_cache = []  # スピーカー一覧キャッシュ
-        # TTSエンジン選択（VOICEVOX互換）
+        # TTSエンジン選択（VOICEVOX互換 + Edge TTS）
         self.tts_engine_var = tk.StringVar(value=self.config.get("tts_engine", "voicevox"))
         self.tts_engine_url_var = tk.StringVar(value=self._get_engine_url_from_config(self.tts_engine_var.get()))
+        # Edge TTS 用の voice ID（文字列: ja-JP-NanamiNeural 等）
+        self.edge_tts_voice_var = tk.StringVar(value=self.config.get("edge_tts_voice", "ja-JP-NanamiNeural"))
         self.bits_sound_path = tk.StringVar(value=self.config.get("bits_sound_path", ""))
         self.bits_volume_var = tk.DoubleVar(value=self.config.get("bits_sound_volume", 80))
         self.sub_sound_path = tk.StringVar(value=self.config.get("subscription_sound_path", ""))
@@ -310,9 +312,13 @@ class KototsunaApp:
 
         # TTS (Text-to-Speech) の初期化
         self.tts = get_tts_instance()
-        # 設定からスピーカーIDを適用
-        saved_speaker_id = self.config.get("voicevox_speaker_id", 14)
-        self.tts.set_speaker(saved_speaker_id)
+        # 現在のエンジンに応じたデフォルトボイスを適用
+        engine_name = self.config.get("tts_engine", "voicevox")
+        if engine_name == "edge-tts":
+            saved_voice = self.config.get("edge_tts_voice", "ja-JP-NanamiNeural")
+        else:
+            saved_voice = self.config.get("voicevox_speaker_id", 14)
+        self.tts.set_speaker(saved_voice)
 
         # VOICEVOX Engine Manager の初期化
         voicevox_engine_path = self.config.get("voicevox_engine_path", "")
@@ -1373,7 +1379,13 @@ class KototsunaApp:
         # TTSエンジン設定
         self._add_panel_section(parent, "TTSエンジン設定")
         ctk.CTkLabel(parent, text="エンジン", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w")
-        engine_display_values = ["VOICEVOX", "COEIROINK", "AivisSpeech", "SHAREVOX"]
+        engine_display_values = [
+            "VOICEVOX",
+            "COEIROINK",
+            "AivisSpeech",
+            "SHAREVOX",
+            "Edge TTS (オンライン)",
+        ]
         current_engine_display = self._engine_name_to_display(self.tts_engine_var.get() or "voicevox")
         self.tts_engine_display_var = tk.StringVar(value=current_engine_display)
         ctk.CTkOptionMenu(
@@ -4251,6 +4263,7 @@ class KototsunaApp:
             "coeiroink": "COEIROINK",
             "aivisspeech": "AivisSpeech",
             "sharevox": "SHAREVOX",
+            "edge-tts": "Edge TTS (オンライン)",
         }
         return labels.get(engine_name, engine_name)
 
@@ -4260,6 +4273,7 @@ class KototsunaApp:
             "COEIROINK": "coeiroink",
             "AivisSpeech": "aivisspeech",
             "SHAREVOX": "sharevox",
+            "Edge TTS (オンライン)": "edge-tts",
         }
         return labels.get(display, "voicevox")
 
@@ -4382,7 +4396,7 @@ class KototsunaApp:
         threading.Thread(target=test_thread, daemon=True).start()
 
     def _refresh_voice_list(self):
-        """VOICEVOXからボイス一覧を取得して更新"""
+        """現在のエンジンからボイス一覧を取得して更新"""
         try:
             if not hasattr(self, 'tts') or self.tts is None:
                 self.tts = get_tts_instance()
@@ -4393,42 +4407,69 @@ class KototsunaApp:
                 display_names = [s['display'] for s in speakers]
                 if hasattr(self, 'voice_selector'):
                     self.voice_selector.configure(values=display_names)
-                    # 現在のスピーカーをリストから選択
-                    current_id = self.voicevox_speaker_id.get()
+                    # 現在のエンジンに応じたボイスIDを取得してドロップダウンに反映
+                    engine = self.tts_engine_var.get() or "voicevox"
+                    if engine == "edge-tts":
+                        current_id = self.config.get("edge_tts_voice", "ja-JP-NanamiNeural")
+                    else:
+                        try:
+                            current_id = self.voicevox_speaker_id.get()
+                        except Exception:
+                            current_id = self.config.get("voicevox_speaker_id", 14)
                     for s in speakers:
                         if s['id'] == current_id:
                             self.voicevox_speaker_name.set(s['display'])
                             break
                 self.log_message(f"✅ {len(speakers)}個のボイスを取得しました")
             else:
-                self.log_message("⚠️ ボイス一覧を取得できませんでした。VOICEVOX Engineが起動しているか確認してください")
+                self.log_message("⚠️ ボイス一覧を取得できませんでした。エンジンが起動しているか確認してください")
         except Exception as e:
             self.log_message(f"❌ ボイス一覧取得エラー: {e}")
 
     def _on_voice_selected(self, selection):
-        """ボイス選択時のコールバック"""
+        """ボイス選択時のコールバック（エンジンにより保存先キーが変わる）。"""
         for s in self.voicevox_speakers_cache:
             if s['display'] == selection:
-                self.voicevox_speaker_id.set(s['id'])
-                if hasattr(self, 'tts') and self.tts:
-                    self.tts.set_speaker(s['id'])
-                self.config["voicevox_speaker_id"] = s['id']
+                voice_id = s['id']
+                engine = self.tts_engine_var.get() or "voicevox"
+
+                if engine == "edge-tts":
+                    # 文字列ID（例: ja-JP-NanamiNeural）は edge_tts_voice に保存
+                    self.config["edge_tts_voice"] = voice_id
+                    self.edge_tts_voice_var.set(str(voice_id))
+                else:
+                    # VOICEVOX 系は int ID
+                    try:
+                        self.voicevox_speaker_id.set(int(voice_id))
+                    except (tk.TclError, TypeError, ValueError):
+                        pass
+                    self.config["voicevox_speaker_id"] = voice_id
+
                 self.config["voicevox_speaker_name"] = selection
+                self.voicevox_speaker_name.set(selection)
+
+                if hasattr(self, 'tts') and self.tts:
+                    self.tts.set_speaker(voice_id)
                 save_config(self.config)
                 self.log_message(f"🎤 ボイスを変更: {selection}")
                 break
 
     def _test_voice_playback(self):
-        """選択したボイスでテスト再生"""
+        """選択したボイスでテスト再生（エンジン非依存）。"""
         try:
             if not hasattr(self, 'tts') or self.tts is None:
                 self.tts = get_tts_instance()
 
-            # 選択中のスピーカーIDを設定
-            speaker_id = self.voicevox_speaker_id.get()
+            engine = self.tts_engine_var.get() or "voicevox"
+            if engine == "edge-tts":
+                speaker_id = self.config.get("edge_tts_voice", "ja-JP-NanamiNeural")
+            else:
+                try:
+                    speaker_id = self.voicevox_speaker_id.get()
+                except Exception:
+                    speaker_id = self.config.get("voicevox_speaker_id", 14)
             self.tts.set_speaker(speaker_id)
 
-            # テスト音声を再生
             self.tts.speak("これはテスト音声です。ボイスの確認をしています。")
             self.log_message("🔊 テスト音声を再生しました")
         except Exception as e:

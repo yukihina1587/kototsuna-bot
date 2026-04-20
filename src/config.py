@@ -54,10 +54,12 @@ DEFAULT_CONFIG = {
     "voicevox_speaker_id": 14,  # 冥鳴ひまり (Meimei Himari)
     "voicevox_engine_path": "",  # VOICEVOX Engineの実行ファイルパス
     "voicevox_auto_start": True,  # VOICEVOX Engineを自動起動するかどうか
-    # TTSエンジン選択（VOICEVOX互換）: voicevox / coeiroink / aivisspeech / sharevox
+    # TTSエンジン選択: voicevox / coeiroink / aivisspeech / sharevox / edge-tts
     "tts_engine": "voicevox",
     # エンジン別URLの上書き（空なら各エンジンのデフォルトポート）
     "tts_engine_urls": {},
+    # Edge TTS のデフォルトボイス（engine_name="edge-tts" のときに使われる）
+    "edge_tts_voice": "ja-JP-NanamiNeural",
     # ローカルSTT設定
     "stt_num_threads": 2,          # sherpa-onnx CPU threads
     "stt_vad_threshold": 0.3,     # Silero VAD threshold (0.01-1.0)
@@ -158,7 +160,7 @@ VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_VOICE_ASSIGN_MODES = {"mod_only", "self_service", "disabled"}
-VALID_TTS_ENGINES = {"voicevox", "coeiroink", "aivisspeech", "sharevox"}
+VALID_TTS_ENGINES = {"voicevox", "coeiroink", "aivisspeech", "sharevox", "edge-tts"}
 def validate_config(config_data):
     """
     設定値を検証し、不足値をデフォルトで補完する
@@ -299,6 +301,12 @@ def validate_config(config_data):
         if normalized_urls != engine_urls:
             validated["tts_engine_urls"] = normalized_urls
             changed = True
+
+    # edge_tts_voice は ja-JP-*Neural のような string
+    etv = validated.get("edge_tts_voice")
+    if not isinstance(etv, str) or not etv.strip():
+        validated["edge_tts_voice"] = "ja-JP-NanamiNeural"
+        changed = True
 
     # voice_assign_mode
     if validated.get("voice_assign_mode") not in VALID_VOICE_ASSIGN_MODES:

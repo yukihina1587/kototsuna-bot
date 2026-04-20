@@ -14,9 +14,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 from src.logger import logger
 from src.tts_engines import TTSEngine, get_engine, get_preset_url
+
+VoiceId = Union[int, str]
 
 
 def _get_tts_log_path() -> Path:
@@ -188,16 +190,17 @@ class VoicevoxTTS:
     def __init__(
         self,
         api_url: str = VOICEVOX_API_URL,
-        speaker_id: int = MEIMEI_HIMARI_SPEAKER_ID,
+        speaker_id: VoiceId = MEIMEI_HIMARI_SPEAKER_ID,
         engine_name: str = "voicevox",
     ):
         """
         Initialize TTS.
 
         Args:
-            api_url: Engine API endpoint URL (VOICEVOX-compatible HTTP).
-            speaker_id: Voice ID for the current engine.
-            engine_name: ``voicevox`` / ``coeiroink`` / ``aivisspeech`` / ``sharevox``.
+            api_url: Engine API endpoint URL (VOICEVOX-compatible HTTP). 空文字なら
+                ローカルサーバー不要のエンジン（edge-tts 等）として扱う。
+            speaker_id: Voice ID for the current engine (int または str)。
+            engine_name: ``voicevox`` / ``coeiroink`` / ``aivisspeech`` / ``sharevox`` / ``edge-tts``。
         """
         self.engine_name = engine_name
         self.engine: TTSEngine = get_engine(engine_name, api_url)
@@ -213,12 +216,17 @@ class VoicevoxTTS:
         self.playback_thread = None
         self.stop_worker = False
 
-        # TTS engine mode: 'voicevox' or 'pyttsx3'
+        # TTS engine mode: 'voicevox' (pygame playback) or 'pyttsx3'
+        # 'voicevox' モード内で VOICEVOX 失敗時は edge-tts にフォールバック、
+        # さらに edge-tts も失敗時のみ pyttsx3 にフォールバックする。
         self.engine_mode = 'voicevox'
         self.voicevox_available = False
         self.last_voicevox_check = 0  # タイムスタンプ
         self.voicevox_check_interval = 5  # 5秒ごとにチェック
         self.pyttsx3_engine = None
+
+        # VOICEVOX-family 失敗時用の edge-tts フォールバックエンジン（遅延生成）
+        self._edge_fallback_engine: Optional[TTSEngine] = None
 
         # aiohttp session for connection pooling
         self.aio_session = None
@@ -228,7 +236,18 @@ class VoicevoxTTS:
         self.voicevox_available = self._check_voicevox_availability()
 
     def _check_voicevox_availability(self):
-        """Check if the active engine endpoint responds (synchronous, init path)."""
+        """Check if the active engine endpoint responds (synchronous, init path).
+
+        ローカル HTTP サーバーを持たないエンジン（edge-tts 等）は
+        ``api_url`` が空文字なので、ライブラリがあれば可用扱い。
+        """
+        if not self.api_url:
+            # サーバー不要のエンジン: ライブラリ import できれば使える
+            available = self._library_based_engine_ready()
+            if available:
+                logger.info(f"{self.engine_name} engine ready (library-based)")
+                self._log_speaker_info()
+            return available
         try:
             import requests
             logger.debug(f"Checking {self.engine_name} API at {self.api_url}/version")
@@ -241,6 +260,55 @@ class VoicevoxTTS:
         except Exception as e:
             logger.debug(f"{self.engine_name} not available: {e}")
             return False
+
+    def _library_based_engine_ready(self) -> bool:
+        """サーバー不要エンジンが import 可能か軽く確認する。"""
+        if self.engine_name == "edge-tts":
+            try:
+                import edge_tts  # noqa: F401
+                return True
+            except ImportError:
+                logger.warning("edge-tts ライブラリが未インストールです")
+                return False
+        return False
+
+    def _is_edge_fallback_usable(self) -> bool:
+        """primary が VOICEVOX 系のときに edge-tts フォールバックが使えるか。"""
+        if self.engine_name == "edge-tts":
+            # primary がすでに edge-tts の場合は二重フォールバック不要
+            return False
+        try:
+            import edge_tts  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    def _get_edge_fallback_engine(self) -> Optional[TTSEngine]:
+        """edge-tts フォールバックエンジンを遅延生成する。"""
+        if self._edge_fallback_engine is not None:
+            return self._edge_fallback_engine
+        if not self._is_edge_fallback_usable():
+            return None
+        try:
+            from src.tts_engines.edge import EdgeTtsEngine
+            self._edge_fallback_engine = EdgeTtsEngine()
+            return self._edge_fallback_engine
+        except Exception as e:
+            logger.debug(f"edge-tts fallback init failed: {e}")
+            return None
+
+    async def _synthesize_edge_fallback_async(self, text: str) -> Optional[bytes]:
+        """VOICEVOX 失敗時用の edge-tts フォールバック合成。"""
+        fallback = self._get_edge_fallback_engine()
+        if fallback is None or self.aio_session is None:
+            return None
+        default_voice = getattr(fallback, "DEFAULT_VOICE", "ja-JP-NanamiNeural")
+        audio = await fallback.synthesize_async(
+            self.aio_session, text, default_voice, timeout=6.0
+        )
+        if audio:
+            logger.info("🛟 VOICEVOX失敗のため edge-tts にフォールバックしました")
+        return audio
 
     def _log_speaker_info(self):
         """Log speaker information (called once at init)"""
@@ -266,8 +334,8 @@ class VoicevoxTTS:
             logger.error(f"スピーカー一覧取得エラー: {e}")
             return []
 
-    def set_speaker(self, speaker_id: int):
-        """Change the active voice ID for the current engine."""
+    def set_speaker(self, speaker_id: VoiceId):
+        """Change the active voice ID for the current engine (int or str)."""
         self.speaker_id = speaker_id
         logger.info(f"{self.engine_name} voice changed to ID: {speaker_id}")
 
@@ -332,7 +400,7 @@ class VoicevoxTTS:
                     logger.error(f"Failed to create aiohttp session: {e}")
 
     async def _synthesize_voicevox_async(
-        self, text: str, speaker_id: Optional[int] = None, retry: bool = True
+        self, text: str, speaker_id: Optional[VoiceId] = None, retry: bool = True
     ) -> Optional[bytes]:
         """Synthesize speech via the active engine (async), with one retry."""
         effective_speaker = speaker_id if speaker_id is not None else self.speaker_id
@@ -454,21 +522,24 @@ class VoicevoxTTS:
             logger.error(f"pyttsx3 speak error: {e}", exc_info=True)
             return False
 
-    def play_audio(self, audio_data: bytes):
+    def play_audio(self, audio_data: bytes, audio_format: str = "wav"):
         """
         Play audio data using pygame
 
         Args:
-            audio_data: WAV audio data
+            audio_data: 音声バイト列（wav / mp3 のいずれか）
+            audio_format: 拡張子相当の文字列（``wav`` / ``mp3``）。pygame はコンテンツから
+                自動判別するが、一時ファイル命名に使う。
         """
         if not AUDIO_AVAILABLE:
             logger.warning("pygame not available, cannot play audio")
             return
 
         temp_path = None
+        suffix = f".{audio_format or 'wav'}"
         try:
             # Create temporary file for audio data
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
                 temp_file.write(audio_data)
                 temp_path = temp_file.name
 
@@ -527,14 +598,21 @@ class VoicevoxTTS:
 
                     # エンジンの動的切り替え
                     if voicevox_available and self.engine_mode != 'voicevox':
-                        # VOICEVOXが復活したら切り替え
+                        # primary が復活したら pygame モードへ復帰
                         self._update_engine_mode('voicevox')
-                        logger.info("✅ VOICEVOX Engine が利用可能になりました。切り替えます。")
+                        logger.info("✅ TTS primary エンジンが利用可能になりました。切り替えます。")
                     elif not voicevox_available and self.engine_mode == 'voicevox':
-                        # VOICEVOXが使えなくなったらpyttsx3に切り替え
-                        if PYTTSX3_AVAILABLE:
+                        # primary がダメ。edge-tts フォールバックが使えるなら pygame モード維持。
+                        # 両方ダメな時だけ pyttsx3 に切り替える。
+                        if self._is_edge_fallback_usable():
+                            logger.warning(
+                                "⚠️ VOICEVOX 未応答。edge-tts フォールバックで継続します。"
+                            )
+                        elif PYTTSX3_AVAILABLE:
                             self._update_engine_mode('pyttsx3')
-                            logger.warning("⚠️ VOICEVOX Engine が応答しません。pyttsx3に切り替えます。")
+                            logger.warning(
+                                "⚠️ VOICEVOX/edge-tts 共に利用不可。pyttsx3 にフォールバックします。"
+                            )
 
                 # Get (text, speaker_id) from synthesis queue
                 item = self.synthesis_queue.get(timeout=1)
@@ -570,23 +648,36 @@ class VoicevoxTTS:
                 )
 
                 # 現在のエンジンモードに基づいて合成
+                audio_format = getattr(self.engine, "audio_format", "wav")
                 if self.engine_mode == 'voicevox' and self.aio_session:
+                    # 1) primary エンジンで合成
                     audio_data = self.aio_loop.run_until_complete(
                         self._synthesize_voicevox_async(
                             cleaned_text, speaker_id=effective_speaker
                         )
                     )
 
-                    # VOICEVOX失敗時は即座にpyttsx3にフォールバック
+                    # 2) primary（VOICEVOX 系）が失敗したら edge-tts フォールバック
+                    if not audio_data and self._is_edge_fallback_usable():
+                        edge_audio = self.aio_loop.run_until_complete(
+                            self._synthesize_edge_fallback_async(cleaned_text)
+                        )
+                        if edge_audio:
+                            audio_data = edge_audio
+                            audio_format = "mp3"
+
+                    # 3) それでもダメなら pyttsx3 に最終フォールバック
                     if not audio_data and PYTTSX3_AVAILABLE:
-                        logger.warning("VOICEVOX synthesis failed, using pyttsx3 fallback")
+                        logger.warning(
+                            "TTS synthesis failed (primary & edge-tts), using pyttsx3 fallback"
+                        )
                         self._speak_pyttsx3(cleaned_text)
                         self.synthesis_queue.task_done()
                         continue
 
                 if audio_data:
-                    # Add to playback queue
-                    self.play_queue.put(audio_data)
+                    # Add to playback queue as (bytes, format_ext) tuple
+                    self.play_queue.put((audio_data, audio_format))
                 else:
                     logger.warning(f"Failed to synthesize: {cleaned_text}")
 
@@ -609,9 +700,16 @@ class VoicevoxTTS:
         while not self.stop_worker:
             try:
                 # Get audio from queue with timeout
-                audio_data = self.play_queue.get(timeout=1)
-                if audio_data is not None:
-                    self.play_audio(audio_data)
+                item = self.play_queue.get(timeout=1)
+                if item is None:
+                    self.play_queue.task_done()
+                    continue
+                # 後方互換: 旧実装は bytes を直接 put していた
+                if isinstance(item, tuple):
+                    audio_data, audio_format = item
+                else:
+                    audio_data, audio_format = item, "wav"
+                self.play_audio(audio_data, audio_format)
                 self.play_queue.task_done()
             except queue.Empty:
                 continue
@@ -649,24 +747,33 @@ class VoicevoxTTS:
 
         engine_mode = None
 
-        # Prefer VOICEVOX if available and pygame audio can be initialized safely
+        # Prefer primary engine if available and pygame audio can be initialized safely
         if self.voicevox_available:
-            logger.info("VOICEVOXが利用可能です。pygameオーディオを初期化しています...")
+            logger.info("primary TTS が利用可能です。pygameオーディオを初期化しています...")
             pygame_ready = _init_pygame_audio()
             logger.info(f"pygameオーディオ初期化結果: {pygame_ready}")
 
             if pygame_ready:
                 engine_mode = 'voicevox'
-                logger.info("✅ TTSエンジンをVOICEVOXで起動します")
+                logger.info(f"✅ TTSエンジンを {self.engine_name} で起動します")
             else:
                 logger.warning("⚠️ pygameオーディオの初期化に失敗しました。pyttsx3にフォールバックします。")
         else:
-            logger.warning(f"⚠️ VOICEVOX APIに接続できません（URL: {self.api_url}）")
+            logger.warning(f"⚠️ primary TTS ({self.engine_name}) に接続できません（URL: {self.api_url}）")
 
-        # Fallback to pyttsx3 if VOICEVOX/pygame is not available
+            # primary がダメでも edge-tts フォールバックがあれば pygame モードで起動
+            if self._is_edge_fallback_usable():
+                pygame_ready = _init_pygame_audio()
+                if pygame_ready:
+                    engine_mode = 'voicevox'
+                    logger.info(
+                        "🛟 primary が未起動のため edge-tts フォールバックモードで起動します"
+                    )
+
+        # Fallback to pyttsx3 if everything else is not available
         if engine_mode is None and PYTTSX3_AVAILABLE:
             engine_mode = 'pyttsx3'
-            logger.info("✅ TTSエンジンをpyttsx3で起動します（フォールバック）")
+            logger.info("✅ TTSエンジンをpyttsx3で起動します（最終フォールバック）")
 
         if engine_mode is None:
             logger.error("❌ TTSエンジンを起動できません: VOICEVOXが利用不可、pyttsx3も見つかりません")
@@ -705,14 +812,14 @@ class VoicevoxTTS:
 
         logger.info("TTS service stopped")
 
-    def speak(self, text: str, force: bool = False, speaker_id: Optional[int] = None):
+    def speak(self, text: str, force: bool = False, speaker_id: Optional[VoiceId] = None):
         """
         Speak text (add to synthesis queue)
 
         Args:
             text: Text to speak
             force: Force speak even if TTS is disabled
-            speaker_id: Override speaker ID for this utterance (None = use default)
+            speaker_id: Override voice ID for this utterance (int or str, None = use default)
         """
         if not self.enabled and not force:
             logger.warning(f"⚠️ TTSが無効です。読み上げをスキップします: {text[:50]}...")
@@ -746,19 +853,25 @@ def get_tts_instance() -> VoicevoxTTS:
     global _tts_instance
     if _tts_instance is None:
         engine_name = "voicevox"
-        api_url = VOICEVOX_API_URL
-        speaker_id = MEIMEI_HIMARI_SPEAKER_ID
+        api_url: str = VOICEVOX_API_URL
+        speaker_id: VoiceId = MEIMEI_HIMARI_SPEAKER_ID
         try:
             from src.config import load_config
             cfg = load_config()
             engine_name = cfg.get("tts_engine", "voicevox") or "voicevox"
             engine_urls = cfg.get("tts_engine_urls") or {}
-            api_url = (
-                engine_urls.get(engine_name)
-                or cfg.get("voicevox_url")
-                or get_preset_url(engine_name)
-            )
-            speaker_id = int(cfg.get("voicevox_speaker_id", MEIMEI_HIMARI_SPEAKER_ID))
+
+            if engine_name == "edge-tts":
+                # ローカルサーバー不要なので URL は空、voice は文字列ID
+                api_url = ""
+                speaker_id = cfg.get("edge_tts_voice") or "ja-JP-NanamiNeural"
+            else:
+                api_url = (
+                    engine_urls.get(engine_name)
+                    or cfg.get("voicevox_url")
+                    or get_preset_url(engine_name)
+                )
+                speaker_id = int(cfg.get("voicevox_speaker_id", MEIMEI_HIMARI_SPEAKER_ID))
         except Exception as e:
             logger.debug(f"Falling back to default TTS config ({e})")
         _tts_instance = VoicevoxTTS(

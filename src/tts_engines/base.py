@@ -18,6 +18,8 @@ class TTSEngine(ABC):
 
     name: str = "base"
     default_url: str = ""
+    # 合成バイト列の音声フォーマット拡張子（pygame の一時ファイル命名に使う）。
+    audio_format: str = "wav"
 
     def __init__(self, api_url: Optional[str] = None) -> None:
         url = api_url if api_url else self.default_url
