@@ -142,6 +142,17 @@ THEMES = {
     }
 }
 
+# カスタムテーマをマージ（Issue #38 Phase A）
+try:
+    from src.theme_loader import load_custom_themes
+    _custom = load_custom_themes(THEMES)
+    for _key, _theme in _custom.items():
+        THEMES[_key] = _theme
+except Exception as _e:  # noqa: BLE001
+    # テーマロード失敗でも GUI 起動は継続
+    import logging as _logging
+    _logging.getLogger(__name__).warning(f"Failed to load custom themes: {_e}")
+
 # デフォルトテーマを設定（後で設定から変更可能）
 CURRENT_THEME = "default"
 
@@ -154,11 +165,29 @@ ACCENT = THEMES[CURRENT_THEME]["ACCENT"]
 ACCENT_SECONDARY = THEMES[CURRENT_THEME]["ACCENT_SECONDARY"]
 ACCENT_WARN = THEMES[CURRENT_THEME]["ACCENT_WARN"]
 TEXT_SUBTLE = THEMES[CURRENT_THEME]["TEXT_SUBTLE"]
-BUTTON_CORNER_RADIUS = THEMES[CURRENT_THEME].get("BUTTON_CORNER_RADIUS", 10)
-FONT_TITLE = ("Segoe UI Semibold", 18)
-FONT_SUBTITLE = ("Segoe UI", 13)
-FONT_LABEL = ("Segoe UI Semibold", 12)
-FONT_BODY = ("Segoe UI", 12)
+CORNER_RADIUS = THEMES[CURRENT_THEME].get("CORNER_RADIUS", 10)
+BUTTON_CORNER_RADIUS = THEMES[CURRENT_THEME].get("BUTTON_CORNER_RADIUS", CORNER_RADIUS)
+
+
+def _derive_fonts(theme: dict) -> tuple[tuple, tuple, tuple, tuple]:
+    """テーマの FONT_FAMILY / FONT_SIZE_BASE から 4 種フォントを計算。"""
+    family = theme.get("FONT_FAMILY", "Segoe UI")
+    base = theme.get("FONT_SIZE_BASE", 12)
+    try:
+        base = int(base)
+    except (TypeError, ValueError):
+        base = 12
+    base = max(8, min(32, base))
+    semibold = f"{family} Semibold"
+    return (
+        (semibold, base + 6),   # FONT_TITLE
+        (family, base + 1),     # FONT_SUBTITLE
+        (semibold, base),       # FONT_LABEL
+        (family, base),         # FONT_BODY
+    )
+
+
+FONT_TITLE, FONT_SUBTITLE, FONT_LABEL, FONT_BODY = _derive_fonts(THEMES[CURRENT_THEME])
 
 def _format_release_body_for_display(body: str) -> str:
     """GitHubリリースノート本文をアプリ内テキスト表示用に整形する。
@@ -504,7 +533,8 @@ class KototsunaApp:
         """
         global CURRENT_THEME, APP_BG, CARD_BG, PANEL_BG, BORDER
         global ACCENT, ACCENT_SECONDARY, ACCENT_WARN, TEXT_SUBTLE
-        global BUTTON_CORNER_RADIUS
+        global CORNER_RADIUS, BUTTON_CORNER_RADIUS
+        global FONT_TITLE, FONT_SUBTITLE, FONT_LABEL, FONT_BODY
 
         if theme_name not in THEMES:
             logger.warning(f"Unknown theme: {theme_name}, falling back to default")
@@ -522,7 +552,11 @@ class KototsunaApp:
         ACCENT_SECONDARY = theme["ACCENT_SECONDARY"]
         ACCENT_WARN = theme["ACCENT_WARN"]
         TEXT_SUBTLE = theme["TEXT_SUBTLE"]
-        BUTTON_CORNER_RADIUS = theme.get("BUTTON_CORNER_RADIUS", 10)
+
+        # Phase C: 角丸・フォント
+        CORNER_RADIUS = int(theme.get("CORNER_RADIUS", 10))
+        BUTTON_CORNER_RADIUS = int(theme.get("BUTTON_CORNER_RADIUS", CORNER_RADIUS))
+        FONT_TITLE, FONT_SUBTITLE, FONT_LABEL, FONT_BODY = _derive_fonts(theme)
 
         # ライトモード/ダークモードの切り替え
         if theme_name == "minimal":
@@ -532,6 +566,62 @@ class KototsunaApp:
 
         logger.info(f"Theme applied: {theme['name']} ({theme_name})")
 
+    def _build_theme_dropdown_values(self) -> tuple[list[str], dict[str, str]]:
+        """テーマドロップダウン用の (表示名リスト, key→表示名マップ) を返す。"""
+        builtin_order = ["default", "gradient", "minimal", "cyberpunk"]
+        ordered_keys = [k for k in builtin_order if k in THEMES]
+        ordered_keys += sorted(k for k in THEMES if k not in builtin_order)
+        display_map = {k: THEMES[k].get("name", k) for k in ordered_keys}
+        theme_names = [display_map[k] for k in ordered_keys]
+        return theme_names, display_map
+
+    def _reload_custom_themes(self, select_key: str | None = None) -> None:
+        """themes ディレクトリを再スキャンして THEMES 辞書とドロップダウンを更新。"""
+        try:
+            from src.theme_loader import BUILTIN_THEME_KEYS, load_custom_themes
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Failed to reload themes: {e}")
+            return
+
+        # カスタム分だけクリアしてから再ロード
+        for k in list(THEMES.keys()):
+            if k not in BUILTIN_THEME_KEYS:
+                del THEMES[k]
+        builtin_snapshot = {k: THEMES[k] for k in THEMES if k in BUILTIN_THEME_KEYS}
+        loaded = load_custom_themes(builtin_snapshot)
+        for k, v in loaded.items():
+            THEMES[k] = v
+
+        # ドロップダウンの候補を更新
+        theme_names, display_map = self._build_theme_dropdown_values()
+        if hasattr(self, "ui_theme_menu") and self.ui_theme_menu is not None:
+            self.ui_theme_menu.configure(values=theme_names)
+        if select_key and select_key in display_map:
+            self.ui_theme_var.set(display_map[select_key])
+
+    def _open_theme_editor(self) -> None:
+        """テーマエディタ Toplevel を開く。"""
+        try:
+            from src.theme_editor import ThemeEditorDialog
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to load theme editor: {e}", exc_info=True)
+            self.log_message(f"テーマエディタを起動できませんでした: {e}", log_type="error")
+            return
+
+        current_key = self.config.get("ui_theme", "default")
+        # 編集の起点は builtin テーマ。カスタムが選ばれている場合は default にフォール。
+        from src.theme_loader import BUILTIN_THEME_KEYS
+        base_key = current_key if current_key in BUILTIN_THEME_KEYS else "default"
+
+        def on_saved(key: str) -> None:
+            self._reload_custom_themes(select_key=key)
+            self.log_message(f"✨ カスタムテーマ '{key}' を保存しました（選択して適用できます）")
+
+        dlg = ThemeEditorDialog(
+            self.master, THEMES, on_saved=on_saved, base_theme_key=base_key
+        )
+        dlg.after(50, dlg.grab_set)
+
     def _on_theme_changed(self, display_name):
         """
         テーマ選択が変更されたときのコールバック
@@ -539,14 +629,8 @@ class KototsunaApp:
         Args:
             display_name: 表示名 (例: "グラデーション（モダン）")
         """
-        # 表示名からテーマキーへの変換マップ
-        display_to_key = {
-            "デフォルト（クラシック）": "default",
-            "グラデーション（モダン）": "gradient",
-            "ミニマル（シンプル・ライトモード）": "minimal",
-            "サイバーパンク（ゲーミング）": "cyberpunk"
-        }
-
+        # THEMES から逆引きマップを生成（builtin + カスタム対応）
+        display_to_key = {t.get("name", k): k for k, t in THEMES.items()}
         theme_key = display_to_key.get(display_name, "default")
 
         # テーマを適用
@@ -1442,13 +1526,23 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
-        # UIテーマ
+        # UIテーマ（builtin + カスタム）
         self._add_panel_section(parent, "UIテーマ")
-        theme_names = ["デフォルト（クラシック）", "グラデーション（モダン）", "ミニマル（シンプル・ライトモード）", "サイバーパンク（ゲーミング）"]
         current_key = self.config.get("ui_theme", "default")
-        display_map = {"default": theme_names[0], "gradient": theme_names[1], "minimal": theme_names[2], "cyberpunk": theme_names[3]}
+        theme_names, display_map = self._build_theme_dropdown_values()
         self.ui_theme_var = tk.StringVar(value=display_map.get(current_key, theme_names[0]))
-        ctk.CTkOptionMenu(parent, values=theme_names, variable=self.ui_theme_var, command=self._on_theme_changed, width=280).pack(fill="x", pady=(0, 8))
+        self.ui_theme_menu = ctk.CTkOptionMenu(
+            parent, values=theme_names, variable=self.ui_theme_var,
+            command=self._on_theme_changed, width=280
+        )
+        self.ui_theme_menu.pack(fill="x", pady=(0, 4))
+
+        theme_btn_row = ctk.CTkFrame(parent, fg_color="transparent")
+        theme_btn_row.pack(fill="x", pady=(0, 8))
+        ctk.CTkButton(
+            theme_btn_row, text="🎨 エディターを開く",
+            command=self._open_theme_editor, width=140, height=28
+        ).pack(side="left")
 
         # ログレベル
         self._add_panel_section(parent, "ログレベル")

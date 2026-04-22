@@ -157,6 +157,30 @@ DEFAULT_CONFIG = {
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
 VALID_UI_THEMES = {"default", "gradient", "minimal", "cyberpunk"}
+
+
+def get_valid_ui_themes() -> set[str]:
+    """builtin + カスタムテーマのキー集合を返す（Issue #38 Phase A）。"""
+    themes = set(VALID_UI_THEMES)
+    try:
+        # 循環 import 回避のため関数内 import
+        from src.gui import THEMES as _GUI_THEMES  # noqa: PLC0415
+
+        themes.update(_GUI_THEMES.keys())
+    except Exception:
+        # GUI 未ロード時は JSON から直接読む
+        try:
+            from src.theme_loader import get_themes_dir  # noqa: PLC0415
+            import os as _os  # noqa: PLC0415
+
+            directory = get_themes_dir()
+            if _os.path.isdir(directory):
+                for name in _os.listdir(directory):
+                    if name.lower().endswith(".json"):
+                        themes.add(_os.path.splitext(name)[0])
+        except Exception:
+            pass
+    return themes
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 VALID_VOICE_ASSIGN_MODES = {"mod_only", "self_service", "disabled"}
@@ -214,8 +238,8 @@ def validate_config(config_data):
         validated["voice_chat_cooldown"] = 3
         changed = True
 
-    # ui_theme
-    if validated.get("ui_theme") not in VALID_UI_THEMES:
+    # ui_theme (builtin + カスタムテーマを許容)
+    if validated.get("ui_theme") not in get_valid_ui_themes():
         logger.warning(f"ui_theme is invalid: {validated.get('ui_theme')}, fallback to default")
         validated["ui_theme"] = "default"
         changed = True
