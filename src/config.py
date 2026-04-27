@@ -144,6 +144,12 @@ DEFAULT_CONFIG = {
     # セッションアーカイブ
     "archive_enabled": True,        # コメントログの自動保存
     "archive_retention_days": 90,   # 保持期間（日数、0=無制限）
+    # 初見視聴者ウェルカムメッセージ（Issue #140）
+    "welcome_enabled": False,                                  # 初見挨拶機能
+    "welcome_message": "@{user} さん、はじめまして！ようこそ {channel} へ 🎉",
+    "welcome_targets": ["chat"],                              # ["chat", "tts", "overlay"]
+    "welcome_cooldown_sec": 5,                                # 連続発火防止クールダウン（秒）
+    "welcome_tts_voice_id": None,                             # None の場合は通常のTTS音声を使用
     # ゲーム機能
     "game_enabled": True,           # ゲームコマンドの有効/無効
     "game_fortune_cooldown": 30,    # おみくじクールダウン（秒）
@@ -509,6 +515,54 @@ def validate_config(config_data):
     except (TypeError, ValueError):
         validated["obs_poll_interval_sec"] = 1.0
         changed = True
+
+    # ウェルカムメッセージ（Issue #140）
+    if not isinstance(validated.get("welcome_enabled"), bool):
+        validated["welcome_enabled"] = bool(validated.get("welcome_enabled"))
+        changed = True
+
+    if not isinstance(validated.get("welcome_message"), str) or not validated.get("welcome_message", "").strip():
+        validated["welcome_message"] = DEFAULT_CONFIG["welcome_message"]
+        changed = True
+
+    from src.welcome import VALID_WELCOME_TARGETS as _VALID_WELCOME_TARGETS  # noqa: PLC0415
+    raw_targets = validated.get("welcome_targets")
+    if not isinstance(raw_targets, list):
+        validated["welcome_targets"] = list(DEFAULT_CONFIG["welcome_targets"])
+        changed = True
+    else:
+        seen: set[str] = set()
+        normalized_targets: list[str] = []
+        for item in raw_targets:
+            if not isinstance(item, str):
+                changed = True
+                continue
+            key = item.strip().lower()
+            if key in _VALID_WELCOME_TARGETS and key not in seen:
+                seen.add(key)
+                normalized_targets.append(key)
+            else:
+                changed = True
+        if normalized_targets != raw_targets:
+            validated["welcome_targets"] = normalized_targets
+            changed = True
+
+    try:
+        wcd = int(validated.get("welcome_cooldown_sec", 5))
+        validated["welcome_cooldown_sec"] = max(0, min(3600, wcd))
+    except (TypeError, ValueError):
+        validated["welcome_cooldown_sec"] = 5
+        changed = True
+
+    voice_id = validated.get("welcome_tts_voice_id")
+    if voice_id is None:
+        validated["welcome_tts_voice_id"] = None
+    else:
+        try:
+            validated["welcome_tts_voice_id"] = int(voice_id)
+        except (TypeError, ValueError):
+            validated["welcome_tts_voice_id"] = None
+            changed = True
 
     # OBS シーンルール正規化
     rules = validated.get("obs_scene_rules", [])

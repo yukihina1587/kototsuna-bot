@@ -21,6 +21,11 @@ from src.channel_manager import search_game, update_channel_info, create_clip
 from src.plugin_manager import get_plugin_manager
 from src.session_archive import get_session_archive
 from src.bot_filter import BotFilter
+from src.welcome import (
+    WelcomeDispatcher,
+    build_welcome_payload,
+    is_first_message,
+)
 from src.games import (
     fortune, roll_dice, coin_toss, spin_slot, spin_roulette,
     play_janken, eightball, random_quote,
@@ -284,6 +289,11 @@ class TranslateBot(commands.Bot):
         # セッションアーカイブ
         self._archive_enabled = config.get("archive_enabled", True)
         self._archive = get_session_archive() if self._archive_enabled else None
+        # 初見視聴者ウェルカム（Issue #140）
+        self._welcome_dispatcher = WelcomeDispatcher(
+            enabled=bool(config.get("welcome_enabled", False)),
+            cooldown_sec=int(config.get("welcome_cooldown_sec", 5) or 0),
+        )
 
     @classmethod
     def create_test_dispatcher(
@@ -495,6 +505,12 @@ class TranslateBot(commands.Bot):
             getattr(message.author, "display_name", None) or message.author.name
         )
         self._viewer_store.record_visit(message.author.name, visit_display_name)
+
+        # === 初見視聴者ウェルカム（Issue #140） ===
+        try:
+            await self._maybe_send_welcome(message, visit_display_name)
+        except Exception as exc:
+            logger.error(f"welcome dispatch failed: {exc}", exc_info=True)
 
         # === コマンド処理（翻訳より先に実行）===
         if self._commands_enabled and message.content.startswith('!'):
@@ -1863,6 +1879,89 @@ class TranslateBot(commands.Bot):
                 self.gui.log_special_event(message, event_type)
             except Exception as e:
                 logger.error(f"Failed to notify special event: {e}", exc_info=True)
+
+    async def _maybe_send_welcome(self, message, display_name: str) -> None:
+        """初見視聴者へのウェルカムメッセージを発火する（Issue #140）。"""
+        config = load_config()
+        if not config.get("welcome_enabled", False):
+            return
+        if not is_first_message(message.tags):
+            return
+
+        username = getattr(message.author, "name", "") or ""
+        # 配信者本人のメッセージはスキップ
+        try:
+            my_nick = self.nick
+        except Exception:
+            my_nick = None
+        if my_nick and username.lower() == my_nick.lower():
+            return
+        if username.lower() == self.channel_name.lower():
+            return
+
+        # 設定変更を反映
+        self._welcome_dispatcher.update_config(
+            enabled=True,
+            cooldown_sec=int(config.get("welcome_cooldown_sec", 5) or 0),
+        )
+        if not self._welcome_dispatcher.should_fire(
+            username=username, is_first=True
+        ):
+            return
+
+        targets = config.get("welcome_targets") or ["chat"]
+        payload = build_welcome_payload(
+            template=config.get("welcome_message", ""),
+            user=display_name or username,
+            channel=self.channel_name,
+            targets=targets,
+        )
+        dispatched = await self._dispatch_welcome(message, payload, config)
+        if dispatched:
+            self._welcome_dispatcher.mark_fired(username)
+            self._notify_special_event(
+                f"初見さん歓迎: {display_name or username}",
+                event_type="welcome",
+            )
+
+    async def _dispatch_welcome(self, message, payload: dict, config: dict) -> bool:
+        """payload に応じて chat / tts / overlay へ配信する。"""
+        text = payload.get("text", "")
+        if not text:
+            return False
+        targets = payload.get("targets", [])
+        any_dispatched = False
+
+        if "chat" in targets:
+            try:
+                await message.channel.send(text + "\u200B")
+                any_dispatched = True
+            except Exception as exc:
+                logger.error(f"welcome chat send failed: {exc}", exc_info=True)
+
+        if "tts" in targets and self.tts_enabled_getter():
+            try:
+                voice_id = config.get("welcome_tts_voice_id")
+                if voice_id is not None:
+                    self.tts.speak(text, speaker_id=int(voice_id))
+                else:
+                    self.tts.speak(text)
+                any_dispatched = True
+            except Exception as exc:
+                logger.error(f"welcome tts speak failed: {exc}", exc_info=True)
+
+        if "overlay" in targets:
+            try:
+                from src.overlay_server import push_welcome_event  # noqa: PLC0415
+                push_welcome_event(
+                    user=payload.get("user", ""),
+                    text=text,
+                )
+                any_dispatched = True
+            except Exception as exc:
+                logger.error(f"welcome overlay push failed: {exc}", exc_info=True)
+
+        return any_dispatched
 
     @staticmethod
     def _decode_irc_tag(value: str) -> str:

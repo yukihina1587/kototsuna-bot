@@ -34,6 +34,15 @@ _chat_state = {
 }
 _chat_lock = threading.Lock()
 
+# 初見視聴者ウェルカム（Issue #140）
+_welcome_state = {
+    "id": 0,
+    "user": "",
+    "text": "",
+    "timestamp": "",
+}
+_welcome_lock = threading.Lock()
+
 
 def _normalize_subtitle_lines(original: str, translated: str, config: dict | None) -> tuple[str, str]:
     """字幕の原文/翻訳文を設定に応じて正規化する。"""
@@ -73,6 +82,16 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         elif self.path.split('?')[0] == '/api/subtitle':
             with _subtitle_lock:
                 payload = dict(_subtitle_state)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.end_headers()
+            self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+        elif self.path == '/api/welcome':
+            with _welcome_lock:
+                payload = dict(_welcome_state)
             self.send_response(200)
             self.send_header('Content-type', 'application/json; charset=utf-8')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -260,6 +279,24 @@ def set_chat_html_path(path: str):
     global _chat_html_path
     _chat_html_path = path
     logger.info(f"Chat HTML path set to: {path}")
+
+
+def push_welcome_event(*, user: str, text: str) -> None:
+    """初見ウェルカムメッセージを overlay へ通知する（Issue #140）。
+
+    オーバーレイ側は ``/api/welcome`` をポーリングして ``id`` 変化で発火する。
+    """
+    with _welcome_lock:
+        _welcome_state["id"] += 1
+        _welcome_state["user"] = str(user or "")
+        _welcome_state["text"] = str(text or "")
+        _welcome_state["timestamp"] = datetime.now().strftime("%H:%M:%S")
+
+
+def get_welcome_state() -> dict:
+    """テスト・GUI 用に現在のウェルカム状態を返す。"""
+    with _welcome_lock:
+        return dict(_welcome_state)
 
 
 def add_chat_message(entry: dict) -> None:

@@ -1638,6 +1638,10 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
+        # 初見視聴者ウェルカム（Issue #140）
+        self._build_welcome_section(parent)
+        self._add_panel_divider(parent)
+
         # セッションアーカイブ設定
         self._add_panel_section(parent, "セッションアーカイブ")
         archive_toggle_frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -1817,6 +1821,138 @@ class KototsunaApp:
             logger.error(f"コマンドパネル構築エラー: {e}")
             import traceback
             traceback.print_exc()
+
+    def _build_welcome_section(self, parent) -> None:
+        """初見視聴者ウェルカム設定セクション（Issue #140）。"""
+        self._add_panel_section(parent, "🎉 初見さんウェルカム")
+
+        cfg = load_config()
+
+        # 有効/無効トグル
+        toggle_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        toggle_frame.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(
+            toggle_frame, text="ウェルカムメッセージを送る", font=FONT_LABEL
+        ).pack(side="left")
+        self.welcome_enabled_var = tk.BooleanVar(
+            value=cfg.get("welcome_enabled", False)
+        )
+        ctk.CTkSwitch(
+            toggle_frame, text="", variable=self.welcome_enabled_var,
+            command=self._on_welcome_settings_changed,
+        ).pack(side="right")
+
+        # 説明
+        ctk.CTkLabel(
+            parent,
+            text="変数: {user} {channel}",
+            font=("Segoe UI", 9), text_color=TEXT_SUBTLE,
+        ).pack(anchor="w", pady=(0, 2))
+
+        # メッセージテンプレート
+        self.welcome_message_var = tk.StringVar(
+            value=cfg.get(
+                "welcome_message",
+                "@{user} さん、はじめまして！ようこそ {channel} へ 🎉",
+            )
+        )
+        self.welcome_message_entry = ctk.CTkEntry(
+            parent, textvariable=self.welcome_message_var, height=28,
+        )
+        self.welcome_message_entry.pack(fill="x", pady=(0, 6))
+        self.welcome_message_var.trace_add(
+            "write", lambda *_: self._on_welcome_settings_changed()
+        )
+
+        # 配信先チェックボックス
+        target_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        target_frame.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(
+            target_frame, text="配信先:", font=("Segoe UI", 10),
+            text_color=TEXT_SUBTLE,
+        ).pack(side="left", padx=(0, 4))
+        targets = set(cfg.get("welcome_targets", ["chat"]))
+        self.welcome_target_chat_var = tk.BooleanVar(value="chat" in targets)
+        self.welcome_target_tts_var = tk.BooleanVar(value="tts" in targets)
+        self.welcome_target_overlay_var = tk.BooleanVar(value="overlay" in targets)
+        ctk.CTkCheckBox(
+            target_frame, text="チャット", variable=self.welcome_target_chat_var,
+            font=("Segoe UI", 10),
+            command=self._on_welcome_settings_changed,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkCheckBox(
+            target_frame, text="TTS", variable=self.welcome_target_tts_var,
+            font=("Segoe UI", 10),
+            command=self._on_welcome_settings_changed,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkCheckBox(
+            target_frame, text="オーバーレイ", variable=self.welcome_target_overlay_var,
+            font=("Segoe UI", 10),
+            command=self._on_welcome_settings_changed,
+        ).pack(side="left")
+
+        # クールダウン
+        cooldown_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        cooldown_frame.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(
+            cooldown_frame, text="クールダウン:", font=("Segoe UI", 10),
+            text_color=TEXT_SUBTLE,
+        ).pack(side="left")
+        self.welcome_cooldown_var = tk.StringVar(
+            value=str(cfg.get("welcome_cooldown_sec", 5))
+        )
+        ctk.CTkEntry(
+            cooldown_frame, textvariable=self.welcome_cooldown_var,
+            width=60, height=26,
+        ).pack(side="left", padx=(4, 4))
+        ctk.CTkLabel(
+            cooldown_frame, text="秒", font=("Segoe UI", 10),
+            text_color=TEXT_SUBTLE,
+        ).pack(side="left")
+        self.welcome_cooldown_var.trace_add(
+            "write", lambda *_: self._on_welcome_settings_changed()
+        )
+
+        # テスト送信ボタン
+        ctk.CTkButton(
+            parent, text="🧪 プレビューを表示",
+            command=self._on_welcome_test_preview,
+            height=28, fg_color=ACCENT_SECONDARY, hover_color="#1EA4D8",
+        ).pack(fill="x", pady=(2, 0))
+
+    def _on_welcome_settings_changed(self) -> None:
+        """ウェルカム関連の設定が変更された際に config を保存する。"""
+        try:
+            cooldown = int(self.welcome_cooldown_var.get())
+        except (ValueError, AttributeError):
+            cooldown = 5
+        targets: list[str] = []
+        if self.welcome_target_chat_var.get():
+            targets.append("chat")
+        if self.welcome_target_tts_var.get():
+            targets.append("tts")
+        if self.welcome_target_overlay_var.get():
+            targets.append("overlay")
+
+        config = load_config()
+        config["welcome_enabled"] = bool(self.welcome_enabled_var.get())
+        config["welcome_message"] = self.welcome_message_var.get().strip() or config.get(
+            "welcome_message", ""
+        )
+        config["welcome_targets"] = targets
+        config["welcome_cooldown_sec"] = max(0, min(3600, cooldown))
+        save_config(config)
+
+    def _on_welcome_test_preview(self) -> None:
+        """テンプレートを現在のチャンネル名でプレビュー表示する。"""
+        from src.welcome import format_welcome_message  # noqa: PLC0415
+
+        template = self.welcome_message_var.get()
+        channel = self.channel.get() if hasattr(self, "channel") else ""
+        sample = format_welcome_message(
+            template, user="新人さん", channel=channel or "あなたのチャンネル"
+        )
+        self.log_message(f"プレビュー: {sample}", log_type="system")
 
     def _on_archive_toggle(self):
         """セッションアーカイブのON/OFFを切り替え"""
