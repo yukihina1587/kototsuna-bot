@@ -16,10 +16,15 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from src import __version__
 from src.logger import _mask_secrets
+
+# 最後に捕捉した Sentry イベント ID（ユーザーフィードバック紐付け用、PR3）
+_last_event_id: Optional[str] = None
+# 例外捕捉時に呼ばれるコールバック（GUI 側でフィードバックダイアログを出す用、PR3）
+_post_capture_callback: Optional[Callable[[str], None]] = None
 
 # 公開可能な DSN 定数（Sentry 設計上、クライアント配布アプリでは公開で問題ない）
 # 環境変数 KOTOTSUNA_SENTRY_DSN で上書き可能
@@ -109,8 +114,17 @@ def _install_tk_excepthook() -> None:
     _original = tk.Tk.report_callback_exception
 
     def _hooked(self, exc, val, tb):
+        global _last_event_id
         try:
-            sentry_sdk.capture_exception((exc, val, tb))
+            event_id = sentry_sdk.capture_exception((exc, val, tb))
+            if event_id:
+                _last_event_id = event_id
+                # フィードバックダイアログ等のコールバックを発火（登録されていれば）
+                if _post_capture_callback is not None:
+                    try:
+                        _post_capture_callback(event_id)
+                    except Exception:
+                        pass
         except Exception:
             pass
         try:
@@ -119,6 +133,72 @@ def _install_tk_excepthook() -> None:
             pass
 
     tk.Tk.report_callback_exception = _hooked  # type: ignore[assignment]
+
+
+def register_post_capture_callback(callback: Optional[Callable[[str], None]]) -> None:
+    """例外捕捉後に呼ばれるコールバックを登録する（GUI でフィードバックUIを出す用）。
+
+    callback は event_id を引数に取る。GUI 側は after() でメインスレッドに戻すこと。
+    None を渡すと解除。
+    """
+    global _post_capture_callback
+    _post_capture_callback = callback
+
+
+def get_last_event_id() -> Optional[str]:
+    """最後に Sentry が捕捉したイベント ID を返す（無ければ None）。"""
+    return _last_event_id
+
+
+def submit_feedback(message: str, name: str = "", email: str = "",
+                    event_id: Optional[str] = None) -> bool:
+    """ユーザー入力フィードバックを Sentry に送信する。
+
+    Args:
+        message: ユーザーが書いた再現手順や説明。空なら送信しない。
+        name: 任意の表示名。
+        email: 任意のメールアドレス。
+        event_id: 紐付けたい Sentry イベント ID。None なら直近の捕捉ID。
+
+    Returns:
+        送信を試みた場合 True、SDK欠落・メッセージ空・例外などで送らなかった場合 False。
+    """
+    if not message or not message.strip():
+        return False
+    try:
+        import sentry_sdk
+    except ImportError:
+        return False
+
+    target_event_id = event_id or _last_event_id
+
+    try:
+        # sentry-sdk 2.7+ は capture_feedback、それ以前は capture_user_feedback。
+        # 両対応で捕捉する。
+        if hasattr(sentry_sdk, "capture_feedback"):
+            sentry_sdk.capture_feedback(
+                {
+                    "message": message.strip(),
+                    "name": name.strip() or None,
+                    "contact_email": email.strip() or None,
+                    "associated_event_id": target_event_id,
+                }
+            )
+        elif hasattr(sentry_sdk, "capture_user_feedback") and target_event_id:
+            sentry_sdk.capture_user_feedback(
+                {
+                    "event_id": target_event_id,
+                    "name": name.strip() or "anonymous",
+                    "email": email.strip() or "anonymous@example.com",
+                    "comments": message.strip(),
+                }
+            )
+        else:
+            return False
+    except Exception as e:
+        _module_logger.warning(f"[Sentry] feedback送信に失敗: {e}")
+        return False
+    return True
 
 
 def init_sentry(enabled: bool, dsn: Optional[str] = None) -> bool:

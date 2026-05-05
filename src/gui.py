@@ -44,6 +44,7 @@ from src.overlay_server import (
     set_chat_config as overlay_set_chat_config,
 )
 from src.logger import logger, set_log_level
+from src.sentry_init import register_post_capture_callback, submit_feedback, get_last_event_id
 from src.tts import get_tts_instance
 import src.channel_manager as channel_manager
 from src.tts_dictionary import get_dictionary
@@ -399,6 +400,11 @@ class KototsunaApp:
             self.master.after(3000, self._check_for_updates_on_startup)
         # 初回起動時にクラッシュレポート送信の同意を確認（Issue #208）
         self.master.after(2000, self._maybe_show_telemetry_consent)
+        # クラッシュ捕捉後に再現手順入力ダイアログを出すためのコールバックを登録（Issue #208 PR3）
+        try:
+            register_post_capture_callback(self._on_sentry_event_captured)
+        except Exception as e:
+            logger.error(f"Failed to register sentry capture callback: {e}", exc_info=True)
 
         if self.safe_mode:
             logger.info("セーフモードで起動: OBS自動連携・VOICEVOX自動起動・アップデート確認を無効化")
@@ -1722,6 +1728,12 @@ class KototsunaApp:
             font=("Segoe UI", 9), text_color=TEXT_SUBTLE,
             justify="left", wraplength=320,
         ).pack(anchor="w", padx=(24, 0), pady=(0, 4))
+        ctk.CTkButton(
+            parent, text="💬 問題を報告",
+            command=self._open_manual_feedback_dialog,
+            fg_color="#6366F1", hover_color="#4F46E5", height=28,
+            font=("Segoe UI", 10),
+        ).pack(fill="x", pady=(4, 4))
 
         self._add_panel_divider(parent)
 
@@ -6637,6 +6649,119 @@ class KototsunaApp:
 
         # × ボタンで閉じた場合は「あとで」扱い
         dialog.protocol("WM_DELETE_WINDOW", _later)
+
+    # =========================================
+    # クラッシュフィードバックダイアログ（Issue #208 PR3）
+    # =========================================
+
+    def _on_sentry_event_captured(self, event_id: str) -> None:
+        """Sentryが例外を捕捉したときに呼ばれる。メインスレッドでダイアログ表示をスケジュール。
+
+        例外発生スレッドから呼ばれるため、Tk操作はメインスレッドへ戻すこと。
+        """
+        try:
+            self.master.after(0, lambda: self._show_feedback_dialog(event_id, after_crash=True))
+        except Exception:
+            pass
+
+    def _show_feedback_dialog(self, event_id: Optional[str], after_crash: bool) -> None:
+        """ユーザーに再現手順や状況の説明を任意で書いてもらうダイアログ。
+
+        after_crash=True: クラッシュ直後に出すモード（タイトルや説明文が変わる）
+        after_crash=False: 設定画面の「問題を報告」ボタンから呼ぶモード
+        """
+        # 連発抑止: 既に開いているなら何もしない
+        if getattr(self, "_feedback_dialog_open", False):
+            return
+        # クラッシュ後モードでテレメトリOFFなら何もしない（送信できないので）
+        if after_crash and not self.config.get("telemetry_crash_reporting", False):
+            return
+
+        self._feedback_dialog_open = True
+
+        dialog = ctk.CTkToplevel(self.master)
+        dialog.title("問題のご報告" if after_crash else "問題を報告")
+        dialog.geometry("520x440")
+        dialog.resizable(False, False)
+        dialog.transient(self.master)
+        dialog.grab_set()
+
+        title = "エラーが発生しました" if after_crash else "問題を報告する"
+        ctk.CTkLabel(
+            dialog, text=title,
+            font=("Segoe UI Semibold", 16),
+        ).pack(pady=(20, 4))
+
+        sub = (
+            "もしよければ、何をしようとしていたか教えてください。\n"
+            "再現手順がわかれば修正の助けになります（任意）。"
+            if after_crash else
+            "発生している不具合や改善要望を送信できます。\n"
+            "クラッシュ直後でなくても送信可能です（任意）。"
+        )
+        ctk.CTkLabel(
+            dialog, text=sub,
+            font=("Segoe UI", 10), text_color=TEXT_SUBTLE,
+            justify="left", wraplength=480,
+        ).pack(padx=20, pady=(0, 8), anchor="w")
+
+        textbox = ctk.CTkTextbox(dialog, height=200, font=("Segoe UI", 11))
+        textbox.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+        textbox.focus_set()
+
+        if event_id:
+            ctk.CTkLabel(
+                dialog, text=f"Event ID: {event_id[:12]}…",
+                font=("Consolas", 9), text_color=TEXT_SUBTLE,
+            ).pack(anchor="w", padx=20)
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(8, 16))
+
+        def _on_close() -> None:
+            self._feedback_dialog_open = False
+            dialog.destroy()
+
+        def _send() -> None:
+            msg = textbox.get("1.0", "end").strip()
+            if not msg:
+                _on_close()
+                return
+            ok = False
+            try:
+                ok = submit_feedback(msg, event_id=event_id)
+            except Exception as e:
+                logger.error(f"Failed to submit feedback: {e}", exc_info=True)
+            if ok:
+                self.log_message("✅ ご報告を送信しました。ありがとうございます")
+            else:
+                self.log_message("⚠️ 報告の送信に失敗しました（次回起動時に再送はされません）")
+            _on_close()
+
+        ctk.CTkButton(
+            btn_frame, text="送信",
+            command=_send,
+            width=120, fg_color=ACCENT, hover_color="#1CA04E",
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame, text="送信しない",
+            command=_on_close,
+            width=120, fg_color="gray",
+        ).pack(side="left")
+
+        dialog.protocol("WM_DELETE_WINDOW", _on_close)
+
+    def _open_manual_feedback_dialog(self) -> None:
+        """設定画面の「問題を報告」ボタンから呼ぶ手動フィードバック。"""
+        if not self.config.get("telemetry_crash_reporting", False):
+            messagebox.showinfo(
+                "クラッシュレポート未有効",
+                "問題報告を送信するには、プライバシー設定でクラッシュレポートを有効にしてください。",
+                parent=self.master,
+            )
+            return
+        self._show_feedback_dialog(get_last_event_id(), after_crash=False)
 
     # =========================================
     # アップデート関連メソッド

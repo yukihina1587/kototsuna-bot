@@ -107,3 +107,31 @@ def test_redact_mapping_masks_strings():
     data = {"note": "token leaked: oauth:abcdef1234567890"}
     out = _redact_mapping(data)
     assert "oauth:***" in out["note"]
+
+
+# --- User feedback (PR3) ---
+
+
+def test_submit_feedback_returns_false_for_empty_message():
+    from src.sentry_init import submit_feedback
+    assert submit_feedback("") is False
+    assert submit_feedback("   ") is False
+    assert submit_feedback("\n\t\n") is False
+
+
+def test_register_and_get_last_event_id_lifecycle():
+    """callback 登録解除と event_id ゲッターが安全に動くこと。"""
+    from src.sentry_init import register_post_capture_callback, get_last_event_id
+
+    captured = []
+
+    def _cb(event_id):
+        captured.append(event_id)
+
+    register_post_capture_callback(_cb)
+    register_post_capture_callback(None)  # 解除しても落ちないこと
+
+    # initial state: 何も捕捉されてないなら None
+    # （他テストで設定された値が残っている可能性はあるので型チェックのみ）
+    last = get_last_event_id()
+    assert last is None or isinstance(last, str)
