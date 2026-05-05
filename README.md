@@ -279,6 +279,14 @@ module.exports = plugin
 - Node.js が必要です（[nodejs.org](https://nodejs.org/)）
 - `store` は `%APPDATA%\Kototsuna\plugin-store\{uid}.json` に永続化されます
 
+## プライバシー / クラッシュレポート
+
+不具合修正のため、ことつな！は**任意で**クラッシュレポートを送信できます（オプトイン制、デフォルトは送信しない）。
+
+- 何が送信され、何が送信されないかは [docs/PRIVACY.md](docs/PRIVACY.md) を参照してください
+- 設定パネルの「プライバシー」セクションでいつでも有効化／無効化できます
+- チャンネル名・コメント本文・トークン等の個人情報は送信されません
+
 ## ライセンス
 
 MIT License

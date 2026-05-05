@@ -1733,7 +1733,15 @@ class KototsunaApp:
             command=self._open_manual_feedback_dialog,
             fg_color="#6366F1", hover_color="#4F46E5", height=28,
             font=("Segoe UI", 10),
-        ).pack(fill="x", pady=(4, 4))
+        ).pack(fill="x", pady=(4, 2))
+        ctk.CTkButton(
+            parent, text="🔒 プライバシーポリシー",
+            command=lambda: webbrowser.open(
+                "https://github.com/yukihina1587/kototsuna-bot/blob/main/docs/PRIVACY.md"
+            ),
+            fg_color="transparent", border_width=1, height=28,
+            font=("Segoe UI", 10),
+        ).pack(fill="x", pady=(0, 4))
 
         self._add_panel_divider(parent)
 
