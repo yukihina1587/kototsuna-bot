@@ -302,6 +302,10 @@ class KototsunaApp:
         # アップデート設定
         self.auto_update_check = tk.BooleanVar(value=self.config.get("auto_update_check", True))
         self.include_prerelease = tk.BooleanVar(value=self.config.get("include_prerelease", False))
+        # テレメトリ（クラッシュレポート、Issue #208）
+        self.telemetry_crash_reporting = tk.BooleanVar(
+            value=self.config.get("telemetry_crash_reporting", False)
+        )
 
         # エモート画像キャッシュ
         self._emote_pil_cache: Dict[str, Optional[Image.Image]] = {}
@@ -393,6 +397,8 @@ class KototsunaApp:
         # 起動時にアップデートを確認（セーフモードではスキップ）
         if not self.safe_mode:
             self.master.after(3000, self._check_for_updates_on_startup)
+        # 初回起動時にクラッシュレポート送信の同意を確認（Issue #208）
+        self.master.after(2000, self._maybe_show_telemetry_consent)
 
         if self.safe_mode:
             logger.info("セーフモードで起動: OBS自動連携・VOICEVOX自動起動・アップデート確認を無効化")
@@ -1701,6 +1707,21 @@ class KototsunaApp:
                 font=("Segoe UI", 10),
             )
             self._rollback_btn.pack(fill="x", pady=(8, 0))
+
+        self._add_panel_divider(parent)
+
+        # プライバシー / クラッシュレポート（Issue #208）
+        self._add_panel_section(parent, "プライバシー")
+        ctk.CTkCheckBox(
+            parent, text="クラッシュレポートを送信する",
+            variable=self.telemetry_crash_reporting, font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=2)
+        ctk.CTkLabel(
+            parent,
+            text="不具合修正のため、エラー発生時のスタックトレースを匿名で開発者に送信します。\nチャンネル名・コメント本文・トークン等の個人情報は送信されません。\n設定変更は次回起動時に反映されます。",
+            font=("Segoe UI", 9), text_color=TEXT_SUBTLE,
+            justify="left", wraplength=320,
+        ).pack(anchor="w", padx=(24, 0), pady=(0, 4))
 
         self._add_panel_divider(parent)
 
@@ -4353,6 +4374,7 @@ class KototsunaApp:
             self.tts_include_name_var.set(cfg.get("tts_include_name", False))
             self.auto_update_check.set(cfg.get("auto_update_check", True))
             self.include_prerelease.set(cfg.get("include_prerelease", False))
+            self.telemetry_crash_reporting.set(cfg.get("telemetry_crash_reporting", False))
         except Exception as e:
             logger.error(f"Failed to apply config to GUI: {e}", exc_info=True)
 
@@ -4891,6 +4913,7 @@ class KototsunaApp:
             self.config["tts_include_name"] = self.tts_include_name_var.get()
             self.config["auto_update_check"] = self.auto_update_check.get()
             self.config["include_prerelease"] = self.include_prerelease.get()
+            self.config["telemetry_crash_reporting"] = self.telemetry_crash_reporting.get()
 
             # VOICEVOX Managerのパスを更新
             if self.voicevox_path.get().strip() and hasattr(self, "voicevox_manager"):
@@ -6513,6 +6536,107 @@ class KototsunaApp:
         else:
             self.log_message(f"⚠️ BOT起動失敗: {err_msg}")
             self._set_status("BOT起動失敗", "error")
+
+    # =========================================
+    # クラッシュレポート同意ダイアログ（Issue #208）
+    # =========================================
+
+    def _maybe_show_telemetry_consent(self) -> None:
+        """初回起動時にクラッシュレポート送信の同意を求めるダイアログを出す。
+
+        config["telemetry_consent_asked"] が True なら何もしない。
+        ユーザーが「あとで決める」を選んだ場合は consent_asked を更新せず、次回起動時に再表示する。
+        """
+        if self.config.get("telemetry_consent_asked", False):
+            return
+        try:
+            self._show_telemetry_consent_dialog()
+        except Exception as e:
+            logger.error(f"Failed to show telemetry consent dialog: {e}", exc_info=True)
+
+    def _show_telemetry_consent_dialog(self) -> None:
+        dialog = ctk.CTkToplevel(self.master)
+        dialog.title("クラッシュレポートのご協力のお願い")
+        dialog.geometry("520x420")
+        dialog.resizable(False, False)
+        dialog.transient(self.master)
+        dialog.grab_set()
+
+        ctk.CTkLabel(
+            dialog, text="クラッシュレポートを送信しますか？",
+            font=("Segoe UI Semibold", 16),
+        ).pack(pady=(20, 8))
+
+        body_text = (
+            "ことつな！の品質向上にご協力ください。\n\n"
+            "✅ 送信される情報:\n"
+            "    ・エラー内容（例外型・メッセージ）\n"
+            "    ・スタックトレース（発生箇所のファイル名・行番号）\n"
+            "    ・アプリのバージョン / OS / Python のバージョン\n\n"
+            "❌ 送信されない情報:\n"
+            "    ・チャンネル名・配信者名・視聴者名\n"
+            "    ・コメント本文・メッセージ内容\n"
+            "    ・OAuth トークン・パスワード等の認証情報\n"
+            "    ・IP アドレス・個人を特定できる情報\n\n"
+            "あとから設定画面でいつでも変更できます。"
+        )
+        ctk.CTkLabel(
+            dialog, text=body_text,
+            font=("Segoe UI", 10),
+            justify="left", wraplength=480,
+        ).pack(padx=20, pady=(0, 12), anchor="w")
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(0, 16))
+
+        def _decide(send: bool) -> None:
+            self.config["telemetry_crash_reporting"] = send
+            self.config["telemetry_consent_asked"] = True
+            try:
+                self.telemetry_crash_reporting.set(send)
+            except Exception:
+                pass
+            try:
+                save_config(self.config)
+            except Exception as e:
+                logger.error(f"Failed to save telemetry consent: {e}", exc_info=True)
+            if send:
+                # 同意したら即座に init を試みる（次回起動を待たずに済むケース）
+                try:
+                    from src.sentry_init import init_sentry
+                    init_sentry(True)
+                except Exception:
+                    pass
+            self.log_message(
+                "✅ クラッシュレポートを送信します（設定画面で変更可）" if send
+                else "クラッシュレポートを送信しません（設定画面で変更可）"
+            )
+            dialog.destroy()
+
+        def _later() -> None:
+            # consent_asked を立てないので次回起動時に再表示
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_frame, text="送信する",
+            command=lambda: _decide(True),
+            width=140, fg_color=ACCENT, hover_color="#1CA04E",
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame, text="送信しない",
+            command=lambda: _decide(False),
+            width=120, fg_color="gray",
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame, text="あとで決める",
+            command=_later,
+            width=120, fg_color="transparent", border_width=1,
+        ).pack(side="left")
+
+        # × ボタンで閉じた場合は「あとで」扱い
+        dialog.protocol("WM_DELETE_WINDOW", _later)
 
     # =========================================
     # アップデート関連メソッド

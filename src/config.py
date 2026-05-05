@@ -159,6 +159,9 @@ DEFAULT_CONFIG = {
     "game_roulette_cooldown": 10,   # ルーレットクールダウン（秒）
     "game_janken_cooldown": 5,      # じゃんけんクールダウン（秒）
     "game_guess_cooldown": 3,       # 数字当てクールダウン（秒）
+    # テレメトリ（クラッシュレポート送信、Issue #208）
+    "telemetry_crash_reporting": False,   # Sentryへのクラッシュレポート送信に同意したか
+    "telemetry_consent_asked": False,     # 初回同意ダイアログを表示済みか（True かつ False は明示的拒否を意味する）
 }
 
 VALID_TRANSLATE_MODES = {"自動", "英→日", "日→英"}
@@ -266,7 +269,10 @@ def validate_config(config_data):
         validated["log_level"] = log_level
 
     # ブール値はbool化
-    for key in ["voicevox_auto_start", "auto_update_check", "include_prerelease", "archive_enabled"]:
+    for key in [
+        "voicevox_auto_start", "auto_update_check", "include_prerelease", "archive_enabled",
+        "telemetry_crash_reporting", "telemetry_consent_asked",
+    ]:
         if not isinstance(validated.get(key), bool):
             validated[key] = bool(validated.get(key))
             changed = True
