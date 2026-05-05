@@ -15,3 +15,4 @@ websockets
 tenacity
 psutil
 edge-tts
+sentry-sdk
