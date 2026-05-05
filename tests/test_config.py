@@ -29,6 +29,31 @@ def test_stt_num_threads_default():
     assert validated["stt_num_threads"] == 2
 
 
+# --- Telemetry config tests (Issue #208) ---
+
+
+def test_telemetry_keys_default_to_false():
+    validated, _ = validate_config({})
+    assert validated["telemetry_crash_reporting"] is False
+    assert validated["telemetry_consent_asked"] is False
+
+
+def test_telemetry_crash_reporting_coerced_to_bool():
+    validated, changed = validate_config({"telemetry_crash_reporting": "yes"})
+    assert validated["telemetry_crash_reporting"] is True
+    assert changed is True
+
+
+def test_telemetry_consent_asked_preserves_explicit_false():
+    """ユーザーが明示的に「送信しない」を選んだ場合、再ダイアログ表示しないこと。"""
+    validated, _ = validate_config({
+        "telemetry_consent_asked": True,
+        "telemetry_crash_reporting": False,
+    })
+    assert validated["telemetry_consent_asked"] is True
+    assert validated["telemetry_crash_reporting"] is False
+
+
 def test_stt_num_threads_clamped():
     validated, _ = validate_config({"stt_num_threads": 20})
     assert validated["stt_num_threads"] == 8

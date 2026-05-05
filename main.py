@@ -217,6 +217,16 @@ import concurrent.futures  # noqa: F401
 # ロガーを最初にインポート（他のモジュールより先に初期化）
 from src.logger import logger  # noqa: E402
 
+# Sentry はオプトイン同意済みのときだけ起動。同意なしまたは SDK 欠落時は no-op。
+# 起点をできるだけ早くするため、heavy import の前に呼ぶ。
+try:
+    from src.config import load_config as _load_config_for_sentry  # noqa: E402
+    from src.sentry_init import init_sentry as _init_sentry  # noqa: E402
+    _init_sentry(bool(_load_config_for_sentry().get("telemetry_crash_reporting", False)))
+except Exception:
+    # 設定読み込みやSentry初期化に失敗しても本体起動は止めない
+    pass
+
 import customtkinter as ctk  # noqa: E402
 import src.overlay_server  # noqa: E402
 import src.voice_listener  # noqa: E402
