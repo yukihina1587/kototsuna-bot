@@ -26,4 +26,6 @@ dependencies = [
     "obsws-python>=1.7.2",
     # Edge TTS（オンライン・APIキー不要）
     "edge-tts>=7.0.0",
+    # クラッシュレポート送信（オプトイン、PR2 でUI追加予定）
+    "sentry-sdk>=2.0.0",
 ]
