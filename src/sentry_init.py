@@ -45,6 +45,48 @@ _REDACTED = "***"
 
 _module_logger = logging.getLogger("KototsunaBot")
 
+# Sentry に送らないノイズロガー名（OBS/WebSocket 由来の既知ノイズ）
+# サードパーティライブラリが logger.error を呼んでいるが、運用上は OBS 未起動など
+# 想定済み状態のため Sentry に届ける必要がない。
+_IGNORED_LOGGERS = (
+    "obsws_python.reqs.ReqClient",
+    "obsws_python.baseclient.ObsClient",
+    "websocket",
+)
+
+
+def _is_known_noise(event: dict) -> bool:
+    """既知の無害イベント（OBS未起動・asyncio既知バグ等）かを判定する。
+
+    `ignore_logger` でカバー漏れした経路のためのディフェンシブフィルタ。
+    """
+    for exc in event.get("exception", {}).get("values", []) or []:
+        exc_type = exc.get("type") or ""
+        exc_value = str(exc.get("value") or "")
+
+        # asyncio ProactorEventLoop の Windows 既知バグ
+        # (`_call_connection_lost` が無効化されたパイプハンドルに触れて WinError 10022)
+        if exc_type == "OSError" and "10022" in exc_value:
+            for frame in exc.get("stacktrace", {}).get("frames", []) or []:
+                filename = (frame.get("filename") or "")
+                if "proactor_events" in filename:
+                    return True
+
+        # obsws_python の WebSocket 接続拒否（OBS未起動）
+        if exc_type == "ConnectionRefusedError" and "10061" in exc_value:
+            for frame in exc.get("stacktrace", {}).get("frames", []) or []:
+                module = frame.get("module") or ""
+                filename = frame.get("filename") or ""
+                if "obsws_python" in module or "obsws_python" in filename:
+                    return True
+
+        # OBS が準備中のリクエストエラー (code 207)
+        if exc_type == "OBSSDKRequestError":
+            if "code 207" in exc_value or "OBS is not ready" in exc_value:
+                return True
+
+    return False
+
 
 def _redact_mapping(data: Any) -> Any:
     """dict / list を再帰的に走査して機微キーを伏せ字にする。"""
@@ -68,6 +110,10 @@ def _scrub_event(event: dict, hint: dict) -> Optional[dict]:
         exc_type = exc_info[0]
         if exc_type is KeyboardInterrupt or exc_type is SystemExit:
             return None
+
+    # 既知ノイズ（OBS未起動・asyncio既知バグ等）はドロップ
+    if _is_known_noise(event):
+        return None
 
     # ユーザー情報は送らない
     event.pop("user", None)
@@ -217,7 +263,7 @@ def init_sentry(enabled: bool, dsn: Optional[str] = None) -> bool:
 
     try:
         import sentry_sdk
-        from sentry_sdk.integrations.logging import LoggingIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration, ignore_logger
     except ImportError:
         _module_logger.warning(
             "[Sentry] sentry-sdk が import できないためテレメトリを無効化します"
@@ -227,6 +273,14 @@ def init_sentry(enabled: bool, dsn: Optional[str] = None) -> bool:
     effective_dsn = dsn or os.environ.get("KOTOTSUNA_SENTRY_DSN") or _DEFAULT_DSN
     if not effective_dsn:
         return False
+
+    # OBS/WebSocket 由来のノイズロガーを Sentry 送信対象から外す
+    # （アプリ側 obs_integration._run_loop で warning として再ログ済み）
+    for logger_name in _IGNORED_LOGGERS:
+        try:
+            ignore_logger(logger_name)
+        except Exception:
+            pass
 
     try:
         sentry_sdk.init(

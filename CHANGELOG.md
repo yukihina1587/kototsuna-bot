@@ -4,6 +4,20 @@
 
 ---
 
+## [1.9.0-beta.6] - 2026-05-10
+
+### バグ修正
+- **クラッシュレポートのノイズイベントをフィルタ（Issue #213）**
+  - OBSが起動していない／WebSocket接続が拒否された場合、開発者のSentryに大量の通知が届いていた問題を修正
+  - 以下は想定済み状態のため Sentry 送信対象から除外しました
+    - OBS未起動による接続拒否（`WinError 10061`）
+    - OBS起動直後の準備中レスポンス（OBSSDKRequestError code 207）
+    - WebSocket通常クローズ（close status 1001）
+    - Windows 上の asyncio 既知バグ（`WinError 10022` in `_call_connection_lost`）
+  - これらは元々アプリ側で警告ログとして処理しているため、ユーザー体験への影響はありません
+
+---
+
 ## [1.9.0-beta.5] - 2026-05-05
 
 ### 新機能

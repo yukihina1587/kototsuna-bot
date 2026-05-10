@@ -95,6 +95,109 @@ def test_scrub_keeps_real_exception():
     assert out["message"] == "real bug"
 
 
+# --- Known noise filter (Issue #213) ---
+
+
+def test_scrub_drops_asyncio_proactor_winerror_10022():
+    event = {
+        "exception": {
+            "values": [
+                {
+                    "type": "OSError",
+                    "value": "[WinError 10022] 無効な引数が提供されました。",
+                    "stacktrace": {
+                        "frames": [
+                            {"filename": "asyncio\\proactor_events.py",
+                             "function": "_call_connection_lost"},
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+    assert _scrub_event(event, {}) is None
+
+
+def test_scrub_drops_obsws_connection_refused():
+    event = {
+        "exception": {
+            "values": [
+                {
+                    "type": "ConnectionRefusedError",
+                    "value": "[WinError 10061] 対象のコンピューターによって拒否されたため、接続できませんでした。",
+                    "stacktrace": {
+                        "frames": [
+                            {"filename": "obsws_python\\baseclient.py",
+                             "module": "obsws_python.baseclient",
+                             "function": "__init__"},
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+    assert _scrub_event(event, {}) is None
+
+
+def test_scrub_drops_obs_not_ready_207():
+    event = {
+        "exception": {
+            "values": [
+                {
+                    "type": "OBSSDKRequestError",
+                    "value": "Request GetVersion returned code 207. With message: OBS is not ready to perform the request.",
+                    "stacktrace": {"frames": []},
+                }
+            ]
+        }
+    }
+    assert _scrub_event(event, {}) is None
+
+
+def test_scrub_keeps_unrelated_oserror():
+    """proactor_events 以外のスタックでの OSError は通常イベントとして残す。"""
+    event = {
+        "exception": {
+            "values": [
+                {
+                    "type": "OSError",
+                    "value": "[WinError 10022] something else",
+                    "stacktrace": {
+                        "frames": [
+                            {"filename": "src\\my_module.py", "function": "do_work"},
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+    out = _scrub_event(event, {})
+    assert out is not None
+
+
+def test_scrub_keeps_unrelated_connection_refused():
+    """obsws_python 以外の ConnectionRefused は本物のバグなので残す。"""
+    event = {
+        "exception": {
+            "values": [
+                {
+                    "type": "ConnectionRefusedError",
+                    "value": "[WinError 10061] some other server",
+                    "stacktrace": {
+                        "frames": [
+                            {"filename": "src\\twitch_client.py",
+                             "module": "src.twitch_client",
+                             "function": "connect"},
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+    out = _scrub_event(event, {})
+    assert out is not None
+
+
 def test_redact_mapping_recurses_into_nested_dicts():
     data = {"safe": 1, "level1": {"channel": "x", "ok": "y"}}
     out = _redact_mapping(data)
