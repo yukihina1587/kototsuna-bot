@@ -683,19 +683,6 @@ class TranslateBot(commands.Bot):
         if translated:
             translated = translated.replace("<k>", "").replace("</k>", "")
 
-        # チャットに翻訳結果を送信（翻訳がある場合のみ）
-        if translated and translated != message.content:
-            await message.channel.send(f"[Chat] {translated}" + '\u200B')
-
-        # 2言語目チャット翻訳（設定されている場合）
-        lang_mode_2 = config.get("translate_mode_2", "")
-        if lang_mode_2 and lang_mode_2 != lang_mode:
-            translated_2 = await translate_text_batched(content, lang_mode_2)
-            if translated_2:
-                translated_2 = translated_2.replace("<k>", "").replace("</k>", "")
-            if translated_2 and translated_2 != message.content and translated_2 != translated:
-                await message.channel.send(f"[Chat2] {translated_2}" + '\u200B')
-
         # CommentDataオブジェクトを作成（全てのコメントを表示）
         comment = create_twitch_comment(
             username=message.author.name,
@@ -738,6 +725,29 @@ class TranslateBot(commands.Bot):
                     logger.debug(f"TTS speak called: {speak_text[:30]}...")
                 except Exception as e:
                     logger.error(f"TTS speak error: {e}", exc_info=True)
+
+        # Local display and speech must not depend on optional Twitch delivery.
+        if config.get("chat_translation_post_to_twitch", False) is not True:
+            return
+
+        try:
+            if translated and translated != message.content:
+                await message.channel.send(f"[Chat] {translated}" + '\u200B')
+
+            lang_mode_2 = config.get("translate_mode_2", "")
+            if lang_mode_2 and lang_mode_2 != lang_mode:
+                translated_2 = await translate_text_batched(content, lang_mode_2)
+                if translated_2:
+                    translated_2 = translated_2.replace("<k>", "").replace("</k>", "")
+                if translated_2 and translated_2 != message.content and translated_2 != translated:
+                    await message.channel.send(f"[Chat2] {translated_2}" + '\u200B')
+        except Exception as exc:
+            logger.warning("Optional chat translation post failed (%s)", type(exc).__name__)
+            self._call_gui(
+                "log_message",
+                "翻訳のTwitch投稿に失敗しました。配信映像への表示と読み上げは継続します。",
+                log_type="system",
+            )
 
     async def process_test_message(
         self,

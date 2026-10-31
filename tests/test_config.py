@@ -1,6 +1,25 @@
 import json
 import os
+import pytest
 from src.config import validate_config, DEFAULT_CONFIG, backup_config, restore_config, reset_config
+
+
+def test_translation_posting_defaults_to_off_for_existing_configs():
+    validated, _ = validate_config({"chat_translation_enabled": True})
+    assert validated["chat_translation_post_to_twitch"] is False
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_translation_posting_preserves_explicit_boolean(enabled):
+    validated, _ = validate_config({"chat_translation_post_to_twitch": enabled})
+    assert validated["chat_translation_post_to_twitch"] is enabled
+
+
+@pytest.mark.parametrize("invalid", ["false", "true", 0, 1, None, [], {}])
+def test_translation_posting_rejects_non_boolean_values(invalid):
+    validated, changed = validate_config({"chat_translation_post_to_twitch": invalid})
+    assert validated["chat_translation_post_to_twitch"] is False
+    assert changed is True
 
 
 def test_validate_config_fills_defaults_and_clamps_mode():

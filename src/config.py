@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "channel_name": "",
     "channel_mode": "manual",  # auto: 認証アカウントと同じ, manual: 手動入力
     "translate_mode": "自動",
+    "chat_translation_post_to_twitch": False,
     "translate_mode_2": "",              # 2言語目翻訳（空=無効、有効値: 自動/英→日/日→英）
     "voice_chat_lang": "日→英",          # 音声チャット専用の翻訳先言語1
     "voice_chat_lang_2": "",             # 音声チャット翻訳言語2（空=無効）
@@ -172,23 +173,13 @@ def get_valid_ui_themes() -> set[str]:
     """builtin + カスタムテーマのキー集合を返す（Issue #38 Phase A）。"""
     themes = set(VALID_UI_THEMES)
     try:
-        # 循環 import 回避のため関数内 import
-        from src.gui import THEMES as _GUI_THEMES  # noqa: PLC0415
+        # 設定検証でGUIや音声を初期化せず、追加したテーマもその都度検証する。
+        from src.gui_theme import THEMES  # noqa: PLC0415
+        from src.theme_loader import load_custom_themes  # noqa: PLC0415
 
-        themes.update(_GUI_THEMES.keys())
+        themes.update(load_custom_themes(THEMES).keys())
     except Exception:
-        # GUI 未ロード時は JSON から直接読む
-        try:
-            from src.theme_loader import get_themes_dir  # noqa: PLC0415
-            import os as _os  # noqa: PLC0415
-
-            directory = get_themes_dir()
-            if _os.path.isdir(directory):
-                for name in _os.listdir(directory):
-                    if name.lower().endswith(".json"):
-                        themes.add(_os.path.splitext(name)[0])
-        except Exception:
-            pass
+        logger.warning("Custom theme validation failed; using builtin themes")
     return themes
 VALID_CHANNEL_MODES = {"auto", "manual"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
@@ -202,6 +193,11 @@ def validate_config(config_data):
     changed = False
     validated = DEFAULT_CONFIG.copy()
     validated.update(config_data or {})
+
+    # Only an explicit boolean opt-in enables automatic translation posts.
+    if not isinstance(validated.get("chat_translation_post_to_twitch"), bool):
+        validated["chat_translation_post_to_twitch"] = False
+        changed = True
 
     # translate_mode
     if validated.get("translate_mode") not in VALID_TRANSLATE_MODES:

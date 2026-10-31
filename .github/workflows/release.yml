@@ -9,7 +9,22 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-ci.txt
+      - name: Run release tests
+        run: python -m pytest tests/ -q --ignore=tests/test_tts.py --ignore=tests/test_bot.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
   build-and-release:
+    needs: test
     runs-on: windows-latest
 
     steps:
@@ -216,7 +231,7 @@ jobs:
             "<details><summary>🔒 SHA256（ファイル整合性確認用）</summary>",
             "",
             '```',
-            "$sha256  Kototsuna_Setup.exe",
+            "SHA256: $sha256",
             '```',
             "",
             "</details>"
@@ -229,6 +244,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: installer_output/Kototsuna_Setup.exe
+          draft: true
           prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
           generate_release_notes: false
           body_path: release_notes.md

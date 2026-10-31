@@ -56,6 +56,9 @@ from src.comment_data import CommentData, create_twitch_comment
 from src import translator, __version__
 from src.translator import init_translation_dictionary, get_translation_dictionary, translate_text_sync
 from src.resource_monitor import get_monitor
+from src.gui_theme import THEMES as BUILTIN_THEMES, apply_widget_theme, text_on
+from src.gui_comments import create_comment_tile
+from src.gui_layout import WorkspaceLayoutMixin
 from src.gui_helpers import DifferentialListManager, create_participant_row, create_simple_list_row
 from src.obs_integration import ObsController, find_matching_scene_rule
 from src.voice_display import build_voice_translation_view
@@ -75,74 +78,8 @@ try:
 except Exception:
     pass  # Theme file may be missing in bundled exe
 
-# テーマ定義
-THEMES = {
-    "gradient": {  # 案1: グラデーション × グラスモーフィズム
-        "name": "グラデーション（モダン）",
-        "APP_BG": "#0A0E27",
-        "APP_BG_GRADIENT": "#1A1535",  # グラデーション用
-        "CARD_BG": "#1C1F3A",
-        "CARD_BG_GLASS": "#1C1F3A",  # 半透明風
-        "PANEL_BG": "#151830",
-        "BORDER": "#2D3250",
-        "ACCENT": "#00D9FF",  # シアン
-        "ACCENT_SECONDARY": "#FF00E5",  # マゼンタ
-        "ACCENT_WARN": "#FFB800",
-        "TEXT_PRIMARY": "#FFFFFF",
-        "TEXT_SUBTLE": "#A0A8C8",
-        "SHADOW": "#000000",
-        "GLOW": True,  # グロー効果を有効化
-    },
-    "minimal": {  # 案2: ミニマリスト × マテリアルデザイン
-        "name": "ミニマル（シンプル）",
-        "APP_BG": "#FAFAFA",
-        "APP_BG_GRADIENT": "#F5F5F5",
-        "CARD_BG": "#FFFFFF",
-        "CARD_BG_GLASS": "#FFFFFF",
-        "PANEL_BG": "#F8F9FA",
-        "BORDER": "#E0E0E0",
-        "ACCENT": "#1976D2",  # Material Blue
-        "ACCENT_SECONDARY": "#0288D1",
-        "ACCENT_WARN": "#F57C00",
-        "TEXT_PRIMARY": "#212121",
-        "TEXT_SUBTLE": "#757575",
-        "SHADOW": "#00000015",
-        "GLOW": False,
-    },
-    "cyberpunk": {  # 案3: サイバーパンク × ゲーミング
-        "name": "サイバーパンク（ゲーミング）",
-        "APP_BG": "#000000",
-        "APP_BG_GRADIENT": "#0D0208",
-        "CARD_BG": "#0A0A0A",
-        "CARD_BG_GLASS": "#1A1A1A",
-        "PANEL_BG": "#050505",
-        "BORDER": "#FF00FF",  # ネオンピンク
-        "ACCENT": "#00FFFF",  # ネオンシアン
-        "ACCENT_SECONDARY": "#FF00FF",  # ネオンマゼンタ
-        "ACCENT_WARN": "#FFFF00",  # ネオンイエロー
-        "TEXT_PRIMARY": "#00FFFF",
-        "TEXT_SUBTLE": "#008080",  # ダークシアン（半透明の代替）
-        "SHADOW": "#004040",  # ダークシアン（半透明の代替）
-        "GLOW": True,  # グロー効果強め
-    },
-    "default": {  # 現在のデフォルトテーマ（既存）
-        "name": "デフォルト（クラシック）",
-        "APP_BG": "#0C1424",
-        "APP_BG_GRADIENT": "#0C1424",
-        "CARD_BG": "#111B2E",
-        "CARD_BG_GLASS": "#111B2E",
-        "PANEL_BG": "#0E1728",
-        "BORDER": "#1F2C43",
-        "ACCENT": "#22C55E",
-        "ACCENT_SECONDARY": "#38BDF8",
-        "ACCENT_WARN": "#F97316",
-        "TEXT_PRIMARY": "#FFFFFF",
-        "TEXT_SUBTLE": "#9BAEC6",
-        "SHADOW": "#00000020",
-        "GLOW": False,
-    }
-}
-
+# GUIのカスタムテーマ登録が共通の組み込み定義を書き換えないようにする。
+THEMES = dict(BUILTIN_THEMES)
 # カスタムテーマをマージ（Issue #38 Phase A）
 try:
     from src.theme_loader import load_custom_themes
@@ -207,7 +144,7 @@ def _format_release_body_for_display(body: str) -> str:
     return text.strip()
 
 
-class KototsunaApp:
+class KototsunaApp(WorkspaceLayoutMixin):
     def __init__(self, master, safe_mode: bool = False, diag_bundle_path=None):
         self.master = master
         self.safe_mode = safe_mode
@@ -265,6 +202,9 @@ class KototsunaApp:
         self.voice_chat_lang_var = tk.StringVar(value=self.config.get("voice_chat_lang", "日→英"))
         # チャット翻訳は毎回オフから開始（安全のため）
         self.chat_translation_enabled = tk.BooleanVar(value=False)
+        self.chat_translation_post_to_twitch = tk.BooleanVar(
+            value=self.config.get("chat_translation_post_to_twitch", False)
+        )
         # config.jsonにも反映して、bot.pyと同期させる
         self.config["chat_translation_enabled"] = False
         save_config(self.config)
@@ -570,11 +510,9 @@ class KototsunaApp:
         BUTTON_CORNER_RADIUS = int(theme.get("BUTTON_CORNER_RADIUS", CORNER_RADIUS))
         FONT_TITLE, FONT_SUBTITLE, FONT_LABEL, FONT_BODY = _derive_fonts(theme)
 
-        # ライトモード/ダークモードの切り替え
-        if theme_name == "minimal":
-            ctk.set_appearance_mode("Light")
-        else:
-            ctk.set_appearance_mode("Dark")
+        self.ui_palette = dict(theme)
+        apply_widget_theme(theme)
+        self.master.configure(bg=APP_BG)
 
         logger.info(f"Theme applied: {theme['name']} ({theme_name})")
 
@@ -645,8 +583,7 @@ class KototsunaApp:
         display_to_key = {t.get("name", k): k for k, t in THEMES.items()}
         theme_key = display_to_key.get(display_name, "default")
 
-        # テーマを適用
-        self._apply_theme_colors(theme_key)
+        # 稼働中のウィジェットと新しいパネルで配色が混在しないよう次回起動時に適用。
 
         # 設定を保存
         self.config["ui_theme"] = theme_key
@@ -654,7 +591,7 @@ class KototsunaApp:
 
         # ユーザーに通知
         self.log_message(f"✨ テーマを '{THEMES[theme_key]['name']}' に変更しました")
-        self.log_message("⚠️ 一部の色変更を反映するには、アプリを再起動してください")
+        self.log_message("配色は次回起動時に画面全体へ反映されます。")
 
     def _on_log_level_changed(self, level: str):
         """
@@ -673,32 +610,6 @@ class KototsunaApp:
         # ユーザーに通知
         self.log_message(f"📝 ログレベルを '{level}' に変更しました")
 
-    def build_widgets(self):
-        """新レイアウト: ヘッダー + 左サイドバー + メインコンテンツ + 折りたたみ右パネル"""
-        # ルートコンテナ
-        self.main_frame = ctk.CTkFrame(self.master, fg_color=APP_BG)
-        self.main_frame.pack(fill="both", expand=True)
-
-        # セーフモードバナー（ヘッダーより前に配置）
-        if self.safe_mode:
-            self._build_safe_mode_banner()
-
-        # 診断バンドル自動収集バナー
-        if self.diag_bundle_path:
-            self._build_diag_bundle_banner(self.diag_bundle_path)
-
-        # === ヘッダー構築 ===
-        self._build_header()
-
-        # === ボディコンテナ（サイドバー + メイン + 右パネル） ===
-        self.body_container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.body_container.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-
-        # 左サイドバー構築
-        self._build_left_sidebar()
-
-        # メインコンテンツ構築
-        self._build_main_content()
 
         # 右パネル（初期非表示）- 動的に作成される
 
@@ -783,78 +694,6 @@ class KototsunaApp:
     # 新レイアウトコンポーネント
     # ========================================
 
-    def _build_header(self):
-        """コンパクトなヘッダーバー（接続状態、チャンネル入力、開始/停止ボタン）"""
-        header = ctk.CTkFrame(self.main_frame, fg_color=CARD_BG, height=70, corner_radius=0)
-        header.pack(fill="x", side="top")
-        header.pack_propagate(False)
-
-        inner = ctk.CTkFrame(header, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=16, pady=8)
-        inner.grid_columnconfigure(1, weight=1)
-
-        # === 左側: タイトル + バッジ ===
-        left = ctk.CTkFrame(inner, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="w")
-
-        ctk.CTkLabel(left, text="ことつな！", font=("Segoe UI Semibold", 18)).pack(side="left", padx=(0, 12))
-
-        self.connection_badge = ctk.CTkLabel(
-            left, text="● 未接続", fg_color=PANEL_BG, corner_radius=12,
-            font=("Segoe UI", 11), padx=10, pady=4
-        )
-        self.connection_badge.pack(side="left", padx=(0, 12))
-
-        self.header_stats_label = ctk.CTkLabel(
-            left, text="0 req / 0 hit / 0 filtered",
-            font=("Consolas", 10), text_color=TEXT_SUBTLE
-        )
-        self.header_stats_label.pack(side="left")
-
-        # === 右側: チャンネル表示 + ボタン群 ===
-        right = ctk.CTkFrame(inner, fg_color="transparent")
-        right.grid(row=0, column=2, sticky="e")
-
-        # チャンネル表示（クリックで設定画面にフォーカス）
-        channel_display = ctk.CTkFrame(right, fg_color=PANEL_BG, corner_radius=8, border_width=1, border_color=BORDER)
-        channel_display.pack(side="left", padx=(0, 12))
-        ctk.CTkLabel(channel_display, text="📺", font=("Segoe UI", 12), width=24).pack(side="left", padx=(8, 0))
-        self.header_channel_label = ctk.CTkLabel(
-            channel_display, textvariable=self.channel, font=("Segoe UI", 11),
-            text_color=TEXT_SUBTLE, width=140, anchor="w"
-        )
-        self.header_channel_label.pack(side="left", padx=(4, 8), pady=6)
-        # チャンネル未設定時のプレースホルダー表示を更新するためのトレース
-        self.channel.trace_add("write", self._update_channel_display)
-
-        # ボタン順序: 認証 → 開始 → 停止（操作フローに合わせた順序）
-        self.auth_btn = ctk.CTkButton(
-            right, text="① Twitch認証", command=self.start_auth,
-            width=110, height=32,
-            fg_color="#0891B2", hover_color="#0E7490",
-            text_color="#FFFFFF"
-        )
-        self.auth_btn.pack(side="left", padx=(0, 6))
-
-        self.start_stop_btn = ctk.CTkButton(
-            right, text="② BOT開始", command=self._toggle_bot_from_header,
-            width=100, height=32, fg_color=ACCENT, hover_color="#16A34A", text_color="#0B1220"
-        )
-        self.start_stop_btn.pack(side="left", padx=(0, 6))
-
-        self.disconnect_btn = ctk.CTkButton(
-            right, text="⏹ 全停止", command=self.disconnect_all, width=80, height=32,
-            fg_color="#DC2626", hover_color="#B91C1C", text_color="#FFFFFF"
-        )
-        self.disconnect_btn.pack(side="left")
-
-        # サブタイトル
-        subtitle = ctk.CTkFrame(self.main_frame, fg_color="transparent", height=20)
-        subtitle.pack(fill="x", side="top", padx=16, pady=(0, 6))
-        ctk.CTkLabel(
-            subtitle, text="翻訳・読み上げ・参加者管理をまとめたコントロールセンター",
-            font=("Segoe UI", 10), text_color=TEXT_SUBTLE
-        ).pack(side="left")
 
     def _toggle_bot_from_header(self):
         """ヘッダーの開始/停止ボタンのハンドラー"""
@@ -878,133 +717,18 @@ class KototsunaApp:
         if running:
             self.start_stop_btn.configure(text="■ BOT停止", fg_color="#EF4444", hover_color="#DC2626", text_color="#FFFFFF")
         else:
-            self.start_stop_btn.configure(text="② BOT開始", fg_color=ACCENT, hover_color="#16A34A", text_color="#0B1220")
+            self.start_stop_btn.configure(text="② BOT開始", fg_color=ACCENT, hover_color=ACCENT_SECONDARY, text_color=text_on(ACCENT))
 
     def _update_connection_badge(self, connected: bool):
         """接続バッジの表示を更新"""
         if connected:
-            self.connection_badge.configure(text="● 接続中", fg_color=ACCENT, text_color="#0B1220")
+            self.connection_badge.configure(text="● 接続中", text_color=ACCENT)
         else:
-            self.connection_badge.configure(text="● 未接続", fg_color=PANEL_BG, text_color=TEXT_SUBTLE)
+            self.connection_badge.configure(text="● 未接続", text_color=TEXT_SUBTLE)
 
-    def _build_left_sidebar(self):
-        """左サイドバー（翻訳モード、トグル、ナビゲーション）"""
-        sidebar = ctk.CTkFrame(self.body_container, fg_color=PANEL_BG, width=240, corner_radius=12)
-        sidebar.pack(side="left", fill="y", padx=(0, 8))
-        sidebar.pack_propagate(False)
 
-        # === 上部コンテンツ ===
-        top = ctk.CTkFrame(sidebar, fg_color="transparent")
-        top.pack(fill="x", padx=6, pady=(6, 0))
 
-        # === 翻訳モード ===
-        self._add_sidebar_section(top, "翻訳モード")
-        ctk.CTkOptionMenu(
-            top, variable=self.lang_mode, values=['自動', '英→日', '日→英'],
-            fg_color=CARD_BG, button_color=ACCENT_SECONDARY, height=28
-        ).pack(fill="x", pady=(0, 4))
 
-        # === 機能トグル ===
-        self._add_sidebar_section(top, "機能")
-
-        self._add_sidebar_toggle(top, "チャット翻訳", self.chat_translation_enabled, self._on_translation_toggle_changed)
-        self._add_sidebar_toggle(top, "名前も読み上げ", self.tts_include_name_var, None)
-        self._add_sidebar_toggle(top, "🎤 音声翻訳", self.voice_var, self.toggle_voice)
-
-        # === 音量・速度スライダー ===
-        self._add_sidebar_slider(top, "音量", self.tts_volume_var, 0, 100, "%")
-        self._add_sidebar_slider(top, "速度", self.tts_speed_var, 0.5, 2.0, "x")
-
-        # 区切り線
-        ctk.CTkFrame(top, height=1, fg_color=BORDER).pack(fill="x", pady=4)
-
-        # === パネルナビゲーション ===
-        self._add_sidebar_section(top, "パネル")
-        nav_items = [
-            ("settings", "⚙  設定"),
-            ("dictionary", "📖  辞書"),
-            ("participants", "👥  参加者"),
-            ("viewers", "🎙  常連管理"),
-            ("commands", "💬  コマンド"),
-            ("plugins", "🧩  プラグイン"),
-            ("subtitle", "🗒  字幕設定"),
-            ("obs", "🎬  OBS連携"),
-            ("comment_tester", "🧪  テスト送信"),
-        ]
-        for panel_id, label in nav_items:
-            btn = ctk.CTkButton(
-                top, text=label, command=lambda p=panel_id: self._toggle_right_panel(p),
-                fg_color=CARD_BG, hover_color=ACCENT, anchor="w", height=28,
-                text_color="#FFFFFF", corner_radius=6
-            )
-            btn.pack(fill="x", pady=1)
-            self.nav_buttons[panel_id] = btn
-
-        # 区切り線
-        ctk.CTkFrame(top, height=1, fg_color=BORDER).pack(fill="x", pady=4)
-
-        # === ログ操作 ===
-        ctk.CTkButton(
-            top, text="📄 テキスト出力", command=self.export_log_text,
-            fg_color="#3B82F6", hover_color="#2563EB", height=26
-        ).pack(fill="x", pady=1)
-
-        # === 下部固定: OBS連携 ===
-        bottom = ctk.CTkFrame(sidebar, fg_color="transparent")
-        bottom.pack(side="bottom", fill="x", padx=6, pady=(0, 6))
-
-        ctk.CTkFrame(bottom, height=1, fg_color=BORDER).pack(fill="x", pady=(0, 4))
-        self._add_sidebar_section(bottom, "OBS連携")
-
-        self.obs_url_label = ctk.CTkLabel(
-            bottom,
-            text="http://localhost:8080/chat",
-            font=("Consolas", 10),
-            text_color="#9BAEC6",
-            anchor="w"
-        )
-        self.obs_url_label.pack(fill="x", pady=(0, 2))
-
-        ctk.CTkButton(
-            bottom, text="📋 URLコピー", command=self._copy_obs_url,
-            fg_color="#10B981", hover_color="#059669", height=26
-        ).pack(fill="x", pady=1)
-
-        ctk.CTkButton(
-            bottom, text="❓ 設定方法", command=self._open_obs_setup_wiki,
-            fg_color="#6B7280", hover_color="#4B5563", height=26
-        ).pack(fill="x", pady=1)
-
-    def _add_sidebar_section(self, parent, text):
-        """サイドバーセクションラベルを追加"""
-        ctk.CTkLabel(parent, text=text.upper(), font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 4))
-
-    def _add_sidebar_toggle(self, parent, label, variable, command):
-        """サイドバートグルスイッチを追加"""
-        row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", pady=2)
-        ctk.CTkLabel(row, text=label, font=FONT_BODY).pack(side="left")
-        ctk.CTkSwitch(row, text="", variable=variable, command=command, width=40).pack(side="right")
-
-    def _add_sidebar_slider(self, parent, label, variable, min_val, max_val, unit):
-        """サイドバースライダーを追加"""
-        frame = ctk.CTkFrame(parent, fg_color="transparent")
-        frame.pack(fill="x", pady=2)
-
-        header = ctk.CTkFrame(frame, fg_color="transparent")
-        header.pack(fill="x")
-        ctk.CTkLabel(header, text=label.upper(), font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(side="left")
-        value_label = ctk.CTkLabel(header, text=f"{variable.get():.1f}{unit}" if unit == "x" else f"{int(variable.get())}{unit}",
-                                   font=("Consolas", 10), text_color=TEXT_SUBTLE)
-        value_label.pack(side="right")
-
-        def on_change(v):
-            if unit == "x":
-                value_label.configure(text=f"{float(v):.1f}{unit}")
-            else:
-                value_label.configure(text=f"{int(float(v))}{unit}")
-
-        ctk.CTkSlider(frame, from_=min_val, to=max_val, variable=variable, command=on_change).pack(fill="x", pady=(4, 0))
 
     def _update_bits_vol_label(self):
         """Bits効果音の音量ラベルを更新"""
@@ -1027,15 +751,11 @@ class KototsunaApp:
             self.follow_vol_label.configure(text=f"{int(self.follow_volume_var.get())}%")
 
     def _update_channel_display(self, *args):
-        """チャンネル表示を更新"""
-        if hasattr(self, 'header_channel_label'):
+        """チャンネルの入口を常に表示し、長い名前で操作ボタンを押し出さない。"""
+        if hasattr(self, "header_channel_label"):
             channel = self.channel.get().strip()
-            if channel:
-                self.header_channel_label.configure(text_color="#E8F0FF")
-            else:
-                self.header_channel_label.configure(text_color=TEXT_SUBTLE)
-                # プレースホルダー的に表示
-                self.channel.set("")
+            short = channel if len(channel) <= 18 else channel[:17] + "…"
+            self.header_channel_label.configure(text=f"{short}  ›" if channel else "チャンネルを設定  ›")
 
     def _on_channel_mode_change(self, *args):
         """チャンネルモード変更時の処理"""
@@ -1197,80 +917,8 @@ class KototsunaApp:
         except Exception as e:
             messagebox.showerror("エラー", f"コピーに失敗しました:\n{e}")
 
-    def _build_main_content(self):
-        """メインコンテンツ（チャットログ + 特別イベント）"""
-        main = ctk.CTkFrame(self.body_container, fg_color="transparent")
-        main.pack(fill="both", expand=True, side="left")
 
-        # 水平PanedWindow
-        self.main_paned = tk.PanedWindow(main, orient=tk.HORIZONTAL, sashwidth=4, bg=BORDER, bd=0)
-        self.main_paned.pack(fill="both", expand=True)
 
-        # === 左: チャットログ ===
-        self.left_frame = ctk.CTkFrame(self.main_paned, fg_color=CARD_BG, corner_radius=12)
-        self._build_chat_log_area()
-
-        # === 右: 特別イベント（全体） ===
-        self.event_frame = ctk.CTkFrame(self.main_paned, fg_color=CARD_BG, corner_radius=12)
-        self._build_event_log_area()
-
-        self.main_paned.add(self.left_frame, minsize=500, stretch="always")
-        self.main_paned.add(self.event_frame, minsize=200, width=280)
-
-        # 参加者リスト自動更新（右パネル用）
-        self.participant_refresh_timer = None
-        self.start_participant_auto_refresh()
-
-        # TTS自動起動
-        self.master.after(300, self._ensure_tts_started)
-        # 統計表示更新
-        self.master.after(1000, self._update_stats_display)
-
-    def _build_chat_log_area(self):
-        """チャットログエリアを構築"""
-        self.left_frame.grid_rowconfigure(0, weight=1)
-        self.left_frame.grid_columnconfigure(0, weight=1)
-
-        # 垂直分割 (タイル | システムログ)
-        self.comment_paned = tk.PanedWindow(self.left_frame, orient=tk.VERTICAL, sashwidth=4, bg=BORDER, bd=0)
-        self.comment_paned.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-
-        # タイル表示（コメントログ）
-        tile_container = ctk.CTkFrame(self.comment_paned)
-        tile_header = ctk.CTkFrame(tile_container, fg_color="transparent")
-        tile_header.pack(fill="x", padx=6, pady=(6, 4))
-        ctk.CTkLabel(tile_header, text="💬 コメントログ", font=FONT_LABEL).pack(side="left")
-
-        self.comment_tile_frame = ctk.CTkScrollableFrame(tile_container, fg_color="transparent", height=400, corner_radius=10)
-        self.comment_tile_frame.pack(fill="both", expand=True, padx=4, pady=(0, 4))
-        self.comment_tiles = []
-        self.comment_tile_limit = 120
-
-        # システムログ
-        log_container = ctk.CTkFrame(self.comment_paned)
-        ctk.CTkLabel(log_container, text="📋 システムログ", font=("Segoe UI Semibold", 11), anchor="w").pack(fill="x", padx=5, pady=(4, 2))
-        self.log = ctk.CTkTextbox(log_container, width=500, height=100, font=("Consolas", 11))
-        self._apply_log_style(self.log)
-        self.log.pack(fill="both", expand=True, padx=5, pady=(0, 4))
-        self.log.insert("0.0", "--- システムログ開始 ---\n")
-        self.log.configure(state="disabled")
-
-        self.comment_paned.add(tile_container, minsize=300)
-        self.comment_paned.add(log_container, minsize=80)
-
-        self.log_history = deque(maxlen=self._log_history_limit)
-
-    def _build_event_log_area(self):
-        """特別イベントログエリアを構築"""
-        header = ctk.CTkFrame(self.event_frame, fg_color="transparent")
-        header.pack(fill="x", pady=(10, 6), padx=6)
-        ctk.CTkLabel(header, text="⭐ 特別イベント", font=FONT_LABEL).pack(side="left", padx=10)
-
-        self.event_log = ctk.CTkTextbox(self.event_frame, width=200, height=150, font=("Consolas", 11))
-        self._apply_log_style(self.event_log)
-        self.event_log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.event_log.insert("0.0", "--- 特別イベントログ ---\n")
-        self.event_log.configure(state="disabled")
 
     def _build_participant_area(self):
         """参加者エリアを構築"""
@@ -1295,82 +943,15 @@ class KototsunaApp:
     # 右パネル（折りたたみ可能）
     # ========================================
 
-    def _toggle_right_panel(self, panel_id: str):
-        """右パネルの表示/非表示を切り替え"""
-        # 同じパネルをクリックした場合は閉じる
-        if self.active_panel == panel_id:
-            self._close_right_panel()
-            return
 
-        # 既存パネルがあれば破棄
-        if self.right_panel_frame:
-            self.right_panel_frame.destroy()
 
-        # 新しいパネルを作成
-        self.active_panel = panel_id
-        self._update_nav_button_states()
 
-        self.right_panel_frame = ctk.CTkFrame(self.body_container, fg_color=PANEL_BG, width=380, corner_radius=12)
-        self.right_panel_frame.pack(fill="y", side="right", padx=(8, 0))
-        self.right_panel_frame.pack_propagate(False)
 
-        # ヘッダー
-        header = ctk.CTkFrame(self.right_panel_frame, fg_color=CARD_BG, height=40, corner_radius=0)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-
-        titles = {"settings": "設定", "dictionary": "辞書管理", "participants": "参加者管理", "viewers": "常連管理", "commands": "コマンド管理", "plugins": "プラグイン管理", "comment_tester": "コメントテスター"}
-        ctk.CTkLabel(header, text=titles.get(panel_id, ""), font=FONT_LABEL).pack(side="left", padx=12)
-        ctk.CTkButton(header, text="✕", command=self._close_right_panel, width=32, height=32, fg_color="transparent", hover_color=BORDER).pack(side="right", padx=4)
-
-        # コンテンツ
-        self.right_panel_content = ctk.CTkScrollableFrame(self.right_panel_frame, fg_color="transparent")
-        self.right_panel_content.pack(fill="both", expand=True, padx=12, pady=12)
-
-        # パネル別コンテンツ
-        builders = {
-            "settings": self._build_settings_panel,
-            "dictionary": self._build_dictionary_panel,
-            "participants": self._build_participants_panel,
-            "viewers": self._build_viewers_panel,
-            "resources": self._build_resources_panel,
-            "commands": self._build_commands_panel,
-            "plugins": self._build_plugins_panel,
-            "subtitle": self._build_subtitle_panel,
-            "obs": self._build_obs_panel,
-            "comment_tester": self._build_comment_tester_panel,
-        }
-        builder = builders.get(panel_id)
-        if builder:
-            builder(self.right_panel_content)
-
-    def _close_right_panel(self):
-        """右パネルを閉じる"""
-        if self.right_panel_frame:
-            self.right_panel_frame.destroy()
-            self.right_panel_frame = None
-            self.right_panel_content = None
-        self.active_panel = None
-        self._update_nav_button_states()
-
-    def _update_nav_button_states(self):
-        """ナビゲーションボタンの選択状態を更新"""
-        for pid, btn in self.nav_buttons.items():
-            if pid == self.active_panel:
-                btn.configure(fg_color=ACCENT, text_color="#FFFFFF")
-            else:
-                btn.configure(fg_color=CARD_BG, text_color="#FFFFFF")
-
-    def _add_panel_section(self, parent, title):
-        """パネルセクションタイトルを追加"""
-        ctk.CTkLabel(parent, text=title.upper(), font=("Segoe UI Semibold", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 8))
-
-    def _add_panel_divider(self, parent):
-        """パネル区切り線を追加"""
-        ctk.CTkFrame(parent, height=1, fg_color=BORDER).pack(fill="x", pady=12)
 
     def _build_settings_panel(self, parent):
         """設定パネルのコンテンツ"""
+        pages = self._build_settings_pages(parent)
+        parent = pages["接続"]
         # Twitch接続設定
         self._add_panel_section(parent, "TWITCH接続")
 
@@ -1387,7 +968,7 @@ class KototsunaApp:
 
         self.switch_account_btn = ctk.CTkButton(
             auth_inner, text="認証", width=60, height=26,
-            font=("Segoe UI", 10), fg_color=ACCENT_SECONDARY, hover_color="#1EA4D8",
+            font=("Segoe UI", 10), fg_color=ACCENT_SECONDARY, text_color=text_on(ACCENT_SECONDARY), hover_color="#1EA4D8",
             command=self._switch_account
         )
         self.switch_account_btn.grid(row=0, column=2, sticky="e")
@@ -1438,12 +1019,36 @@ class KototsunaApp:
 
         ctk.CTkLabel(parent, text="※ twitch.tv/○○○ の ○○○ 部分", font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 4))
 
+        self._update_auth_button_states(bool(self.token))
         # 初期状態
         if self.channel_mode.get() == "auto":
             self.channel_entry.configure(state="disabled")
 
         self._add_panel_divider(parent)
 
+        ctk.CTkLabel(parent, text="Twitch Client ID（空欄OK・省略可）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
+        ctk.CTkEntry(parent, textvariable=self.client_id, height=32).pack(fill="x", pady=(0, 2))
+        hint_text = "空欄の場合はアプリ同梱のClient IDを使用します" if APP_DEFAULT_CLIENT_ID else "空欄の場合は下のリンクから取得してください"
+        ctk.CTkLabel(parent, text=hint_text, font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 2))
+        ctk.CTkButton(parent, text="↗ 自分のClient IDを取得（任意）", command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps"),
+                      fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
+
+        self._add_panel_divider(parent)
+
+        self._add_panel_section(parent, "翻訳の表示先")
+        ctk.CTkLabel(parent, text="原文と翻訳はアプリ・OBSに表示されます。", text_color=TEXT_SUBTLE,
+                     font=FONT_BODY).pack(anchor="w", pady=(0, 8))
+        ctk.CTkSwitch(parent, text="Twitchチャットにも投稿する",
+                      variable=self.chat_translation_post_to_twitch,
+                      command=self._on_chat_translation_post_changed,
+                      onvalue=True, offvalue=False).pack(anchor="w", pady=(0, 10))
+        ctk.CTkLabel(parent, text="投稿時の言語2", text_color=TEXT_SUBTLE).pack(anchor="w")
+        self.translate_mode_2_menu = ctk.CTkOptionMenu(
+            parent, variable=self.translate_mode_2_var, values=["オフ", "自動", "英→日", "日→英"],
+            state="normal" if self.chat_translation_post_to_twitch.get() else "disabled",
+        )
+        self.translate_mode_2_menu.pack(fill="x", pady=(0, 8))
+        parent = pages["音声"]
         self._add_panel_section(parent, "翻訳・音声認識")
         ctk.CTkLabel(
             parent,
@@ -1462,15 +1067,6 @@ class KototsunaApp:
         ctk.CTkButton(mic_frame, text="🔄", command=self._refresh_mic_list, width=32, height=28).pack(side="left")
         # 初期化時にマイクリストを取得
         self.master.after(500, self._refresh_mic_list)
-
-        ctk.CTkLabel(parent, text="Twitch Client ID（空欄OK・省略可）", font=("Segoe UI", 10), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(8, 0))
-        ctk.CTkEntry(parent, textvariable=self.client_id, height=32).pack(fill="x", pady=(0, 2))
-        hint_text = "空欄の場合はアプリ同梱のClient IDを使用します" if APP_DEFAULT_CLIENT_ID else "空欄の場合は下のリンクから取得してください"
-        ctk.CTkLabel(parent, text=hint_text, font=("Segoe UI", 9), text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 2))
-        ctk.CTkButton(parent, text="↗ 自分のClient IDを取得（任意）", command=lambda: webbrowser.open("https://dev.twitch.tv/console/apps"),
-                      fg_color="transparent", text_color=ACCENT_SECONDARY, anchor="w", height=24).pack(anchor="w")
-
-        self._add_panel_divider(parent)
 
         # TTSエンジン設定
         self._add_panel_section(parent, "TTSエンジン設定")
@@ -1538,6 +1134,7 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
+        parent = pages["表示"]
         # UIテーマ（builtin + カスタム）
         self._add_panel_section(parent, "UIテーマ")
         current_key = self.config.get("ui_theme", "default")
@@ -1548,6 +1145,8 @@ class KototsunaApp:
             command=self._on_theme_changed, width=280
         )
         self.ui_theme_menu.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(parent, text="テーマの変更は次回起動時に反映されます。",
+                     font=FONT_BODY, text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 8))
 
         theme_btn_row = ctk.CTkFrame(parent, fg_color="transparent")
         theme_btn_row.pack(fill="x", pady=(0, 8))
@@ -1589,6 +1188,7 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
+        parent = pages["効果音"]
         # イベント効果音
         self._add_panel_section(parent, "イベント効果音")
 
@@ -1650,6 +1250,7 @@ class KototsunaApp:
 
         self._add_panel_divider(parent)
 
+        parent = pages["管理"]
         # 初見視聴者ウェルカム（Issue #140）
         self._build_welcome_section(parent)
         self._add_panel_divider(parent)
@@ -1958,7 +1559,7 @@ class KototsunaApp:
         ctk.CTkButton(
             parent, text="🧪 プレビューを表示",
             command=self._on_welcome_test_preview,
-            height=28, fg_color=ACCENT_SECONDARY, hover_color="#1EA4D8",
+            height=28, fg_color=ACCENT_SECONDARY, text_color=text_on(ACCENT_SECONDARY), hover_color="#1EA4D8",
         ).pack(fill="x", pady=(2, 0))
 
     def _on_welcome_settings_changed(self) -> None:
@@ -2276,7 +1877,7 @@ class KototsunaApp:
         # ボタン行1
         btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(8, 0))
-        ctk.CTkButton(btn_frame, text="📢 リスト送信", command=self.send_participant_list_to_chat, fg_color=ACCENT).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ctk.CTkButton(btn_frame, text="📢 リスト送信", command=self.send_participant_list_to_chat, fg_color=ACCENT, text_color=text_on(ACCENT)).pack(side="left", fill="x", expand=True, padx=(0, 4))
         ctk.CTkButton(btn_frame, text="🔄 更新", command=self._refresh_panel_participants, width=60).pack(side="left", padx=4)
         ctk.CTkButton(btn_frame, text="🗑️", command=self.clear_participants, width=40, fg_color="#EF4444", hover_color="#DC2626").pack(side="right")
 
@@ -2478,7 +2079,7 @@ class KototsunaApp:
             dialog.destroy()
 
         ctk.CTkButton(
-            btn_frame, text="設定", command=on_set, fg_color=ACCENT, height=32
+            btn_frame, text="設定", command=on_set, fg_color=ACCENT, text_color=text_on(ACCENT), height=32
         ).pack(side="left", fill="x", expand=True, padx=(0, 4))
         ctk.CTkButton(
             btn_frame, text="解除", command=on_remove,
@@ -3302,6 +2903,7 @@ class KototsunaApp:
                         font=("Consolas", 10), text_color=TEXT_SUBTLE, anchor="w"
                     ).pack(anchor="w")
 
+        self._refresh_plugin_list = refresh_plugin_list
         refresh_plugin_list()
 
         self._add_panel_divider(parent)
@@ -3839,7 +3441,7 @@ class KototsunaApp:
             width=60,
             height=28,
             font=("Segoe UI", 11),
-            fg_color=ACCENT_SECONDARY,
+            fg_color=ACCENT_SECONDARY, text_color=text_on(ACCENT_SECONDARY),
             hover_color="#1EA4D8",
             command=self._switch_account
         )
@@ -3912,8 +3514,34 @@ class KototsunaApp:
         )
         self.translation_toggle.pack_forget()  # gridで配置するため
         self.translation_toggle.grid(row=3, column=1, sticky="w", padx=(0, 14), pady=6)
-        ctk.CTkLabel(card_connect, text="翻訳言語2", font=FONT_SUBTITLE, text_color=TEXT_SUBTLE).grid(row=4, column=0, sticky="e", padx=12, pady=6)
-        ctk.CTkOptionMenu(card_connect, variable=self.translate_mode_2_var, values=['オフ', '自動', '英→日', '日→英'], height=34, fg_color=PANEL_BG, button_color=ACCENT_SECONDARY, button_hover_color="#1EA4D8").grid(row=4, column=1, sticky="w", padx=(0, 14), pady=6)
+        ctk.CTkLabel(card_connect, text="翻訳の投稿", font=FONT_SUBTITLE, text_color=TEXT_SUBTLE).grid(row=4, column=0, sticky="e", padx=12, pady=6)
+        ctk.CTkSwitch(
+            card_connect,
+            text="Twitchチャットにも投稿する",
+            variable=self.chat_translation_post_to_twitch,
+            command=self._on_chat_translation_post_changed,
+            onvalue=True,
+            offvalue=False,
+            font=FONT_BODY,
+        ).grid(row=4, column=1, sticky="w", padx=(0, 14), pady=6)
+        ctk.CTkLabel(card_connect, text="投稿時の言語2", font=FONT_SUBTITLE, text_color=TEXT_SUBTLE).grid(row=5, column=0, sticky="e", padx=12, pady=6)
+        self.translate_mode_2_menu = ctk.CTkOptionMenu(
+            card_connect,
+            variable=self.translate_mode_2_var,
+            values=['オフ', '自動', '英→日', '日→英'],
+            state="normal" if self.chat_translation_post_to_twitch.get() else "disabled",
+            height=34,
+            fg_color=PANEL_BG,
+            button_color=ACCENT_SECONDARY,
+            button_hover_color="#1EA4D8",
+        )
+        self.translate_mode_2_menu.grid(row=5, column=1, sticky="w", padx=(0, 14), pady=6)
+        ctk.CTkLabel(
+            card_connect,
+            text="配信映像に表示する場合は、投稿OFFのまま使えます。",
+            font=("Segoe UI", 10),
+            text_color=TEXT_SUBTLE,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=14, pady=(2, 10))
 
         # 音声/読み上げカード
         card_voice = ctk.CTkFrame(controls, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
@@ -4990,10 +4618,10 @@ class KototsunaApp:
         """翻訳統計ラベルを更新"""
         try:
             stats = translator.get_stats()
-            msg = f"翻訳統計: {stats.get('requests',0)} req / {stats.get('cache_hits',0)} hit / {stats.get('filtered',0)} filtered"
+            msg = f"翻訳 {stats.get('requests', 0)}   ·   キャッシュ {stats.get('cache_hits', 0)}   ·   フィルター {stats.get('filtered', 0)}"
             avg_ms = stats.get("avg_api_ms")
             if avg_ms is not None:
-                msg += f" / avg {avg_ms:.0f}ms"
+                msg += f"   ·   {avg_ms:.0f} ms"
             if hasattr(self, "stats_label"):
                 self.stats_label.configure(text=msg)
         except Exception as e:
@@ -5076,8 +4704,8 @@ class KototsunaApp:
                     except ValueError:
                         pass
             textbox.configure(
-                fg_color=self.comment_bg.get(),
-                text_color=self.comment_fg.get(),
+                fg_color=self.ui_palette["PANEL_BG"] if self.comment_bg.get() == "#0E1728" else self.comment_bg.get(),
+                text_color=self.ui_palette["TEXT_PRIMARY"] if self.comment_fg.get() == "#E8F0FF" else self.comment_fg.get(),
                 font=font_tuple
             )
         except Exception as e:
@@ -5088,6 +4716,8 @@ class KototsunaApp:
         if not hasattr(self, "comment_tile_frame") or not self.comment_tile_frame:
             return
 
+        if hasattr(self, "follow_comments") and not self.follow_comments.get():
+            return
         target = 0.0 if self.chat_html_newest_first.get() else 1.0
         try:
             self.comment_tile_frame.after(
@@ -5647,155 +5277,13 @@ class KototsunaApp:
                     f"[tester:{trace_id}] gui.add_comment_tile start "
                     f"user={comment.display_username} existing_tiles={len(self.comment_tiles)}"
                 )
-            style = self.comment_bubble_style.get()
-            if style == "bubble":
-                tile_bg = "#1b2b44"
-                border = "#38BDF8"
-                radius = 18
-            elif style == "minimal":
-                tile_bg = "#0E1728"
-                border = "#1F2C43"
-                radius = 8
-            else:  # classic
-                tile_bg = "#2B3544"
-                border = "#3F4E5F"
-                radius = 12
-
-            tile = ctk.CTkFrame(
-                self.comment_tile_frame,
-                fg_color=tile_bg,
-                corner_radius=radius,
-                border_width=1,
-                border_color=border
+            if getattr(self, "comment_empty", None) is not None:
+                self.comment_empty.destroy()
+                self.comment_empty = None
+            tile = create_comment_tile(
+                self.comment_tile_frame, comment, self.ui_palette,
+                self.comment_bubble_style.get(), self._get_emote_tk_image,
             )
-
-            # 上段: アイコン + 内容
-            header = ctk.CTkFrame(tile, fg_color="transparent")
-            header.pack(fill="x", padx=6, pady=(6, 4))
-
-            # アイコンの代わりにカラーサークル + イニシャル
-            avatar_color = comment.color if comment.color else "#5B7C99"
-            initials = (comment.display_username[:2] or "?").upper()
-            avatar = ctk.CTkFrame(
-                header,
-                width=32,
-                height=32,
-                corner_radius=16,
-                fg_color=avatar_color,
-                border_width=2,
-                border_color="#FFFFFF"
-            )
-            avatar.pack(side="left")
-            avatar.pack_propagate(False)
-            ctk.CTkLabel(
-                avatar,
-                text=initials,
-                font=("Arial", 13, "bold"),
-                text_color="#FFFFFF"
-            ).pack(expand=True, fill="both")
-
-            info = ctk.CTkFrame(header, fg_color="transparent")
-            info.pack(side="left", fill="x", expand=True, padx=(8, 0))
-
-            # 1行目: 名前 + バッジ + プラットフォームチップ
-            top_line = ctk.CTkFrame(info, fg_color="transparent")
-            top_line.pack(fill="x", pady=(0, 1))
-
-            name_line = f"{comment.display_username} {comment.badge_text}" if comment.badge_text else comment.display_username
-            username_color = comment.color if comment.color else "#E8F0FF"
-            ctk.CTkLabel(
-                top_line,
-                text=name_line,
-                anchor="w",
-                justify="left",
-                font=("Arial", 13, "bold"),
-                text_color=username_color
-            ).pack(side="left", anchor="w")
-
-            platform_chip = ctk.CTkLabel(
-                top_line,
-                text=comment.platform_name,
-                fg_color="#5B7C99",
-                corner_radius=10,
-                font=("Arial", 10, "bold"),
-                text_color="#FFFFFF",
-                width=60
-            )
-            platform_chip.pack(side="right", padx=(6, 0))
-
-            # 2行目: 時刻 + メッセージ（同じ行で詰める）
-            meta_and_msg = ctk.CTkFrame(info, fg_color="transparent")
-            meta_and_msg.pack(fill="x")
-
-            ctk.CTkLabel(
-                meta_and_msg,
-                text=comment.formatted_timestamp,
-                anchor="w",
-                font=("Arial", 11),
-                text_color="#B0BEC5",
-                width=70
-            ).pack(side="left", padx=(0, 6))
-
-            # エモートがある場合はText widgetでインライン画像表示
-            if comment.emotes:
-                msg_text = tk.Text(
-                    meta_and_msg,
-                    wrap="word",
-                    height=1,
-                    bg=tile_bg,
-                    fg="#FFFFFF",
-                    font=("Arial", 13),
-                    borderwidth=0,
-                    highlightthickness=0,
-                    relief="flat",
-                    cursor="arrow",
-                    insertwidth=0,
-                    selectbackground=tile_bg,
-                )
-                msg_text.pack(side="left", fill="x", expand=True)
-                sorted_emotes = sorted(comment.emotes, key=lambda e: e["start"])
-                last_end = 0
-                for emote in sorted_emotes:
-                    start = emote.get("start", 0)
-                    end = emote.get("end", 0) + 1
-                    text_before = comment.message[last_end:start]
-                    if text_before:
-                        msg_text.insert("end", text_before)
-                    img = self._get_emote_tk_image(emote)
-                    if img:
-                        msg_text.image_create("end", image=img)
-                    else:
-                        msg_text.insert("end", emote.get("name", ""))
-                    last_end = end
-                if last_end < len(comment.message):
-                    msg_text.insert("end", comment.message[last_end:])
-                msg_text.config(state="disabled")
-                # 高さ自動調整
-                msg_text.update_idletasks()
-                line_count = int(msg_text.index("end-1c").split(".")[0])
-                msg_text.config(height=max(1, line_count))
-            else:
-                ctk.CTkLabel(
-                    meta_and_msg,
-                    text=comment.message,
-                    anchor="w",
-                    justify="left",
-                    wraplength=420,
-                    font=("Arial", 13),
-                    text_color="#FFFFFF"
-                ).pack(side="left", fill="x", expand=True)
-
-            # 翻訳結果（明るい青色）
-            if comment.translated:
-                ctk.CTkLabel(
-                    info,
-                    text=f"↳ {comment.translated}",
-                    anchor="w",
-                    justify="left",
-                    wraplength=420,
-                    font=("Arial", 13),
-                    text_color="#B3D4FF"
-                ).pack(fill="x", pady=(3, 1))
 
             # 「上が新しい」モードは既存タイルを触らず先頭に差し込む
             # （全タイルをpack_forget→再packする_sync_comment_tile_orderは呼ばない）
@@ -5809,6 +5297,7 @@ class KototsunaApp:
                 oldest = self.comment_tiles.pop(0)
                 oldest.destroy()
 
+            self.comment_count_label.configure(text=f"{len(self.comment_tiles)} 件")
             self._scroll_comment_tiles_to_edge()
 
             logger.debug(f"Comment tile added: {comment.display_username}")
@@ -6160,6 +5649,9 @@ class KototsunaApp:
                 for tile in self.comment_tiles:
                     tile.destroy()
                 self.comment_tiles.clear()
+                if getattr(self, "comment_empty", None) is None:
+                    self._show_comment_empty_state()
+                self.comment_count_label.configure(text="0 件")
             logger.info("Chat log cleared by user")
 
     def start_auth(self):
@@ -6300,12 +5792,14 @@ class KototsunaApp:
             if hasattr(self, 'auth_btn'):
                 self.auth_btn.configure(state=auth_state)
                 if authenticated:
-                    self.auth_btn.configure(fg_color="#4B5563", text="✓ 認証済み")
+                    self.auth_btn.configure(fg_color=PANEL_BG, text="✓ 認証済み")
                 else:
-                    self.auth_btn.configure(fg_color="#0891B2", text="① Twitch認証")
+                    self.auth_btn.configure(fg_color=PANEL_BG, text="① Twitch認証")
 
             if hasattr(self, 'start_stop_btn'):
-                self.start_stop_btn.configure(state=bot_state)
+                self.start_stop_btn.configure(state=bot_state, text_color_disabled=TEXT_SUBTLE)
+                if not self.bot_instance:
+                    self.start_stop_btn.configure(fg_color=ACCENT if authenticated else BORDER)
 
             if hasattr(self, 'disconnect_btn'):
                 self.disconnect_btn.configure(state=bot_state)
@@ -6640,7 +6134,7 @@ class KototsunaApp:
         ctk.CTkButton(
             btn_frame, text="送信する",
             command=lambda: _decide(True),
-            width=140, fg_color=ACCENT, hover_color="#1CA04E",
+            width=140, fg_color=ACCENT, text_color=text_on(ACCENT), hover_color="#1CA04E",
         ).pack(side="left", padx=(0, 8))
 
         ctk.CTkButton(
@@ -6749,7 +6243,7 @@ class KototsunaApp:
         ctk.CTkButton(
             btn_frame, text="送信",
             command=_send,
-            width=120, fg_color=ACCENT, hover_color="#1CA04E",
+            width=120, fg_color=ACCENT, text_color=text_on(ACCENT), hover_color="#1CA04E",
         ).pack(side="left", padx=(0, 8))
 
         ctk.CTkButton(
@@ -6894,7 +6388,7 @@ class KototsunaApp:
         self._update_btn = ctk.CTkButton(
             btn_frame, text="アップデート",
             command=lambda: self._start_update(release, dialog),
-            width=120, fg_color=ACCENT, hover_color="#1CA04E",
+            width=120, fg_color=ACCENT, text_color=text_on(ACCENT), hover_color="#1CA04E",
         )
         self._update_btn.pack(side="left", padx=(0, 8))
 
@@ -7131,6 +6625,15 @@ class KototsunaApp:
         save_config(self.config)
         status = "有効" if enabled else "無効"
         self.log_message(f"チャット翻訳を{status}にしました")
+
+    def _on_chat_translation_post_changed(self) -> None:
+        enabled = self.chat_translation_post_to_twitch.get()
+        self.config = {**self.config, "chat_translation_post_to_twitch": enabled}
+        save_config(self.config)
+        if hasattr(self, "translate_mode_2_menu"):
+            self.translate_mode_2_menu.configure(state="normal" if enabled else "disabled")
+        status = "有効" if enabled else "無効"
+        self.log_message(f"翻訳のTwitch投稿を{status}にしました")
 
     def _on_translation_engine_changed(self, value: str) -> None:
         """互換用の空メソッド。翻訳エンジン切り替えUIは削除済み。"""
@@ -7830,7 +7333,7 @@ class KototsunaApp:
             text="デバッグ情報をコピー",
             command=self.copy_debug_info,
             width=180,
-            fg_color=ACCENT_SECONDARY,
+            fg_color=ACCENT_SECONDARY, text_color=text_on(ACCENT_SECONDARY),
             hover_color="#1EA4D8"
         ).pack(side="left", padx=5)
 
