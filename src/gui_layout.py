@@ -2,11 +2,14 @@
 
 import tkinter as tk
 from collections import deque
+from pathlib import Path
 from typing import Callable
 
 import customtkinter as ctk
+from PIL import Image
 
 from src.gui_theme import contrast_ratio, text_on
+from src.logger import logger
 
 
 PANEL_INFO = {
@@ -82,9 +85,20 @@ class WorkspaceLayoutMixin:
         header.grid_columnconfigure(1, weight=1)
         brand = ctk.CTkFrame(header, fg_color="transparent")
         brand.grid(row=0, column=0, rowspan=2, sticky="w", padx=(20, 24))
-        ctk.CTkLabel(brand, text="こ", width=40, height=40, corner_radius=13,
-                     fg_color=p["ACCENT"], text_color=text_on(p["ACCENT"]),
-                     font=self._font(22, "bold")).pack(side="left", padx=(0, 10))
+        self._brand_icon_image = None
+        try:
+            icon_path = Path(self._get_icon_path()).with_name("icon_fullsize.ico")
+            with Image.open(icon_path) as source:
+                icon = source.copy()
+            scale = 40 / max(icon.size)
+            size = (max(1, round(icon.width * scale)), max(1, round(icon.height * scale)))
+            self._brand_icon_image = ctk.CTkImage(light_image=icon, dark_image=icon, size=size)
+        except OSError as exc:
+            # 装飾画像が欠けても接続操作まで使えなくしない。
+            logger.warning("Header icon could not be loaded (%s)", type(exc).__name__)
+        self.brand_icon = ctk.CTkLabel(brand, text="", image=self._brand_icon_image,
+                                      width=40, height=40, fg_color="transparent")
+        self.brand_icon.pack(side="left", padx=(0, 10))
         wordmark = ctk.CTkFrame(brand, fg_color="transparent")
         wordmark.pack(side="left")
         ctk.CTkLabel(wordmark, text="ことつな！", font=self._font(22, "bold"),
