@@ -239,6 +239,10 @@ def test_theme_changes_recolor_existing_widgets_and_keep_session(app):
         assert emote_text.cget("background") == palette["PANEL_BG"]
         name = next(w for w in descendants(tile) if isinstance(w, ctk.CTkLabel) and w.cget("text").startswith("はる"))
         assert contrast_ratio(name.cget("text_color"), palette["PANEL_BG"]) >= 4.5
+        copy_button = next(w for w in descendants(app.main_frame)
+                           if isinstance(w, ctk.CTkButton) and w.cget("text") == "表示URLをコピー")
+        assert copy_button.cget("hover_color") == palette["ACCENT_SECONDARY"]
+        assert contrast_ratio(copy_button.cget("text_color"), copy_button.cget("hover_color")) >= 4.5
         assert hidden_panel.cget("fg_color") == palette["CARD_BG"]
         assert app.ui_theme_menu.cget("dropdown_fg_color") == palette["PANEL_BG"]
         assert tabs._segmented_button.cget("selected_color") == palette["BORDER"]
@@ -274,7 +278,10 @@ def test_custom_theme_reloads_and_preserves_explicit_log_colors(app, monkeypatch
         assert app.main_frame.cget("fg_color") == color
         assert app.log.cget("fg_color") == "#123456"
         assert app.log.cget("text_color") == "#FEDCBA"
+    app._toggle_right_panel("obs")
+    new_panel = app.right_panel_frame
     app._on_theme_changed(gui.THEMES["default"]["name"])
+    assert new_panel.cget("fg_color") == gui.THEMES["default"]["CARD_BG"]
     assert app.left_frame.cget("fg_color") == gui.THEMES["default"]["CARD_BG"]
     assert app.ui_palette == gui.THEMES["default"]
 

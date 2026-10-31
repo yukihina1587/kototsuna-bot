@@ -30,26 +30,37 @@ class WorkspaceLayoutMixin:
         adjusted = max(10, size + self.ui_palette.get("FONT_SIZE_BASE", 13) - 13)
         return (self.ui_palette.get("FONT_FAMILY", "Segoe UI"), adjusted, weight)
 
-    def _surface(self, parent: tk.Misc, **kwargs) -> ctk.CTkFrame:
-        return ctk.CTkFrame(parent, **{
-            "fg_color": self.ui_palette["CARD_BG"], "border_width": 1,
+    def _surface(self, parent: tk.Misc, palette_role: str = "CARD_BG", **kwargs) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent, **{
+            "fg_color": self.ui_palette[palette_role], "border_width": 1,
             "border_color": self.ui_palette["BORDER"],
             "corner_radius": self.ui_palette.get("CORNER_RADIUS", 14), **kwargs,
         })
+        frame._palette_bindings = {"fg_color": ("palette", palette_role, frame.cget("fg_color"))}
+        return frame
 
     def _button(self, parent: tk.Misc, text: str, command: Callable,
                 primary: bool = False, **kwargs) -> ctk.CTkButton:
         palette = self.ui_palette
-        return ctk.CTkButton(parent, **{
+        button = ctk.CTkButton(parent, **{
             "text": text, "command": command, "height": 34, "font": self._font(12),
             "fg_color": palette["ACCENT"] if primary else palette["PANEL_BG"],
             "text_color": text_on(palette["ACCENT"]) if primary else palette["TEXT_PRIMARY"],
             "hover_color": palette["ACCENT_SECONDARY"] if primary else palette["BORDER"],
             **kwargs,
         })
+        # サイバーパンク等で境界とアクセントが同色でも用途を区別する。
+        roles = {"fg_color": "ACCENT" if primary else "PANEL_BG",
+                 "hover_color": "ACCENT_SECONDARY" if primary else "BORDER"}
+        button._palette_bindings = {
+            option: ("palette", role, button.cget(option))
+            for option, role in roles.items() if button.cget(option) == palette[role]
+        }
+        return button
 
     def build_widgets(self) -> None:
         self.main_frame = ctk.CTkFrame(self.master, fg_color=self.ui_palette["APP_BG"], corner_radius=0)
+        self.main_frame._palette_bindings = {"fg_color": ("palette", "APP_BG", self.ui_palette["APP_BG"])}
         self.main_frame.pack(fill="both", expand=True)
         if self.safe_mode:
             self._build_safe_mode_banner()
@@ -109,7 +120,7 @@ class WorkspaceLayoutMixin:
 
     def _build_left_sidebar(self) -> None:
         p = self.ui_palette
-        sidebar = self._surface(self.body_container, width=220, fg_color=p["PANEL_BG"])
+        sidebar = self._surface(self.body_container, palette_role="PANEL_BG", width=220)
         sidebar.grid(row=0, column=0, sticky="ns", padx=(12, 12))
         sidebar.grid_propagate(False)
         sidebar.grid_columnconfigure(0, weight=1)
