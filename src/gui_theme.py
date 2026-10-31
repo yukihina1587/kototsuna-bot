@@ -171,3 +171,98 @@ def apply_widget_theme(palette: dict) -> None:
 
     ctk.ThemeManager.theme = widget_theme(ctk.ThemeManager.theme, palette)
     ctk.set_appearance_mode("Light" if luminance(palette["APP_BG"]) > 0.5 else "Dark")
+
+
+def refresh_widget_colors(root, previous: dict, palette: dict) -> None:
+    """既存ウィジェットを再生成せず、入力・スクロール・接続先を保って配色する。"""
+    import tkinter as tk
+    import customtkinter as ctk
+
+    before = widget_theme(ctk.ThemeManager.theme, previous)
+    after = widget_theme(ctk.ThemeManager.theme, palette)
+    surface_roles = ("APP_BG", "CARD_BG", "PANEL_BG", "BORDER", "ACCENT", "ACCENT_SECONDARY", "ACCENT_WARN")
+    text_roles = ("TEXT_PRIMARY", "TEXT_SUBTLE", "ACCENT", "ACCENT_SECONDARY", "ACCENT_WARN")
+    plans, callbacks = [], []
+
+    def visit(widget):
+        if isinstance(widget, tk.Toplevel) and widget is not root:
+            # テーマエディターなどの独立したプレビュー配色には触れない。
+            return
+        defaults = before.get(type(widget).__name__, {})
+        new_defaults = after.get(type(widget).__name__, {})
+        is_ctk = isinstance(widget, (ctk.CTk, ctk.CTkBaseClass, ctk.CTkScrollableFrame))
+        if is_ctk:
+            options = {key for key in defaults if "color" in key}
+            options.update(("fg_color", "bg_color", "text_color", "border_color"))
+            if isinstance(widget, (ctk.CTkOptionMenu, ctk.CTkComboBox)):
+                for key, value in before["DropdownMenu"].items():
+                    if "color" in key:
+                        option = "dropdown_" + key
+                        options.add(option)
+                        defaults = {**defaults, option: value}
+                        new_defaults = {**new_defaults, option: after["DropdownMenu"][key]}
+        elif isinstance(widget, tk.PanedWindow):
+            options = {"background"}
+        elif isinstance(widget, tk.Text) and not isinstance(widget.master, ctk.CTkTextbox):
+            options = {"background", "foreground", "insertbackground", "selectbackground"}
+        else:
+            options = set()
+
+        bindings = getattr(widget, "_palette_bindings", {})
+        updates = {}
+        for option in options:
+            try:
+                value = widget.cget(option)
+            except (ValueError, AttributeError, tk.TclError):
+                continue  # CTk の既定スキーマには公開されていない項目も含まれる。
+            if value is None or value == "transparent":
+                continue
+            binding = bindings.get(option)
+            if binding is None or value != binding[2]:
+                binding = None
+                if option == "text_color":
+                    background = widget.cget("fg_color")
+                    if isinstance(background, str) and background.startswith("#") and value == text_on(background):
+                        binding = ("contrast", "fg_color", value)
+                if binding is None and option in defaults and value == defaults[option]:
+                    binding = ("default", option, value)
+                if binding is None:
+                    roles = text_roles if option in ("text_color", "foreground", "insertbackground") else surface_roles + text_roles
+                    for role in roles:
+                        if value == previous[role]:
+                            binding = ("palette", role, value)
+                            break
+            if binding is None:
+                continue  # 固定の警告色やユーザー指定の色は維持する。
+            kind, key, _ = binding
+            if kind == "palette":
+                updates[option] = palette[key]
+            elif kind == "default":
+                updates[option] = new_defaults[key]
+            bindings[option] = binding
+
+        contrast = bindings.get("text_color")
+        if contrast and contrast[0] == "contrast":
+            background = updates.get("fg_color", widget.cget("fg_color"))
+            if isinstance(background, str) and background.startswith("#"):
+                updates["text_color"] = text_on(background)
+        # 色が同じカスタムテーマを経由しても、元の役割を見失わないよう保持する。
+        for option, value in updates.items():
+            kind, key, _ = bindings[option]
+            bindings[option] = (kind, key, value)
+        widget._palette_bindings = bindings
+        if updates:
+            plans.append((widget, updates))
+        callback = getattr(widget, "_refresh_palette", None)
+        if callback:
+            callbacks.append(callback)
+        # CTkTabview等は通常のwinfo_childrenから内部コントロールを隠す。
+        for child in tk.Misc.winfo_children(widget):
+            visit(child)
+
+    visit(root)
+    # 親のconfigureが子の背景も更新するため、全ウィジェットの旧色を先に読む。
+    for widget, updates in plans:
+        widget.configure(**updates)
+    for callback in callbacks:
+        callback(palette)

@@ -78,9 +78,10 @@ def create_comment_tile(parent: tk.Misc, comment: CommentData, palette: dict,
     header.pack(fill="x", pady=(0, 6))
 
     avatar_color = readable_color(comment.color, background, palette["ACCENT"])
-    ctk.CTkLabel(header, text=(comment.display_username[:1] or "?").upper(),
+    avatar = ctk.CTkLabel(header, text=(comment.display_username[:1] or "?").upper(),
                  width=28, height=28, corner_radius=9, fg_color=avatar_color,
-                 text_color=text_on(avatar_color), font=(family, size, "bold")).pack(side="left", padx=(0, 8))
+                 text_color=text_on(avatar_color), font=(family, size, "bold"))
+    avatar.pack(side="left", padx=(0, 8))
     ctk.CTkLabel(header, text=comment.formatted_timestamp, width=55,
                  font=(family, max(10, size - 3)), text_color=muted).pack(side="right", padx=(8, 0))
     # 長いユーザー名は本文の幅に合わせる。バッジとプラットフォームも残す。
@@ -92,9 +93,10 @@ def create_comment_tile(parent: tk.Misc, comment: CommentData, palette: dict,
     _bind_wrap(name_label)
 
     if comment.emotes:
-        _emote_text(body, comment, background, text, (family, size), image_getter)
+        message_widget = _emote_text(body, comment, background, text, (family, size), image_getter)
     else:
-        _wrapping_label(body, comment.message, (family, size), text)
+        message_widget = _wrapping_label(body, comment.message, (family, size), text)
+    translated_label = None
     if comment.translated:
         translation = ctk.CTkFrame(body, fg_color="transparent", corner_radius=0)
         translation.pack(fill="x", pady=(5, 2))
@@ -102,8 +104,23 @@ def create_comment_tile(parent: tk.Misc, comment: CommentData, palette: dict,
                      fg_color=palette["ACCENT"]).pack(side="left", fill="y", padx=(0, 9))
         content = ctk.CTkFrame(translation, fg_color="transparent")
         content.pack(side="left", fill="x", expand=True)
-        _wrapping_label(content, comment.translated, (family, size),
-                        readable_color(palette["ACCENT"], background, text))
+        translated_label = _wrapping_label(content, comment.translated, (family, size),
+                                           readable_color(palette["ACCENT"], background, text))
     ctk.CTkLabel(body, text=comment.platform_name, height=18,
                  font=(family, max(10, size - 3)), text_color=muted, anchor="w").pack(fill="x", pady=(4, 0))
+
+    def refresh_palette(current: dict) -> None:
+        background, foreground = current["PANEL_BG"], current["TEXT_PRIMARY"]
+        tile.configure(fg_color=background, border_color=current["BORDER"])
+        color = readable_color(comment.color, background, current["ACCENT"])
+        avatar.configure(fg_color=color, text_color=text_on(color))
+        name_label.configure(text_color=readable_color(comment.color, background, foreground))
+        if isinstance(message_widget, tk.Text):
+            message_widget.configure(bg=background, fg=foreground)
+        else:
+            message_widget.configure(text_color=foreground)
+        if translated_label is not None:
+            translated_label.configure(text_color=readable_color(current["ACCENT"], background, foreground))
+
+    tile._refresh_palette = refresh_palette
     return tile

@@ -199,6 +199,105 @@ def test_header_actions_keep_original_callbacks(app):
     app.disconnect_all.assert_called_once()
 
 
+def test_theme_changes_recolor_existing_widgets_and_keep_session(app):
+    import customtkinter as ctk
+    import tkinter as tk
+    from src import gui
+    from src.gui_theme import contrast_ratio
+
+    app._toggle_right_panel("dictionary")
+    hidden_panel = app.right_panel_frame
+    app._toggle_right_panel("settings")
+    panel = app.right_panel_frame
+    app.channel.set("unsaved_channel")
+    app.follow_comments.set(False)
+    app._get_emote_tk_image = lambda _emote: None
+    app._add_comment_tile(sample_comment(message="Kappa", emotes=[{"start": 0, "end": 4}]))
+    tile = app.comment_tiles[0]
+    emote_text = next(w for w in descendants(tile) if isinstance(w, tk.Text))
+    app.event_log.configure(state="normal")
+    app.event_log.insert("end", "keep this event\n")
+    app.event_log.configure(state="disabled")
+    app.master.update()
+    sash = app.main_paned.sash_coord(0)
+    session = object()
+    app.bot_instance = session
+    app._update_header_bot_button(True)
+    button = app.start_stop_btn
+    tabs = next(w for w in descendants(panel) if isinstance(w, ctk.CTkTabview))
+    tabs.set("表示")
+
+    for key in ("minimal", "gradient", "cyberpunk", "default", "minimal"):
+        app.ui_theme_menu._dropdown_callback(gui.THEMES[key]["name"])
+        app.master.update()
+        palette = gui.THEMES[key]
+        assert app.main_frame.cget("fg_color") == palette["APP_BG"]
+        assert app.left_frame.cget("fg_color") == palette["CARD_BG"]
+        assert app.comment_tile_frame.cget("fg_color") == palette["CARD_BG"]
+        assert app.main_paned.cget("background") == palette["APP_BG"]
+        assert tile.cget("fg_color") == palette["PANEL_BG"]
+        assert emote_text.cget("background") == palette["PANEL_BG"]
+        name = next(w for w in descendants(tile) if isinstance(w, ctk.CTkLabel) and w.cget("text").startswith("はる"))
+        assert contrast_ratio(name.cget("text_color"), palette["PANEL_BG"]) >= 4.5
+        assert hidden_panel.cget("fg_color") == palette["CARD_BG"]
+        assert app.ui_theme_menu.cget("dropdown_fg_color") == palette["PANEL_BG"]
+        assert tabs._segmented_button.cget("selected_color") == palette["BORDER"]
+        assert app.config["ui_theme"] == key
+        assert app.right_panel_frame is panel
+        assert app.start_stop_btn is button
+        assert app.bot_instance is session
+        assert button.cget("text") == "■ BOT停止"
+        assert button.cget("fg_color") == "#EF4444"
+        assert app.channel_entry.get() == "unsaved_channel"
+        assert tabs.get() == "表示"
+        assert app.main_paned.sash_coord(0) == sash
+        assert "keep this event" in app.event_log.get("1.0", "end")
+        assert emote_text.get("1.0", "end-1c") == "Kappa"
+        assert not app.follow_comments.get()
+    app.start_bot.assert_not_called()
+    app.stop_bot.assert_not_called()
+
+
+def test_custom_theme_reloads_and_preserves_explicit_log_colors(app, monkeypatch):
+    from src import gui
+
+    app._toggle_right_panel("settings")
+    app.comment_bg.set("#123456")
+    app.comment_fg.set("#FEDCBA")
+    custom = {**gui.THEMES["minimal"], "name": "カスタム検証", "APP_BG": "#ECE0D0",
+              "CARD_BG": "#ECE0D0", "PANEL_BG": "#ECE0D0"}
+    monkeypatch.setitem(gui.THEMES, "custom_test", custom)
+    for color in ("#ECE0D0", "#D0E0EC"):
+        custom["APP_BG"] = color
+        app._on_theme_changed(custom["name"])
+        app.master.update()
+        assert app.main_frame.cget("fg_color") == color
+        assert app.log.cget("fg_color") == "#123456"
+        assert app.log.cget("text_color") == "#FEDCBA"
+    app._on_theme_changed(gui.THEMES["default"]["name"])
+    assert app.left_frame.cget("fg_color") == gui.THEMES["default"]["CARD_BG"]
+    assert app.ui_palette == gui.THEMES["default"]
+
+
+def test_saving_theme_in_editor_applies_loaded_palette_immediately(app, monkeypatch, tmp_path):
+    import json
+    from src import gui, theme_editor, theme_loader
+
+    app._toggle_right_panel("settings")
+    custom_file = tmp_path / "saved_theme.json"
+    custom_file.write_text(json.dumps({"base": "minimal", "name": "保存したテーマ", "APP_BG": "#F8E8D8"}))
+    monkeypatch.setattr(theme_loader, "get_themes_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(gui, "THEMES", deepcopy(gui.THEMES))
+    dialog = Mock()
+    monkeypatch.setattr(theme_editor, "ThemeEditorDialog", dialog)
+    app._open_theme_editor()
+    dialog.call_args.kwargs["on_saved"]("saved_theme")
+    app.master.update()
+    assert app.config["ui_theme"] == "saved_theme"
+    assert app.main_frame.cget("fg_color") == "#F8E8D8"
+    assert app.ui_theme_var.get() == "保存したテーマ"
+
+
 def test_capture_preview(app):
     directory = os.environ.get("KOTOTSUNA_SCREENSHOT_DIR")
     if not directory or app.config["ui_theme"] not in ("default", "minimal"):

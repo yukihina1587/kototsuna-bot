@@ -56,7 +56,7 @@ from src.comment_data import CommentData, create_twitch_comment
 from src import translator, __version__
 from src.translator import init_translation_dictionary, get_translation_dictionary, translate_text_sync
 from src.resource_monitor import get_monitor
-from src.gui_theme import THEMES as BUILTIN_THEMES, apply_widget_theme, text_on
+from src.gui_theme import THEMES as BUILTIN_THEMES, apply_widget_theme, refresh_widget_colors, text_on
 from src.gui_comments import create_comment_tile
 from src.gui_layout import WorkspaceLayoutMixin
 from src.gui_helpers import DifferentialListManager, create_participant_row, create_simple_list_row
@@ -565,7 +565,7 @@ class KototsunaApp(WorkspaceLayoutMixin):
 
         def on_saved(key: str) -> None:
             self._reload_custom_themes(select_key=key)
-            self.log_message(f"✨ カスタムテーマ '{key}' を保存しました（選択して適用できます）")
+            self._on_theme_changed(THEMES[key].get("name", key))
 
         dlg = ThemeEditorDialog(
             self.master, THEMES, on_saved=on_saved, base_theme_key=base_key
@@ -583,7 +583,16 @@ class KototsunaApp(WorkspaceLayoutMixin):
         display_to_key = {t.get("name", k): k for k, t in THEMES.items()}
         theme_key = display_to_key.get(display_name, "default")
 
-        # 稼働中のウィジェットと新しいパネルで配色が混在しないよう次回起動時に適用。
+        log_position = self.log.yview()
+        log_top = self.log.index("@0,0")
+        previous = self.ui_palette
+        self._apply_theme_colors(theme_key)
+        refresh_widget_colors(self.master, previous, self.ui_palette)
+        self._update_nav_button_states()
+        for frame, _content in getattr(self, "_panel_cache", {}).values():
+            self._style_panel_buttons(frame)
+        for textbox in (self.log, self.event_log):
+            self._apply_log_style(textbox)
 
         # 設定を保存
         self.config["ui_theme"] = theme_key
@@ -591,7 +600,8 @@ class KototsunaApp(WorkspaceLayoutMixin):
 
         # ユーザーに通知
         self.log_message(f"✨ テーマを '{THEMES[theme_key]['name']}' に変更しました")
-        self.log_message("配色は次回起動時に画面全体へ反映されます。")
+        if log_position[1] < 1:
+            self.log.yview(log_top)
 
     def _on_log_level_changed(self, level: str):
         """
@@ -1145,7 +1155,7 @@ class KototsunaApp(WorkspaceLayoutMixin):
             command=self._on_theme_changed, width=280
         )
         self.ui_theme_menu.pack(fill="x", pady=(0, 4))
-        ctk.CTkLabel(parent, text="テーマの変更は次回起動時に反映されます。",
+        ctk.CTkLabel(parent, text="配色は選択するとすぐに変わります。",
                      font=FONT_BODY, text_color=TEXT_SUBTLE).pack(anchor="w", pady=(0, 8))
 
         theme_btn_row = ctk.CTkFrame(parent, fg_color="transparent")
