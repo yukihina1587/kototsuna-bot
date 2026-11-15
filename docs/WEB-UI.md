@@ -4,7 +4,7 @@ Windowsでは、ことつな！を1回起動すると新しい操作画面が1�
 
 - [Issue #214](https://github.com/yukihina1587/kototsuna-bot/issues/214)
 - ブランチ: `feature/214-local-web-ui`、起点: 公開版v1.9.3
-- ローカル開発版。公開リリース・自動更新への収録はまだ行っていません。
+- v1.10.0からWindows配布版・自動アップデートに収録しています。
 
 ## 起動と終了
 

@@ -110,6 +110,8 @@ async def check(browser_port, server, bridge, output):
 
         await page.evaluate("document.getElementById('settings').click()")
         await page.wait("!document.getElementById('settings-panel').hidden")
+        # 従来画面で保存したスタイルを空欄にせず、未編集として引き継ぐ。
+        assert await page.evaluate("document.getElementById('setting-comment_bubble_style').value") == 'cute'
         assert not await page.evaluate("document.getElementById('authenticate').disabled")
         await page.evaluate("document.getElementById('setting-channel_name').value = 'edited_channel'; document.getElementById('setting-channel_name').dispatchEvent(new Event('input'))")
         # ポーリングがフォームの入力途中を上書きしない。
@@ -119,8 +121,17 @@ async def check(browser_port, server, bridge, output):
         await page.evaluate("document.getElementById('settings-form').requestSubmit()")
         await page.wait("document.getElementById('settings-dirty').textContent === '保存済み'")
         assert bridge.snapshot()['settings']['values']['channel_name'] == 'edited_channel'
+        assert bridge.snapshot()['settings']['values']['comment_bubble_style'] == 'cute'
         assert await page.evaluate("document.getElementById('setting-obs_password').value") == ''
         await page.screenshot(output / "web-settings.png")
+        # 従来の全スタイルを新画面でも保存でき、再度開いても選択を保持する。
+        for style in ('classic', 'modern', 'box', 'bubble', 'neon', 'minimal', 'cute'):
+            await page.evaluate(f"document.getElementById('setting-comment_bubble_style').value = '{style}'; document.getElementById('settings-form').requestSubmit()")
+            await page.wait("!document.getElementById('settings-fields').disabled")
+            assert bridge.snapshot()['settings']['values']['comment_bubble_style'] == style
+            await page.evaluate("document.getElementById('close-settings').click(); document.getElementById('settings').click()")
+            assert await page.evaluate("document.getElementById('setting-comment_bubble_style').value") == style
+            assert not await page.evaluate("document.getElementById('authenticate').disabled")
         # 全テーマが実際の配色へ反映される。
         colors = set()
         for theme in ('default', 'minimal', 'gradient', 'cyberpunk'):
@@ -243,7 +254,7 @@ def main():
         ],
     })
     initial = bridge.snapshot()
-    initial.update(desktop=True, settings=settings_snapshot(SimpleNamespace(config={})),
+    initial.update(desktop=True, settings=settings_snapshot(SimpleNamespace(config={"comment_bubble_style": "cute"})),
                    jobs=[], devices={"microphones": [{"index": 2, "name": "検証用マイク"}], "voices": []})
     bridge.publish(initial)
     stop = Event()

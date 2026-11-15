@@ -36,7 +36,8 @@ for key, label, low, high, step in [
     field(key, label, "number", "音声", min=low, max=high, step=step)
 field("ui_theme", "画面のテーマ", "select", "表示", choices=["default", "minimal", "gradient", "cyberpunk"], labels=["フォレスト", "ミニマル", "グラデーション", "サイバーパンク"])
 field("web_workspace_layout", "ワークスペース", "select", "表示", choices=["studio", "focus"], labels=["スタジオ", "フォーカス"])
-field("comment_bubble_style", "コメント表示", "select", "表示", choices=["classic", "bubble", "minimal"])
+# 従来画面の全スタイルを引き継ぐ。欠けた選択肢はブラウザで空欄になり、他項目の保存も妨げる。
+field("comment_bubble_style", "コメント表示", "select", "表示", choices=["classic", "modern", "box", "bubble", "neon", "cute", "minimal"])
 field("comment_log_bg", "コメント背景色", "color", "表示")
 field("comment_log_fg", "コメント文字色", "color", "表示")
 field("comment_log_font", "コメントのフォント", "text", "表示")

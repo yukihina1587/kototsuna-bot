@@ -80,7 +80,7 @@ DEFAULT_CONFIG = {
     "comment_log_bg": "#0E1728",
     "comment_log_fg": "#E8F0FF",
     "comment_log_font": "Consolas 11",
-    "comment_bubble_style": "classic",  # classic / bubble / minimal
+    "comment_bubble_style": "classic",  # classic / modern / box / bubble / neon / cute / minimal
     "chat_html_output": False,
     "chat_html_path": "",
     "chat_html_newest_first": False,  # True: 上が新しい, False: 下が新しい

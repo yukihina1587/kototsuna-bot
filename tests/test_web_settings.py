@@ -15,6 +15,7 @@ from src.web_settings import FIELDS, settings_snapshot, validate_settings
     {"tts_engine_url": "file:///tmp/private"}, {"tts_engine_url": "http://a:b@localhost"},
     {"tts_engine_url": "http://localhost:999999"}, {"tts_engine_url": "http://localhost?q=secret"},
     {"ui_theme": "other"}, {"web_workspace_layout": "other"}, {"comment_log_bg": "red; color:blue"},
+    {"comment_bubble_style": ""}, {"comment_bubble_style": "unknown"},
     {"obs_host": "host/path"}, {"obs_password": "x\x00y"},
     {"mic_device_index": -1}, {"mic_device_index": False},
     {"voicevox_engine_path": "x" * 1025},
@@ -47,3 +48,12 @@ def test_all_default_settings_roundtrip_validation():
     result = settings_snapshot(SimpleNamespace(config={}))
     assert validate_settings(result["values"]) == result["values"]
     assert len({f["key"] for f in FIELDS}) == len(FIELDS)
+
+
+@pytest.mark.parametrize("style", ["classic", "modern", "box", "bubble", "neon", "cute", "minimal"])
+def test_legacy_comment_styles_remain_selectable_and_saveable(style):
+    result = settings_snapshot(SimpleNamespace(config={"comment_bubble_style": style}))
+    rule = next(f for f in result["fields"] if f["key"] == "comment_bubble_style")
+    assert style in rule["choices"]
+    assert result["values"]["comment_bubble_style"] == style
+    assert validate_settings(result["values"]) == result["values"]
