@@ -11,6 +11,8 @@ import queue
 import sys
 import threading
 import ctypes
+import time
+import math
 from collections import deque
 from typing import Any, Callable, Optional
 
@@ -226,6 +228,9 @@ class VoiceTranslator:
 
         # Internal state
         self._running: bool = False
+        self._input_level = 0.0
+        self._input_level_at = 0.0
+        self.processing = False
         self._audio_queue: queue.Queue[np.ndarray] = queue.Queue()
         self._worker_thread: Optional[threading.Thread] = None
         self._audio_stream: Optional[Any] = None  # sd.InputStream
@@ -238,6 +243,13 @@ class VoiceTranslator:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def input_level(self) -> float:
+        """直近の実入力の目安。停止・入力途絶時に古い反応を表示しない。"""
+        if not self._running or time.monotonic() - self._input_level_at > 0.6:
+            return 0.0
+        return self._input_level
 
     def start(self) -> bool:
         """Start audio capture and recognition.  Returns *True* on success."""
@@ -451,7 +463,11 @@ class VoiceTranslator:
             logger.warning(f"Audio callback status: {status}")
         if self._running:
             # indata shape is (frames, 1) -- flatten to 1-D float32.
-            self._audio_queue.put(indata[:, 0].copy())
+            samples = indata[:, 0].copy()
+            rms = float(np.sqrt(np.mean(samples * samples))) if samples.size else 0.0
+            self._input_level = max(0.0, min(100.0, (20 * math.log10(rms) + 60) / 60 * 100)) if rms > 0 and math.isfinite(rms) else 0.0
+            self._input_level_at = time.monotonic()
+            self._audio_queue.put(samples)
 
     def _recognition_worker(self) -> None:
         """Worker thread: reads audio from the queue, runs VAD, recognises."""
@@ -490,13 +506,17 @@ class VoiceTranslator:
                     speech_samples = np.concatenate([pre_roll_array, speech_samples])
                     pre_roll.clear()
 
-                stream = self._recognizer.create_stream()
-                stream.accept_waveform(SAMPLE_RATE, speech_samples)
-                self._recognizer.decode_stream(stream)
+                self.processing = True
+                try:
+                    stream = self._recognizer.create_stream()
+                    stream.accept_waveform(SAMPLE_RATE, speech_samples)
+                    self._recognizer.decode_stream(stream)
 
-                text: str = stream.result.text.strip()
-                if text:
-                    self._process_result(text)
+                    text: str = stream.result.text.strip()
+                    if text:
+                        self._process_result(text)
+                finally:
+                    self.processing = False
 
         logger.info("STT worker thread exiting.")
 

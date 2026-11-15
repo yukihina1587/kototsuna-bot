@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import os
 import requests
 import time
+import secrets
 from src.logger import logger
 
 load_dotenv()
@@ -58,6 +59,8 @@ REDIRECT_HTML = """<!DOCTYPE html>
             const hash = window.location.hash.substring(1);
             const params = new URLSearchParams(hash);
             const accessToken = params.get("access_token");
+            const state = params.get("state");
+            history.replaceState(null, "", location.pathname);
 
             if (accessToken) {
                 fetch("http://localhost:8787/token", {
@@ -65,7 +68,7 @@ REDIRECT_HTML = """<!DOCTYPE html>
                     headers: {
                         "Content-Type": "application/json",
                     },
-                    body: JSON.stringify({ token: accessToken }),
+                    body: JSON.stringify({ token: accessToken, state }),
                 })
                 .then(response => {
                     if (response.ok) {
@@ -89,7 +92,7 @@ REDIRECT_HTML = """<!DOCTYPE html>
 </body>
 </html>"""
 
-def build_auth_url(client_id):
+def build_auth_url(client_id, state=None):
     return (
         f"https://id.twitch.tv/oauth2/authorize"
         f"?client_id={client_id}"
@@ -97,58 +100,72 @@ def build_auth_url(client_id):
         f"&response_type=token"
         f"&scope={'%20'.join(SCOPES)}"
         f"&force_verify=true"
+        + ("&state=" + urllib.parse.quote(state, safe="") if state else "")
     )
 
-def run_auth_server_and_get_token():
-    class AuthHandler(http.server.SimpleHTTPRequestHandler):
+def run_auth_server_and_get_token(on_ready=None, expected_state=None, timeout=300):
+    # 1回の認証だけに有効な結果。以前のトークンを再利用しない。
+    result = {}
+    origin = "http://localhost:8787"
+
+    class AuthHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == "/redirect.html":
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.end_headers()
-                self.wfile.write(REDIRECT_HTML.encode('utf-8'))
-            else:
-                self.send_error(404, "Not Found")
+            if self.headers.get("Host") != "localhost:8787" or self.path != "/redirect.html":
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.end_headers()
+            self.wfile.write(REDIRECT_HTML.encode("utf-8"))
 
         def do_POST(self):
-            if self.path == '/token':
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
-                data = json.loads(post_data)
-                
-                token = data.get('token')
-                if token:
-                    token_result['access_token'] = f"oauth:{token}"
-                    logger.debug(f"✅ access_token extracted: {token_result['access_token']}")
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b'OK')
-                    # トークン取得後にサーバーをシャットダウンするためのフラグ
-                    self.server.should_shutdown = True
-                else:
-                    self.send_error(400, "Bad Request: Token not found")
-            else:
-                self.send_error(404, "Not Found")
+            if (self.path != "/token" or self.headers.get("Host") != "localhost:8787"
+                    or self.headers.get("Origin") != origin
+                    or self.headers.get("Content-Type", "").split(";")[0] != "application/json"):
+                self.send_error(403)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 4096:
+                    raise ValueError()
+                data = json.loads(self.rfile.read(length))
+                token = data.get("token")
+                state = data.get("state")
+                if not isinstance(token, str) or not token.isalnum() or len(token) > 512:
+                    raise ValueError()
+                if expected_state and (not isinstance(state, str) or not secrets.compare_digest(state, expected_state)):
+                    raise ValueError()
+            except (ValueError, AttributeError, TypeError):
+                self.send_error(400)
+                return
+            result["access_token"] = "oauth:" + token
+            logger.debug("Twitch認証トークンを受信しました")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+            self.server.should_shutdown = True
 
         def log_message(self, format, *args):
-            # 標準のエラー出力を抑制してコンソールをクリーンに保つ
             return
 
-    class StoppableTCPServer(socketserver.TCPServer):
-        def __init__(self, server_address, RequestHandlerClass):
-            super().__init__(server_address, RequestHandlerClass)
-            self.should_shutdown = False
+    class AuthServer(socketserver.TCPServer):
+        allow_reuse_address = True
+        def get_request(self):
+            request, address = super().get_request()
+            request.settimeout(5)
+            return request, address
 
-        def serve_forever(self):
-            while not self.should_shutdown:
-                self.handle_request()
-
-    with StoppableTCPServer(("localhost", 8787), AuthHandler) as httpd:
-        logger.debug("Starting local auth server on port 8787. Waiting for token...")
-        httpd.serve_forever()
-        logger.debug("Server stopped.")
-
-    return token_result.get("access_token")
+    with AuthServer(("127.0.0.1", 8787), AuthHandler) as server:
+        server.timeout = .5
+        server.should_shutdown = False
+        if on_ready:
+            on_ready()
+        deadline = time.monotonic() + timeout
+        while not server.should_shutdown and time.monotonic() < deadline:
+            server.handle_request()
+    return result.get("access_token")
 
 def validate_token(access_token, max_retries=2):
     """

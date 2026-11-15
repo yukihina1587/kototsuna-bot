@@ -60,6 +60,7 @@ def app(request, monkeypatch, tmp_path, tk_root):
     monkeypatch.setattr(plugin_manager, "get_plugin_manager", lambda: Mock(plugins=[]))
     monkeypatch.setattr(plugin_manager, "get_plugins_dir", lambda: tmp_path / "plugins")
     monkeypatch.setattr(gui, "get_rollback_info", lambda: None)
+    original_start_bot = gui.KototsunaApp.start_bot
     for name in ("_export_chat_html", "_setup_window_icon", "_init_subtitle_overlay", "_init_chat_html",
                  "_check_saved_token", "_init_obs_controller", "_maybe_show_telemetry_consent",
                  "_check_for_updates_on_startup",
@@ -69,10 +70,13 @@ def app(request, monkeypatch, tmp_path, tk_root):
     root = tk_root
     root.report_callback_exception = Mock()
     instance = gui.KototsunaApp(root, safe_mode=False)
+    instance._start_bot_under_test = original_start_bot.__get__(instance)
     root.title("ことつな！ デザイン確認（未接続）")
     root.geometry("1200x800+30+30")
     root.update()
     yield instance
+    if getattr(instance, "_web_ui", None) is not None:
+        instance._web_ui.close()
     errors = root.report_callback_exception.call_args_list
     for timer in root.tk.call("after", "info"):
         root.tk.call("after", "cancel", timer)
@@ -85,6 +89,62 @@ def descendants(widget):
     for child in widget.winfo_children():
         yield child
         yield from descendants(child)
+
+
+def test_web_controls_share_live_widgets_and_settings(app, monkeypatch):
+    from src.desktop_web_ui import DesktopWebUI
+    panel = DesktopWebUI(app)
+    app._web_ui = panel
+    # サーバーとブラウザ起動は別テストで確認し、ここでは実Tkの反映だけを確認。
+    app.chat_translation_enabled.set(False)
+    volume = panel.bridge.submit({"action": "volume", "value": 34})
+    translation = panel.bridge.submit({"action": "translation", "value": True})
+    panel._tick()
+    assert volume.result()["tts_volume"] == 34
+    assert translation.result()["translation_enabled"] is True
+    assert app.tts_volume_var.get() == 34
+    assert app.config["tts_volume"] == 34
+    assert app.config["chat_translation_enabled"] is True
+    app.tts.set_playback_options.assert_any_call(34, app.tts_speed_var.get())
+    app.tts_speed_var.set(1.4)
+    app.log_message("sample", "chat", sample_comment())
+    panel._tick()
+    assert panel.bridge.snapshot()["tts_speed"] == 1.4
+    assert panel.bridge.snapshot()["comments"][-1]["translated"] == "What are we streaming today?"
+    assert "token" not in panel.bridge.snapshot()
+
+
+def test_web_start_reports_missing_auth_without_native_dialog(app, monkeypatch):
+    from src import gui
+    from src.web_control import ControlError
+    dialog = Mock()
+    monkeypatch.setattr(gui.messagebox, "showerror", dialog)
+    app.token = None
+    with pytest.raises(ControlError, match="Twitch認証"):
+        app._start_bot_under_test(web_request=True)
+    dialog.assert_not_called()
+    app.token = "not-a-real-credential"
+    app.channel.set("")
+    with pytest.raises(ControlError, match="チャンネル名"):
+        app._start_bot_under_test(web_request=True)
+    dialog.assert_not_called()
+
+
+def test_old_bot_errors_cannot_clear_a_new_session(app, monkeypatch):
+    handler = Mock()
+    monkeypatch.setattr(app, "_on_bot_thread_error", handler)
+    old_thread, current_thread = object(), object()
+    app._bot_thread = current_thread
+    app._bot_requested_running = True
+    error = RuntimeError("test")
+    app._report_bot_thread_error(error, old_thread)
+    handler.assert_not_called()
+    app._bot_requested_running = False
+    app._report_bot_thread_error(error, current_thread)
+    handler.assert_not_called()
+    app._bot_requested_running = True
+    app._report_bot_thread_error(error, current_thread)
+    handler.assert_called_once_with(error)
 
 
 def sample_comment(message="今日はどんな配信ですか？", translated="What are we streaming today?", **kwargs):
@@ -325,3 +385,109 @@ def test_capture_preview(app):
     capture("")
     app._toggle_right_panel("settings")
     capture("-settings")
+
+
+def prepare_web_runtime(app):
+    app._web_jobs = set()
+    app._job = Mock()
+    app._web_devices = {"microphones": [], "voices": []}
+    app._web_notice = ""
+    return app
+
+
+def test_desktop_settings_save_through_real_tk_variables(app, monkeypatch):
+    from src.web_desktop_app import WebDesktopApp
+    from src.web_settings import settings_snapshot
+    prepare_web_runtime(app)
+    app._bot_requested_running = False
+    app.bot_instance = None
+    WebDesktopApp._save_web_settings(app, {
+        "channel_name": "new_channel", "voicevox_speaker_id": 23,
+        "tts_engine": "edge-tts", "ui_theme": "cyberpunk",
+        "web_workspace_layout": "focus",
+        "chat_translation_post_to_twitch": True, "mic_device_index": 4,
+    })
+    assert app.channel.get() == "new_channel"
+    assert app.config["channel_name"] == "new_channel"
+    assert app.tts_engine_var.get() == "edge-tts"
+    assert app.chat_translation_post_to_twitch.get()
+    assert app.voice_translator.device_index == 4
+    assert app.config["ui_theme"] == "cyberpunk"
+    assert settings_snapshot(app)["values"]["ui_theme"] == "cyberpunk"
+    assert settings_snapshot(app)["values"]["web_workspace_layout"] == "focus"
+    app._job.assert_called_once()
+    app._job.call_args.args[1]()
+    app.tts.switch_engine.assert_called_with("edge-tts", None)
+    app.tts.set_speaker.assert_called_with(app.config["edge_tts_voice"])
+
+
+def test_desktop_rejects_active_connection_and_mic_changes(app):
+    from src.web_desktop_app import WebDesktopApp
+    from src.web_control import ControlError
+    prepare_web_runtime(app)
+    original = app.channel.get()
+    app._bot_requested_running = True
+    with pytest.raises(ControlError, match="停止"):
+        WebDesktopApp._save_web_settings(app, {"channel_name": "another"})
+    assert app.channel.get() == original
+    app._bot_requested_running = False
+    app.voice_var.set(True)
+    with pytest.raises(ControlError, match="マイク"):
+        WebDesktopApp._save_web_settings(app, {"mic_device_index": 1})
+
+
+def test_desktop_failed_save_restores_settings(app, monkeypatch):
+    from src.web_desktop_app import WebDesktopApp
+    from src.web_control import ControlError
+    prepare_web_runtime(app)
+    original = deepcopy(app.config)
+    original_channel = app.channel.get()
+    monkeypatch.setattr(app, "_auto_save_settings", lambda: False)
+    with pytest.raises(ControlError, match="保存できません"):
+        WebDesktopApp._save_web_settings(app, {"channel_name": "changed"})
+    assert app.config == original
+    assert app.channel.get() == original_channel
+
+
+def test_desktop_auth_requires_valid_scopes_and_keeps_token_private(app, monkeypatch):
+    from src.auth import SCOPES
+    from src.web_desktop_app import WebDesktopApp
+    from src.web_settings import settings_snapshot
+    monkeypatch.setattr("src.web_desktop_app.save_config", Mock())
+    prepare_web_runtime(app)
+    app.channel_mode.set("auto")
+    WebDesktopApp._finish_auth(app, ("not-a-real-token", {"login": "viewer", "scopes": SCOPES}))
+    assert app.channel.get() == "viewer"
+    assert app.token == "not-a-real-token"
+    assert "not-a-real-token" not in str(settings_snapshot(app))
+    WebDesktopApp._finish_auth(app, ("not-a-real-token", {"login": "viewer", "scopes": []}))
+    assert app.token is None
+
+
+def test_desktop_no_native_settings_or_consent_windows(app, monkeypatch):
+    from src.web_desktop_app import WebDesktopApp
+    native = Mock()
+    monkeypatch.setattr(app, "_toggle_right_panel", native)
+    monkeypatch.setattr(app, "_show_telemetry_consent_dialog", native)
+    WebDesktopApp.handle_web_action(app, "settings", None)
+    WebDesktopApp._maybe_show_telemetry_consent(app)
+    native.assert_not_called()
+
+
+def test_desktop_cleanup_stops_owned_window_and_tts_even_on_window_error(monkeypatch):
+    from src.gui import KototsunaApp
+    from src.web_desktop_app import WebDesktopApp
+    base_cleanup = Mock()
+    monkeypatch.setattr(KototsunaApp, "cleanup_resources", base_cleanup)
+    instance = WebDesktopApp.__new__(WebDesktopApp)
+    instance._web_closed = False
+    instance._event_timer = None
+    instance._desktop_window = Mock()
+    instance._desktop_window.close.side_effect = RuntimeError("test close failure")
+    instance.tts = Mock()
+    with pytest.raises(RuntimeError, match="test close failure"):
+        instance.cleanup_resources()
+    instance.tts.stop.assert_called_once()
+    base_cleanup.assert_called_once()
+    instance.cleanup_resources()
+    instance.tts.stop.assert_called_once()

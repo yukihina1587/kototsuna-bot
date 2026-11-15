@@ -47,6 +47,7 @@ class TTSEngine(ABC):
         text: str,
         voice_id,
         timeout: float = 5.0,
+        *, speed: float = 1.0,
     ) -> Optional[bytes]:
         """Generate WAV bytes for ``text`` using ``voice_id``.
 

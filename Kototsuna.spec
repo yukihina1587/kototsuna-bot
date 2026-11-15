@@ -135,6 +135,10 @@ try:
 except Exception as e:
     print(f"[SPEC] WARNING: pygame collect_all failed: {e}")
 
+# Windows WebView2のDLL・JSを収録（ブラウザエンジン本体はOS側）
+tmp_ret = collect_all('webview')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
 # srcパッケージ内の全サブモジュールを収集
 hiddenimports += collect_submodules('src')
 

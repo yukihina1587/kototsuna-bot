@@ -173,7 +173,21 @@ jobs:
           python $scriptPath
         shell: pwsh
 
-      - name: Build installer with Inno Setup
+      - name: Download and verify WebView2 bootstrapper
+        # Microsoft公式Bootstrapperを同梱。未導入時だけセットアップから実行する。
+        # 配布時には署名を確認し、アプリ更新前に前提条件を満たす。
+        run: |
+          New-Item -ItemType Directory -Path "build/prerequisites" -Force
+          $bootstrapper = "build/prerequisites/MicrosoftEdgeWebview2Setup.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $bootstrapper
+          $signature = Get-AuthenticodeSignature $bootstrapper
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw "WebView2 bootstrapper signature verification failed"
+          }
+          Write-Host "Verified Microsoft WebView2 bootstrapper"
+        shell: pwsh
+
+      - name: Compile installer with Inno Setup
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
           Write-Host "Building installer for version: $version"

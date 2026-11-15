@@ -7,6 +7,7 @@ so these tests run in CI without native libraries installed.
 from __future__ import annotations
 
 import queue
+import os
 import sys
 import threading
 from unittest.mock import MagicMock, patch
@@ -315,9 +316,12 @@ class TestProcessResult:
             callback=cb,
         )
 
-        vt._process_result("test text")
+        # モデルの同梱有無によって翻訳結果が変わらないよう、APIキー不要の呼び出しを検証する。
+        with patch.object(vl_module, "translate_text_sync", return_value="translated") as mock_tr:
+            vt._process_result("test text")
 
-        cb.assert_called_once_with("test text", "test text")
+        mock_tr.assert_called_once_with("test text", "\u81ea\u52d5")
+        cb.assert_called_once_with("test text", "translated")
 
     def test_process_result_no_callback(self):
         """When callback is None, no error is raised."""
@@ -327,7 +331,8 @@ class TestProcessResult:
             callback=None,
         )
         # Should not raise.
-        vt._process_result("some text")
+        with patch.object(vl_module, "translate_text_sync", return_value="translated"):
+            vt._process_result("some text")
 
     def test_process_result_exception_swallowed(self):
         """Exceptions in translate_text_sync are caught and logged."""
@@ -398,7 +403,7 @@ class TestGetModelsDir:
         with patch.object(sys, "frozen", True, create=True), \
              patch.object(sys, "_MEIPASS", "/opt/app/_internal", create=True):
             result = _get_models_dir()
-            assert result == "/opt/app/_internal/models"
+            assert result == os.path.join("/opt/app/_internal", "models")
 
 
 # =========================================================================
@@ -408,6 +413,23 @@ class TestGetModelsDir:
 
 class TestAudioCallback:
     """_audio_callback() enqueues audio data correctly."""
+
+    @_needs_numpy
+    def test_input_meter_uses_real_samples_and_expires(self):
+        import numpy as np
+        vt = _make_translator()
+        vt._running = True
+        with patch.object(vl_module.time, "monotonic", return_value=10):
+            vt._audio_callback(np.full((32, 1), .01, dtype=np.float32), 32, None, None)
+            assert vt.input_level == pytest.approx(100 / 3, abs=.01)
+        with patch.object(vl_module.time, "monotonic", return_value=11):
+            assert vt.input_level == 0
+        vt._audio_callback(np.zeros((32, 1), dtype=np.float32), 32, None, None)
+        assert vt.input_level == 0
+        vt._audio_callback(np.ones((32, 1), dtype=np.float32), 32, None, None)
+        assert vt.input_level == 100
+        vt._running = False
+        assert vt.input_level == 0
 
     @_needs_numpy
     def test_audio_callback_enqueues_data(self):

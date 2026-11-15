@@ -9,6 +9,13 @@ def test_translation_posting_defaults_to_off_for_existing_configs():
     assert validated["chat_translation_post_to_twitch"] is False
 
 
+@pytest.mark.parametrize("value,expected", [("studio", "studio"), ("focus", "focus"), ("other", "studio"), (None, "studio"), ([], "studio")])
+def test_web_layout_migration_and_validation(value, expected):
+    validated, _ = validate_config({"web_workspace_layout": value})
+    assert validated["web_workspace_layout"] == expected
+    assert validate_config({})[0]["web_workspace_layout"] == "studio"
+
+
 @pytest.mark.parametrize("enabled", [True, False])
 def test_translation_posting_preserves_explicit_boolean(enabled):
     validated, _ = validate_config({"chat_translation_post_to_twitch": enabled})

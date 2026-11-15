@@ -87,6 +87,7 @@ class VoicevoxEngine(TTSEngine):
         text: str,
         voice_id,
         timeout: float = 5.0,
+        *, speed: float = 1.0,
     ) -> Optional[bytes]:
         try:
             speaker = int(voice_id)
@@ -108,6 +109,7 @@ class VoicevoxEngine(TTSEngine):
                     )
                     return None
                 audio_query = await response.json()
+                audio_query["speedScale"] = speed
 
             async with session.post(
                 f"{self.api_url}/synthesis",

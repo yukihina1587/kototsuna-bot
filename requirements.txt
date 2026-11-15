@@ -11,15 +11,21 @@ aiosignal==1.4.0
     # via aiohttp
 attrs==26.1.0
     # via aiohttp
+bottle==0.13.4 ; sys_platform == 'win32'
+    # via pywebview
 certifi==2026.2.25
     # via
     #   edge-tts
     #   requests
     #   sentry-sdk
 cffi==2.0.0
-    # via sounddevice
+    # via
+    #   clr-loader
+    #   sounddevice
 charset-normalizer==3.4.6
     # via requests
+clr-loader==0.3.1 ; sys_platform == 'win32'
+    # via pythonnet
 coloredlogs==15.0.1
     # via onnxruntime
 ctranslate2==4.7.1
@@ -71,6 +77,8 @@ propcache==0.4.1
     #   yarl
 protobuf==7.34.1
     # via onnxruntime
+proxy-tools==0.1.0 ; sys_platform == 'win32'
+    # via pywebview
 psutil==7.2.2
     # via translation-bot
 pycparser==3.0 ; implementation_name != 'PyPy'
@@ -80,6 +88,10 @@ pygame==2.6.1
 pyreadline3==3.5.4 ; sys_platform == 'win32'
     # via humanfriendly
 python-dotenv==1.2.1
+    # via translation-bot
+pythonnet==3.2.1 ; sys_platform == 'win32'
+    # via pywebview
+pywebview==6.2.1 ; sys_platform == 'win32'
     # via translation-bot
 pyyaml==6.0.3
     # via ctranslate2
@@ -107,6 +119,7 @@ typing-extensions==4.15.0
     # via
     #   aiosignal
     #   edge-tts
+    #   pywebview
     #   twitchio
 urllib3==2.6.3
     # via

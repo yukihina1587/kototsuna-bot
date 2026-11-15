@@ -3,58 +3,31 @@ import io
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 
+# WebViewプロセスは処理エンジンや多重起動ロックを作らない。
+if __name__ == "__main__" and "--webview-host" in sys.argv:
+    from src.desktop_window import run_host
+    sys.exit(run_host())
+
 # --- 多重起動防止 (Windows Named Mutex) ---
 if sys.platform == "win32":
     import ctypes
-    import time as _time
-
-    _MUTEX_NAME = "KototsunaAppMutex"
-    _WINDOW_TITLE = "ことつな！"
-
-    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        # 既存インスタンスのウィンドウを確認
-        _hwnd = ctypes.windll.user32.FindWindowW(None, _WINDOW_TITLE)
+    from ctypes import wintypes
+    _kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    _kernel.CreateMutexW.restype = wintypes.HANDLE
+    _mutex = _kernel.CreateMutexW(None, False, "KototsunaAppMutex")
+    if ctypes.get_last_error() == 183:
+        _user = ctypes.WinDLL("user32", use_last_error=True)
+        _user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        _user.FindWindowW.restype = wintypes.HWND
+        _hwnd = _user.FindWindowW(None, "ことつな！")
         if _hwnd:
-            # 正常な既存インスタンス → フォアグラウンドに出してexit
-            ctypes.windll.user32.ShowWindow(_hwnd, 9)   # SW_RESTORE
-            ctypes.windll.user32.SetForegroundWindow(_hwnd)
-            sys.exit(0)
-        elif getattr(sys, 'frozen', False):
-            # ゾンビプロセス（ウィンドウなし）→ 強制終了して起動を継続
-            import subprocess as _subprocess
-            _my_pid = os.getpid()
-            try:
-                _result = _subprocess.run(
-                    ['tasklist', '/FI', 'IMAGENAME eq Kototsuna.exe', '/FO', 'CSV', '/NH'],
-                    capture_output=True, text=True, timeout=3
-                )
-                for _line in _result.stdout.strip().splitlines():
-                    _parts = [p.strip('"') for p in _line.split('","')]
-                    if len(_parts) > 1:
-                        try:
-                            _pid = int(_parts[1])
-                            if _pid != _my_pid:
-                                _subprocess.run(
-                                    ['taskkill', '/F', '/PID', str(_pid)],
-                                    capture_output=True, timeout=3
-                                )
-                        except (ValueError, IndexError):
-                            pass
-            except Exception:
-                pass
-            # ハンドルを解放し、旧プロセス終了を待ってMutexを再取得
-            ctypes.windll.kernel32.CloseHandle(_mutex)
-            for _retry in range(5):
-                _time.sleep(0.3)
-                _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-                if ctypes.windll.kernel32.GetLastError() != 183:
-                    break  # 再取得成功
-                ctypes.windll.kernel32.CloseHandle(_mutex)
-            else:
-                sys.exit(0)  # 再取得失敗 → 起動を諦める
-        else:
-            sys.exit(0)
+            _user.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+            _user.SetForegroundWindow.argtypes = [wintypes.HWND]
+            _user.ShowWindow(_hwnd, 9)
+            _user.SetForegroundWindow(_hwnd)
+        # 初期化中の既存プロセスも尊重する。名前による一括強制終了はしない。
+        sys.exit(0)
 
 # PyInstaller GUIモードでのクラッシュログ記録（console=Falseではトレースバックが見えないため）
 # rthookで設置済みのraw excepthookを上書きし、可能ならtraceback moduleで詳細出力する。
@@ -525,13 +498,26 @@ if __name__ == '__main__':
     def init_app():
         global app
         try:
-            app = KototsunaApp(root, safe_mode=_safe_mode_active, diag_bundle_path=_diag_bundle_path)
+            desktop_mode = sys.platform == "win32" and "--legacy-ui" not in sys.argv
+            if desktop_mode:
+                from src.web_desktop_app import WebDesktopApp
+                app_class = WebDesktopApp
+            else:
+                app_class = KototsunaApp
+            app = app_class(root, safe_mode=_safe_mode_active, diag_bundle_path=_diag_bundle_path)
             # ウィンドウを閉じる際のプロトコルを設定
             root.protocol("WM_DELETE_WINDOW", on_closing)
             # スプラッシュスクリーンを閉じる
             splash.destroy()
             # メインウィンドウを表示
-            root.deiconify()
+            if desktop_mode:
+                root.title("ことつな！ 処理エンジン")
+                root.withdraw()
+                app.open_desktop_window(on_closing)
+            else:
+                root.deiconify()
+                if "--web-ui" in sys.argv:
+                    root.after(0, app.open_web_ui)
             # 正常起動 → クラッシュカウンタをリセット
             reset_crash_count()
             # アップデート直後ならチャットログに通知

@@ -166,6 +166,7 @@ class WorkspaceLayoutMixin:
             self.nav_buttons[panel_id] = btn
         self._add_panel_divider(top)
         self._button(top, "ログをテキスト出力", self.export_log_text).pack(fill="x", pady=(0, 6))
+        self._button(top, "Web画面を開く  ↗", self.open_web_ui).pack(fill="x", pady=(0, 6))
 
         # スクロール領域より外に置き、狭い画面でもコピー操作を残す。
         bottom = ctk.CTkFrame(sidebar, fg_color="transparent")

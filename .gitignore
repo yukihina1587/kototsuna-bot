@@ -1,5 +1,7 @@
 .env
 config.json
+config.json.bak*
+startup_state.json
 logs/
 venv/
 .venv/
@@ -29,6 +31,7 @@ src/_client_id.py
 
 # STT models (downloaded at build time)
 models/
+/models
 
 # Installer output
 installer_output/

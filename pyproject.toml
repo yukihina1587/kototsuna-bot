@@ -1,10 +1,12 @@
 [project]
 name = "translation-bot"
-version = "1.9.3"
+version = "1.10.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    # Windowsの単一ウィンドウUI（OSのWebView2を利用）
+    "pywebview==6.2.1; sys_platform == 'win32'",
     "customtkinter>=5.2.2",
     "pillow==12.1.0",
     "pygame>=2.5.0",

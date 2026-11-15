@@ -11,6 +11,7 @@ import queue
 import tempfile
 import os
 import sys
+import math
 from datetime import datetime
 from pathlib import Path
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
@@ -207,6 +208,8 @@ class VoicevoxTTS:
         self.api_url = self.engine.api_url
         self.speaker_id = speaker_id
         self.enabled = False
+        self.speaking = False
+        self._playback_options = (1.0, 1.0)  # 音量0..1、速度倍率
 
         # Separate queues for synthesis and playback
         self.synthesis_queue = queue.Queue()  # Text to synthesize
@@ -234,6 +237,14 @@ class VoicevoxTTS:
 
         # Check if VOICEVOX is available
         self.voicevox_available = self._check_voicevox_availability()
+
+    def set_playback_options(self, volume: float, speed: float) -> None:
+        """GUI値を音声処理へ渡す。音声デバイスの操作は再生スレッド側で行う。"""
+        if not all(type(value) in (int, float) and math.isfinite(value) for value in (volume, speed)):
+            raise ValueError("Invalid playback options")
+        if not 0 <= volume <= 100 or not 0.5 <= speed <= 2:
+            raise ValueError("Playback options out of range")
+        self._playback_options = (volume / 100.0, float(speed))
 
     def _check_voicevox_availability(self):
         """Check if the active engine endpoint responds (synchronous, init path).
@@ -304,7 +315,7 @@ class VoicevoxTTS:
             return None
         default_voice = getattr(fallback, "DEFAULT_VOICE", "ja-JP-NanamiNeural")
         audio = await fallback.synthesize_async(
-            self.aio_session, text, default_voice, timeout=6.0
+            self.aio_session, text, default_voice, timeout=6.0, speed=self._playback_options[1]
         )
         if audio:
             logger.info("🛟 VOICEVOX失敗のため edge-tts にフォールバックしました")
@@ -409,7 +420,7 @@ class VoicevoxTTS:
             return None
 
         audio = await self.engine.synthesize_async(
-            self.aio_session, text, effective_speaker, timeout=5.0
+            self.aio_session, text, effective_speaker, timeout=5.0, speed=self._playback_options[1]
         )
         if audio is not None:
             return audio
@@ -456,7 +467,7 @@ class VoicevoxTTS:
                 logger.warning("No Japanese voice found, using default voice")
 
             # Set speech rate (slower for better clarity)
-            engine.setProperty('rate', 150)
+            engine.setProperty('rate', round(150 * self._playback_options[1]))
             engine.setProperty('volume', 1.0)
 
             # Save to temporary WAV file
@@ -515,12 +526,18 @@ class VoicevoxTTS:
         if not engine:
             return False
         try:
+            volume, speed = self._playback_options
+            engine.setProperty('rate', round(210 * speed))
+            engine.setProperty('volume', volume)
             engine.say(text)
+            self.speaking = True
             engine.runAndWait()
             return True
         except Exception as e:
             logger.error(f"pyttsx3 speak error: {e}", exc_info=True)
             return False
+        finally:
+            self.speaking = False
 
     def play_audio(self, audio_data: bytes, audio_format: str = "wav"):
         """
@@ -545,10 +562,13 @@ class VoicevoxTTS:
 
             # Play audio using pygame
             pygame.mixer.music.load(temp_path)
+            pygame.mixer.music.set_volume(self._playback_options[0])
             pygame.mixer.music.play()
+            self.speaking = True
 
             # Wait for playback to finish
             while pygame.mixer.music.get_busy():
+                pygame.mixer.music.set_volume(self._playback_options[0])
                 pygame.time.Clock().tick(10)
 
         except pygame.error as e:
@@ -558,6 +578,7 @@ class VoicevoxTTS:
         except Exception as e:
             logger.error(f"Unexpected error playing audio: {e}", exc_info=True)
         finally:
+            self.speaking = False
             # Clean up temporary file
             if temp_path:
                 try:
@@ -855,6 +876,7 @@ def get_tts_instance() -> VoicevoxTTS:
         engine_name = "voicevox"
         api_url: str = VOICEVOX_API_URL
         speaker_id: VoiceId = MEIMEI_HIMARI_SPEAKER_ID
+        cfg = {}
         try:
             from src.config import load_config
             cfg = load_config()
@@ -879,4 +901,8 @@ def get_tts_instance() -> VoicevoxTTS:
             speaker_id=speaker_id,
             engine_name=engine_name,
         )
+        try:
+            _tts_instance.set_playback_options(cfg.get("tts_volume", 80), cfg.get("tts_speed", 1.0))
+        except ValueError:
+            logger.warning("Invalid saved TTS playback options; using defaults")
     return _tts_instance

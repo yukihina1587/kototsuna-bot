@@ -82,6 +82,7 @@ class EdgeTtsEngine(TTSEngine):
         text: str,
         voice_id: Union[str, int, None],
         timeout: float = 5.0,
+        *, speed: float = 1.0,
     ) -> Optional[bytes]:
         try:
             import edge_tts
@@ -96,7 +97,7 @@ class EdgeTtsEngine(TTSEngine):
         )
 
         try:
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(text, voice, rate=f"{round((speed - 1) * 100):+d}%")
             buffer = bytearray()
             async for chunk in communicate.stream():
                 if chunk.get("type") == "audio":

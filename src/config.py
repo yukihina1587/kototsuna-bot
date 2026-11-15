@@ -103,6 +103,7 @@ DEFAULT_CONFIG = {
     "tts_include_name": False,
     # UI テーマ
     "ui_theme": "default",  # default / gradient / minimal / cyberpunk
+    "web_workspace_layout": "studio",  # studio / focus
     # ログ設定
     "log_level": "INFO",  # DEBUG / INFO / WARNING / ERROR
     # アップデート設定
@@ -247,6 +248,10 @@ def validate_config(config_data):
     if validated.get("ui_theme") not in get_valid_ui_themes():
         logger.warning(f"ui_theme is invalid: {validated.get('ui_theme')}, fallback to default")
         validated["ui_theme"] = "default"
+        changed = True
+
+    if validated.get("web_workspace_layout") not in ("studio", "focus"):
+        validated["web_workspace_layout"] = "studio"
         changed = True
 
     # channel_mode
@@ -638,14 +643,16 @@ def _rotate_backups() -> None:
         logger.warning(f"Failed to rotate config backups: {e}")
 
 
-def save_config(config_data):
+def save_config(config_data) -> bool:
     _rotate_backups()
     try:
         validated, _ = validate_config(config_data)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(validated, f, indent=4, ensure_ascii=False)
+        return True
     except Exception as e:
         logger.error(f"Failed to save config: {e}", exc_info=True)
+        return False
 
 
 def backup_config(dst_path: str) -> bool:

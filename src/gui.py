@@ -724,6 +724,9 @@ class KototsunaApp(WorkspaceLayoutMixin):
 
     def _update_header_bot_button(self, running: bool):
         """ヘッダーの開始/停止ボタンの表示を更新"""
+        self._bot_requested_running = running
+        if running:
+            self._bot_last_failed = False
         if running:
             self.start_stop_btn.configure(text="■ BOT停止", fg_color="#EF4444", hover_color="#DC2626", text_color="#FFFFFF")
         else:
@@ -4527,6 +4530,8 @@ class KototsunaApp(WorkspaceLayoutMixin):
 
     def _auto_save_settings(self):
         """config.jsonへサイレント保存"""
+        if getattr(self, "_web_settings_batch", False):
+            return
         try:
             previous_chat_html_path = self.config.get("chat_html_path", "")
             previous_newest_first = self.config.get("chat_html_newest_first", False)
@@ -4568,6 +4573,8 @@ class KototsunaApp(WorkspaceLayoutMixin):
                 self.chat_history = deque(old_items, maxlen=new_max)
             self.config["tts_volume"] = int(self.tts_volume_var.get())
             self.config["tts_speed"] = round(self.tts_speed_var.get(), 2)
+            if hasattr(self, "tts"):
+                self.tts.set_playback_options(self.config["tts_volume"], self.config["tts_speed"])
             self.config["tts_include_name"] = self.tts_include_name_var.get()
             self.config["auto_update_check"] = self.auto_update_check.get()
             self.config["include_prerelease"] = self.include_prerelease.get()
@@ -4577,7 +4584,7 @@ class KototsunaApp(WorkspaceLayoutMixin):
             if self.voicevox_path.get().strip() and hasattr(self, "voicevox_manager"):
                 self.voicevox_manager.engine_path = self.voicevox_path.get().strip()
 
-            save_config(self.config)
+            saved = save_config(self.config)
             chat_html_changed = (
                 previous_chat_html_path != self.config["chat_html_path"]
                 or previous_newest_first != self.config["chat_html_newest_first"]
@@ -4588,8 +4595,10 @@ class KototsunaApp(WorkspaceLayoutMixin):
             if chat_html_changed:
                 self._export_chat_html(force=True)
             logger.debug("Config auto-saved")
+            return saved
         except Exception as e:
             logger.error(f"Auto-save failed: {e}", exc_info=True)
+            return False
 
     def save_settings(self):
         # バリデーション実行
@@ -5963,14 +5972,31 @@ class KototsunaApp(WorkspaceLayoutMixin):
         except Exception as e:
             logger.error(f"Bot thread error: {e}", exc_info=True)
             # UIスレッドでリカバリー処理を実行
-            self.master.after(0, lambda err=e: self._on_bot_thread_error(err))
+            owner = threading.current_thread()
+            self.master.after(0, lambda err=e, source=owner: self._report_bot_thread_error(err, source))
         finally:
             try:
                 loop.close()
             except Exception:
                 pass
 
-    def start_bot(self):
+    def _report_bot_thread_error(self, error: Exception, source_thread):
+        # 停止済み・入れ替え済みのスレッドから遅れて届く通知で新しいBOTを消さない。
+        if source_thread is getattr(self, "_bot_thread", None) and getattr(self, "_bot_requested_running", False):
+            self._on_bot_thread_error(error)
+
+    def start_bot(self, web_request: bool = False):
+        def report_error(title, message):
+            if web_request:
+                from src.web_control import ControlError
+                raise ControlError(message, 409)
+            messagebox.showerror(title, message)
+
+        # インスタンス作成前の短い間も、二重にスレッドを起動しない。
+        thread = getattr(self, "_bot_thread", None)
+        if thread is not None and thread.is_alive() and self.bot_instance is None:
+            report_error("起動中", "BOTを起動しています。少し待ってください。")
+            return
         # 既存のBOTがあれば停止（多重起動防止）
         if self.bot_instance:
             self.stop_bot()
@@ -5979,12 +6005,12 @@ class KototsunaApp(WorkspaceLayoutMixin):
             time.sleep(0.5)
 
         if not self.token:
-            messagebox.showerror("エラー", "まずは「① トークン認証」を行ってください")
+            report_error("エラー", "本体の設定からTwitch認証を行ってください。")
             return
 
         channel = channel_manager.normalize_channel_name(self.channel.get())
         if not channel:
-            messagebox.showerror("エラー", "チャンネル名を設定してください")
+            report_error("エラー", "本体の設定からチャンネル名を設定してください。")
             return
 
         # 接続前バリデーション（キャッシュ済みなら即時、未検証なら API 確認）
@@ -5993,7 +6019,7 @@ class KototsunaApp(WorkspaceLayoutMixin):
             valid, display_name, user_data = channel_manager.validate_channel(self.token, effective_client_id, channel)
             if valid is False:
                 self._set_channel_indicator("invalid")
-                messagebox.showerror(
+                report_error(
                     "チャンネルが見つかりません",
                     f"「{channel}」は Twitch に存在しないチャンネルです。\nチャンネル名を確認してください。"
                 )
@@ -6015,7 +6041,8 @@ class KototsunaApp(WorkspaceLayoutMixin):
         )
 
         # 新しいイベントループでBOTを実行（スレッド内でBOTインスタンス作成）
-        threading.Thread(target=self._run_bot_in_thread, args=bot_params, daemon=True).start()
+        self._bot_thread = threading.Thread(target=self._run_bot_in_thread, args=bot_params, daemon=True)
+        self._bot_thread.start()
         self.log_message(f"🤖 BOTを起動しました (Channel: {channel})")
         self._set_status(f"BOT稼働中: {channel}", "success")
         # ヘッダーUI更新
@@ -6023,6 +6050,7 @@ class KototsunaApp(WorkspaceLayoutMixin):
         self._update_connection_badge(True)
 
     def stop_bot(self):
+        self._bot_last_failed = False
         if self.bot_instance:
             try:
                 self.bot_instance.stop()
@@ -6049,6 +6077,8 @@ class KototsunaApp(WorkspaceLayoutMixin):
         """BOTスレッドでエラーが発生した際のUIリカバリー（メインスレッドで実行）"""
         self._update_header_bot_button(False)
         self._update_connection_badge(False)
+        self._bot_last_failed = True
+        self.bot_instance = None
         err_msg = str(error)
         if "Invalid argument" in err_msg and ".exe" in err_msg:
             self.log_message("⚠️ BOT起動失敗: ウイルス対策ソフトがアプリをブロックしている可能性があります")
@@ -6519,9 +6549,27 @@ class KototsunaApp(WorkspaceLayoutMixin):
 
         threading.Thread(target=do_rollback_thread, daemon=True).start()
 
+    def open_web_ui(self):
+        """必要なときだけWeb操作画面を開始し、既存BOTに接続する。"""
+        from src.desktop_web_ui import DesktopWebUI
+        try:
+            if getattr(self, "_web_ui", None) is None:
+                panel = DesktopWebUI(self)
+                panel.start()
+                self._web_ui = panel
+            if not self._web_ui.open():
+                self._set_status("ブラウザを開けませんでした。既定のブラウザを確認してください。", "error")
+        except Exception as exc:
+            logger.warning("Web UI could not start (%s)", type(exc).__name__)
+            self._set_status("Web画面を開始できませんでした。", "error")
+
     def cleanup_resources(self):
         """アプリケーション終了時に全てのリソースを解放"""
         logger.info("Starting cleanup_resources...")
+
+        if getattr(self, "_web_ui", None) is not None:
+            self._web_ui.close()
+            self._web_ui = None
 
         try:
             # OBS連携を停止
